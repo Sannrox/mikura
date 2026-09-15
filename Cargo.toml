@@ -3,8 +3,9 @@ name = "kura"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Canonical object store: ingest, object-sets, property ACLs, Action writeback."
+description = "Object database: durable object log, object-set evaluate, property ACLs, and Action writeback."
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [dependencies]
 crc32fast = "1"

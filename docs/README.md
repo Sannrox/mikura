@@ -1,0 +1,19 @@
+# Documentation
+
+Start at the root [README](../README.md). Then pick the page that matches
+the job.
+
+| Page | Type | Job |
+| --- | --- | --- |
+| [../VISION.md](../VISION.md) | Explanation | Why kura exists and what is out of scope |
+| [../ROADMAP.md](../ROADMAP.md) | Explanation | What to build next |
+| [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
+| [glossary.md](glossary.md) | Reference | Project terms |
+| [decisions/](decisions/README.md) | Reference | Accepted ADRs |
+| [../spikes/README.md](../spikes/README.md) | Reference | Historical measurements |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Guide | How to change the code |
+| [../AGENTS.md](../AGENTS.md) | Governance | How agents work in this tree |
+| [../SECURITY.md](../SECURITY.md) | Governance | Vulnerability reporting |
+| [../CHANGELOG.md](../CHANGELOG.md) | Reference | What shipped |
+
+There is no generated docs site. Markdown in git is the published docs.

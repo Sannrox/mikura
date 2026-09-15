@@ -1,8 +1,11 @@
-//! kura v1: ingest → object log → object-set evaluate.
+//! In-process object database: ingest → object log → object-set evaluate.
 //!
-//! Compute backends, streaming ingest, property ACLs, and Action writeback
-//! are first-class seams. Spark is a named backend that fails closed until
-//! an envelope exists.
+//! The log is the store of record ([`Store`]). Indexes are live maps rebuilt
+//! on open. [`LocalCompute`] answers hop / count / sum in-process.
+//! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
+//! published envelope says otherwise.
+//!
+//! See `docs/architecture.md` in the repository for the v1 contract.
 
 mod acl;
 mod actions;
@@ -88,12 +91,7 @@ mod tests {
         BatchIngest::run(&mut store, fixture()).unwrap();
 
         let oss = ObjectSet::new(LocalCompute);
-        let visible = oss
-            .evaluate(
-                &store,
-                &fixture_request(),
-            )
-            .unwrap();
+        let visible = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(visible.two_hop_count, 1);
         assert_eq!(visible.sum_amount, 10);
 
@@ -107,36 +105,24 @@ mod tests {
                 ]),
             })
             .unwrap();
-        let after = oss
-            .evaluate(
-                &store,
-                &fixture_request(),
-            )
-            .unwrap();
+        let after = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(after.sum_amount, 15);
 
         let mut denied_req = fixture_request();
         denied_req.acl = PropertyAcl::deny_property("Shipment", "amount");
         let denied = oss.evaluate(&store, &denied_req);
-        assert!(matches!(denied, Err(ComputeError::Acl(AclError::Denied { .. }))));
+        assert!(matches!(
+            denied,
+            Err(ComputeError::Acl(AclError::Denied { .. }))
+        ));
 
         let rebuilt = Store::open(&log).unwrap();
-        let from_log = oss
-            .evaluate(
-                &rebuilt,
-                &fixture_request(),
-            )
-            .unwrap();
+        let from_log = oss.evaluate(&rebuilt, &fixture_request()).unwrap();
         assert_eq!(from_log.two_hop_count, after.two_hop_count);
         assert_eq!(from_log.sum_amount, after.sum_amount);
 
         let spark = ObjectSet::new(SparkCompute);
-        let err = spark
-            .evaluate(
-                &store,
-                &fixture_request(),
-            )
-            .unwrap_err();
+        let err = spark.evaluate(&store, &fixture_request()).unwrap_err();
         assert!(matches!(err, ComputeError::UnsupportedBackend { .. }));
 
         let mut stream = StreamIngest::new();
@@ -149,12 +135,7 @@ mod tests {
             ))
             .unwrap();
         stream.flush_into(&mut store).unwrap();
-        let streamed = oss
-            .evaluate(
-                &store,
-                &fixture_request(),
-            )
-            .unwrap();
+        let streamed = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(streamed.sum_amount, 22);
 
         let _ = std::fs::remove_dir_all(&dir);

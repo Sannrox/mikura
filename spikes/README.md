@@ -1,7 +1,9 @@
 # Spikes
 
 Throwaway harnesses and envelope notes. A spike may use SQLite or a file log
-as a **vehicle**. It is not kura’s store of record.
+as a **vehicle**. It is not kura’s store of record. The product log is
+documented in [docs/architecture.md](../docs/architecture.md) and
+[ADR 0001](../docs/decisions/0001-paged-log.md).
 
 | Spike | Question | Verdict |
 | --- | --- | --- |

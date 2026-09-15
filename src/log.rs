@@ -144,8 +144,12 @@ impl LogWriter {
             .copy_from_slice(&self.committed.to_le_bytes());
         seal_page(&mut superblock);
         let pos = self.file.stream_position().map_err(|e| e.to_string())?;
-        self.file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-        self.file.write_all(&superblock).map_err(|e| e.to_string())?;
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| e.to_string())?;
+        self.file
+            .write_all(&superblock)
+            .map_err(|e| e.to_string())?;
         if self.sync.durable() {
             self.file.sync_data().map_err(|e| e.to_string())?;
         }

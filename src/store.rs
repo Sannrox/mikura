@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::actions::Action;
-use crate::log::{LogWriter, SyncPolicy, read_records};
+use crate::log::{read_records, LogWriter, SyncPolicy};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {

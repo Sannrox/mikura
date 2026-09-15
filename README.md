@@ -1,33 +1,108 @@
 # kura
 
-Hosted **object database**: ingest, object-sets, property ACLs, Action
-writeback. Independent of `sekai-chisei`. Not a vendor clone.
+kura is an **object database**: applications read and write objects, not SQL
+tables or search hits. The object log is the store of record. Indexes are
+projections you can delete and rebuild.
 
-**Read [VISION.md](VISION.md)** (what and why) and **[ROADMAP.md](ROADMAP.md)**
-(order of work). Agent and contributor workflow: **[AGENTS.md](AGENTS.md)**.
+v1 is an in-process Rust library. A hosted service is the destination, not
+the current crate.
+
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
 ## Status
 
-- v0 spikes 001–010 (throwaway).
-- v1 crate: paged log (ADR 0001) + ingest + evaluate + ACL + writeback.
-- Not referenced from sekai-chisei. `SparkCompute` returns unsupported
-  until an envelope.
+Pre-1.0 (`0.1.0`, not published to crates.io). Suitable for local experiments
+and for contributing to the kernel. Not a production hosted store.
+
+| Implemented | Not implemented |
+| --- | --- |
+| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Hosted gRPC |
+| Batch ingest and Action append | Principal-aware ACL on the wire |
+| Object-set hop / count / sum in-process | Persisted join sidecars |
+| Property deny-list (fail closed) | Cluster compute |
+
+Spikes 001–010 are throwaway evidence under [`spikes/`](spikes/README.md).
+
+## Quickstart
+
+Requires a stable Rust toolchain (edition 2021).
+
+```bash
+git clone <this-repository>
+cd kura
+cargo test --locked
+cargo run --example quickstart
+```
+
+The example writes a temp log, ingests Customer → Order → Shipment records,
+evaluates a two-hop count and sum, then applies one Action:
 
 ```text
-cargo test
+reachable roots: 1
+sum amount: 10
+after action: 15
 ```
+
+Use the crate from another package only after kura is a tagged dependency.
+Until then, develop inside this repository.
+
+```rust
+use kura::{
+    Aggregate, BatchIngest, EvaluateRequest, Hop, LocalCompute, ObjectSet, PropertyAcl, Store,
+};
+
+let mut store = Store::create("data/objects.kura")?;
+BatchIngest::run(&mut store, records)?;
+let response = ObjectSet::new(LocalCompute).evaluate(
+    &store,
+    &EvaluateRequest {
+        root_kind: "Customer".into(),
+        hops: vec![
+            Hop { far_kind: "Order".into(), join_property: "customer_id".into() },
+            Hop { far_kind: "Shipment".into(), join_property: "order_id".into() },
+        ],
+        sum_kind: "Shipment".into(),
+        sum_property: "amount".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+    },
+)?;
+```
+
+Hidden objects are excluded from evaluate. A denied aggregate property
+returns `AclError::Denied` rather than a guessed value.
 
 ## Layout
 
 ```
-VISION.md                 product source of truth
-ROADMAP.md                ordered next work
-docs/decisions/           ADRs (0001 paged log)
-src/                      v1 library
-spikes/                   measurements; not the store
+src/                 v1 library
+examples/            runnable crate examples
+docs/                architecture, glossary, ADRs
+spikes/              historical measurements; not the store
+VISION.md            why this project exists
+ROADMAP.md           what to build next, in order
 ```
 
-## Non-coupling
+## Documentation
 
-Do not add `sekai-chisei` as a dependency. Do not use `data/sekai.db` or
-`sekai --db` as the object log. Do not vendor this tree into sekai-chisei.
+| Doc | Use it for |
+| --- | --- |
+| [VISION.md](VISION.md) | Product purpose and boundary |
+| [ROADMAP.md](ROADMAP.md) | Ordered next work |
+| [docs/architecture.md](docs/architecture.md) | How the crate works today |
+| [docs/glossary.md](docs/glossary.md) | Terms (log, projection, envelope, …) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, pull requests |
+| [AGENTS.md](AGENTS.md) | Instructions for coding agents |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+
+## Independence
+
+kura is its own git repository and crate. It does not depend on a control
+plane. A governed control plane may later **depend** on a published kura tag.
+Do not vendor this tree into another repo, and do not use SQL as kura's
+store of record.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.

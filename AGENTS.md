@@ -1,153 +1,129 @@
-# Repository Guidelines
+# Repository guidelines
 
-`kura` is a Rust 2021 crate for a **hosted object database**: ingest, object
-log, object-set evaluate, property ACLs, Action writeback. v1 is an in-process
-library. Hosted gRPC is later. It is an independent git repository. It is not
-a control plane and not a clone of any vendor API.
+kura is a Rust 2021 crate for an object database: ingest, object log,
+object-set evaluate, property ACLs, Action writeback. v1 is an in-process
+library. Hosted service is later.
 
-**Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.** Those are
-product source of truth. This file is how to work in the tree.
+**Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.** How the
+code works: [docs/architecture.md](docs/architecture.md). Human contributor
+workflow: [CONTRIBUTING.md](CONTRIBUTING.md). This file is agent policy.
 
-`AGENTS.md` is canonical for agents. Skills live under `.agents/skills/` and
-are tracked. Do not treat that directory as gitignored.
+`AGENTS.md` is canonical for agents. Skills under `.agents/skills/` are
+tracked. Do not treat that directory as gitignored.
 
-## Project Structure & Module Organization
+## Project structure
 
 | Path | Role |
 | --- | --- |
-| `src/lib.rs` | Crate root; public ingest / store / object-set / ACL / Action / compute seams |
-| `src/log.rs` | 4KiB CRC pages + group commit (ADR 0001) |
-| `src/store.rs` | Object identity, live maps, rebuild from log |
-| `src/ingest.rs` | Batch and streaming ingest |
-| `src/objectset.rs` | Filter / hop / aggregate evaluate |
-| `src/acl.rs` | Property ACL (fail closed) |
-| `src/actions.rs` | Action writeback → new generations |
-| `src/compute.rs` | `LocalCompute`; `SparkCompute` fails closed until an envelope |
+| `src/lib.rs` | Crate root and public exports |
+| `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
+| `src/store.rs` | Identity, live maps, rebuild from log |
+| `src/ingest.rs` | Batch ingest; in-memory stream buffer |
+| `src/objectset.rs` | Evaluate request/response |
+| `src/acl.rs` | Property deny-list (fail closed) |
+| `src/actions.rs` | Action writeback → new generation |
+| `src/compute.rs` | `LocalCompute`; `SparkCompute` fails closed |
+| `examples/` | Runnable examples (`quickstart`) |
 | `spikes/` | Throwaway measurements; not the store of record |
-| `docs/decisions/` | ADRs (`0000-template.md`, then `0001-…`) |
+| `docs/` | Architecture, glossary, ADRs |
 | `.agents/skills/` | Copied from sekai-chisei; apply as below |
 
-Runtime object logs belong under `/data/` or a temp dir. Do not commit logs,
-`target/`, or generated runtime state.
+Runtime object logs belong under gitignored `data/` or a temp dir.
 
-## Build, Test, and Development Commands
-
-Cargo is the workflow. There is no workspace and no pinned toolchain file yet.
+## Commands
 
 ```sh
 cargo fmt
 cargo fmt --check
 cargo test --locked
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --locked -- -D warnings
+cargo run --example quickstart
 ```
 
-`cargo test` is the short developer loop. Spike crates are separate
-`Cargo.toml` files under `spikes/<nnn>-*/`; run them only when measuring,
-from that directory, and write results in that spike's `NOTES.md`.
+`cargo test` is the short loop. Spike crates are separate packages under
+`spikes/<nnn>-*/`; run them only when measuring, from that directory, and
+write results in `NOTES.md`.
 
-There is no local server, no `.env`, and no `SEKAI_*` configuration in this
-repo.
+There is no local server, no `.env`, and no control-plane configuration in
+this repo.
 
-## Independence from sekai-chisei
+## Independence
 
-- Do not add `sekai-chisei` as a dependency.
-- Do not vendor this tree into sekai-chisei (`crates/kura` copy, submodule, or
-  subtree).
-- Do not use `data/sekai.db`, Postgres, or SQLite as the object log.
-- Do not use `sekai --db` as the object log.
-- Later, sekai-chisei may **depend** on a published kura tag. That cutover is
-  a sekai-chisei ADR, not work in this repo.
-
-Clerk (tenants, credentials, policy, receipts) stays in sekai-chisei.
-Warehouse (object instances, links, generations, rebuildable projections)
-stays in kura.
+- Do not add a control-plane crate as a dependency.
+- Do not vendor this tree into another product.
+- Do not use SQL or `sekai --db` as the object log.
+- A consumer may later depend on a published kura tag. That cutover is not
+  work in this repository.
 
 ## Skills
 
 Copied from sekai-chisei. Procedure is the same; substitute kura paths,
-VISION/ROADMAP, and this file for sekai-chisei docs, gateway, proto, and
-dual-SQL surfaces.
+VISION/ROADMAP/architecture, and this file. Ignore gateway, proto, provider,
+and dual-SQL rows: they do not exist here.
 
 | Skill | Use in kura |
 | --- | --- |
-| `verify-change` | After implementation. Gates: `cargo fmt --check`, `cargo test --locked`, `cargo clippy --all-targets -- -D warnings`. Ignore gateway/proto/provider rows; they do not exist here. |
-| `assess-change-impact` | Before or while changing store, log format, evaluate, ACL, or writeback. Boundaries: log vs projection, fail-closed ACL, independence from sekai-chisei. There is no `docs/architecture.md`; use VISION + ROADMAP + ADRs. |
-| `capture-project-decision` | After an accepted choice. Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
-| `technical-documentation` | VISION, ROADMAP, README, AGENTS, ADRs, spike NOTES. |
-| `refactor-docs` | Existing docs pages only. |
-| `sekai-ontology` | Optional portable CLI ontology. Never the object log, never `data/sekai.db`. This repo has no `crates/sekai-ontology` pack; do not import sekai-chisei's product pack as kura's store. |
-| `shape-work-item` | Draft a work item locally. Do not publish GitHub Issues until this repo has a hosted remote and templates. There is no `.github/ISSUE_TEMPLATE/` yet. |
-| `deliver-ready-issue` | Dormant until a GitHub remote and Issues exist. Do not invent issue numbers, claim branches, or `scripts/gh-verified-push.sh` (that script is not in this repo). |
-| `advance-issue-frontier` | Same: dormant until hosted Issues exist. Next work is [ROADMAP.md](ROADMAP.md). |
-| `prepare-release` | Dormant until a versioned, published crate. `publish = false` in `Cargo.toml`. |
+| `verify-change` | After implementation. Gates: fmt-check, `cargo test --locked`, clippy `-D warnings`, `cargo run --example quickstart` when examples or the public API changed. |
+| `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
+| `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
+| `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
+| `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
+| `shape-work-item` | Draft locally. Do not publish GitHub issues until a hosted remote and templates exist. |
+| `deliver-ready-issue` / `advance-issue-frontier` | Dormant until Issues exist. Next work is [ROADMAP.md](ROADMAP.md). There is no `scripts/gh-verified-push.sh` here. |
+| `prepare-release` | Dormant. `publish = false` in `Cargo.toml`. |
 
-## Ontology Policy
+## Ontology
 
-If a portable ontology is used for structural questions, use the
-`sekai-ontology` Skill. Select the database with `--db <path>` or `SEKAI_DB`,
-then `sekai --json validate` before relying on it. Treat successful output as
-structured evidence. State absence rather than inferring. Do not use the kura
-object log or a control-plane `data/sekai.db` as that database.
+If a portable ontology is used, follow the `sekai-ontology` skill. Validate
+before relying on it. State absence rather than inferring. Do not use the
+kura object log or a control-plane database as that file.
 
-## Coding Style & Naming Conventions
+## Style and tests
 
-Standard Rust formatting (`cargo fmt`). `snake_case` files/modules/functions;
-`PascalCase` types and traits; `SCREAMING_SNAKE_CASE` constants.
+`cargo fmt`. `snake_case` files and functions; `PascalCase` types;
+`SCREAMING_SNAKE_CASE` constants.
 
-Keep compute backends behind `ComputeBackend`. Property ACL fails closed:
-denied properties are absent, not guessed. Projections are rebuildable from
-the log; a projection is never recovery material.
+Keep compute behind `ComputeBackend`. ACL fails closed. Projections rebuild
+from the log.
 
 Edition is **2021**. `ObjectRecord.gen` is the generation field. Do not bump
-to edition 2024 without renaming `gen` (`gen` is a reserved keyword in 2024).
+to edition 2024 without renaming `gen`.
 
-## Testing Guidelines
+Add focused deterministic tests. Temp directories for logs. No network,
+Postgres, or Spark in the default suite.
 
-Add focused tests next to the changed module (crate tests in `src/lib.rs` or
-`#[cfg(test)]` in the module). Prefer deterministic tests with temp directories
-for logs. Do not require Postgres, Spark, or a network. Mark any future
-service-dependent test `#[ignore]` and document the local prerequisite.
+## Git
 
-Spike `NOTES.md` records envelopes (hold/miss, hardware, fixture size). A miss
-is a note, not an engine pick. Do not introduce Spark, a search engine, or a
-warehouse as the object store of record.
+Short imperative subjects (`feat: persist join maps in Store`). Never
+`--no-gpg-sign`. If GPG fails, stop.
 
-## Commit & Pull Request Guidelines
-
-Short imperative subjects, Conventional Commit style when a type helps:
-`feat: persist join maps in Store`, `docs: write hosted object-database vision`.
-Keep commits narrow.
-
-This clone has no GitHub remote yet. Commit locally. Do not `git push`, open
-Issues, or open PRs unless the user names a remote and authorizes publish.
-When a remote exists, PRs should include a behavior summary, tests run, and
-any log-format or compatibility impact.
-
-Never pass `--no-gpg-sign`. If GPG fails, stop and fix it.
+Do not invent a GitHub remote. When one exists, PRs follow
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Always / Ask first / Never
 
 **Always**
 
-- Treat VISION.md and ROADMAP.md as product truth.
-- Keep the object log as authority; rebuild projections from it.
+- Treat VISION.md and ROADMAP.md as product truth, architecture.md as
+  implementation truth.
+- Keep the object log as authority.
 - Fail closed on CRC mismatch, missing committed pages, and ACL denial.
-- Isolate from unrelated dirty trees; do not stash or reset another checkout.
+- Isolate from unrelated dirty trees.
 
 **Ask first**
 
 - Changing the on-disk log format (needs a new ADR).
 - Adding a GitHub remote, publishing a crate, or referencing kura from
-  sekai-chisei.
+  another product.
 - Introducing gRPC, Spark, or a second storage engine.
 - Bumping Rust edition.
 
 **Never**
 
 - Commit secrets, object logs (`*.kura`), SQLite files, or `target/`.
-- Vendor kura into sekai-chisei or depend on sekai-chisei from this crate.
+- Vendor kura into another product or depend on a control plane from this
+  crate.
 - Use SQL as kura's store of record.
 - Pick Spark/search/warehouse from a spike miss.
 - Clone vendor API names or protobufs.
-- Overwrite uncommitted work in another lane or the primary checkout of a
-  different project.
+- Overwrite uncommitted work in another checkout.

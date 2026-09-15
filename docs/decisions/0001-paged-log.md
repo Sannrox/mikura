@@ -2,14 +2,62 @@
 
 - Status: accepted
 - Date: 2026-09-15
+- Owners: kura maintainers
 - Related: spikes 003–005
+- Supersedes: none
+- Superseded by: none
+
+## Context
+
+Identity must survive restart from a single file. JSONL (spike 001) rebuilds,
+but a torn write can look like a short valid record. Length-prefixed CRC
+records (spike 002) fail closed on a bad checksum and ignore a torn tail,
+but the unit of damage is still “a record.”
+
+We needed a page as the unit of checksum and commit, and a commit pointer
+that can lag written pages so a crash cannot promote an un-fsynced page.
 
 ## Decision
 
-The kura `Store` log is 4KiB CRC32 pages. Rebuild reads only
-`1..=committed_pages` from the superblock. Writers fsync a group of data
-pages, then the superblock (default group 32). JSONL is not the product
-format.
+The kura `Store` log is 4 KiB CRC32 pages (`src/log.rs`).
 
-Uncommitted extra pages are not authority. Missing committed pages fail
-closed. A later format bump is a new ADR.
+- Page 0 is a superblock: magic `KURAV1\n\n`, page size, `committed_pages`.
+- Rebuild reads only pages `1..=committed_pages`.
+- Writers may fsync a group of data pages, then the superblock.
+- Default policy on `Store::create` / `Store::open` is `SyncPolicy::Group(32)`.
+- JSONL is not the product format.
+
+Uncommitted extra pages are not authority. Missing pages inside the
+committed range fail closed. A later on-disk format bump is a new ADR.
+
+## Alternatives considered
+
+| Option | Why not |
+| --- | --- |
+| JSONL as SoR | Torn line can parse as a shorter record; no commit pointer |
+| Per-record CRC file | Works (spike 002); page checksums make torn writes a bad *page* |
+| `fsync` every page | ~175× no-sync at 10⁴ on the spike hardware; too expensive for ingest |
+| No `fsync` | Fast; not durable |
+
+Spike 005 on Apple M2 Pro, 32 GiB: group 32 was ~8× no-sync at 10⁴;
+per-page sync was ~175×.
+
+## Consequences
+
+- Restart is “verify committed pages, decode records, rebuild live maps.”
+- Compaction / checkpoints are not specified; `Store::replace_kind` rewrites
+  the file and is not a general compaction API.
+- `Store::append` currently flushes after every record, so the group-commit
+  policy on the writer is not yet used as a multi-record ingest batch.
+  Changing that is implementation work, not a format change.
+
+## Validation
+
+- `src/log.rs` unit test: an extra sealed page after the committed range is
+  ignored.
+- Crate test in `src/lib.rs`: `Store::open` after ingest matches live
+  evaluate.
+- Spikes 003–005: torn last page dropped; middle CRC fail closed; orphan
+  pages ignored; group 32 measured.
+
+Revisit if a format version byte is required or if page size must change.
