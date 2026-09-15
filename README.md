@@ -7,9 +7,9 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–003 (JSONL, checksummed records, 4KiB pages). Rebuild
-identity holds at 10⁴ / 10⁶; torn pages drop, middle CRC fails closed. No
-engine is picked. Spikes must not become the product store.
+Vision plus spikes 001–004 (JSONL, records, 4KiB pages, fsync+commit
+pointer). Orphan pages are not authority. No engine is picked. Spikes must
+not become the product store.
 
 ## Layout
 

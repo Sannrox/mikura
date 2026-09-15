@@ -100,8 +100,10 @@ as a **storage adapter**, not by merging repos.
 v0 (this tree): vision, non-goals, and spikes
 [001-funnel-log](spikes/001-funnel-log/NOTES.md),
 [002-binary-log](spikes/002-binary-log/NOTES.md),
-[003-paged-log](spikes/003-paged-log/NOTES.md) (4KiB pages; torn last page
-dropped; middle CRC fail closed). No engine pick.
+[003-paged-log](spikes/003-paged-log/NOTES.md),
+[004-fsync-commit](spikes/004-fsync-commit/NOTES.md) (fsync page, then
+superblock commit pointer; orphan CRC-valid pages are not authority).
+No engine pick.
 
 v1: funnel + object log + one in-process object-set evaluate on a 10⁷
 fixture, with rebuild-from-log after deleting projections.
