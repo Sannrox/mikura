@@ -8,7 +8,7 @@ Read [VISION.md](VISION.md) first.
 ## Status
 
 Vision plus spikes 001–010. Live hop projection holds 10⁷ two-hop at 0 ms.
-Join-map sidecar restart: 156 ms load vs 22 s Live replay (count + sum).
+Join-map sidecar restart: 1.0 s load vs 13 s Live replay (count + sum).
 v0 spikes are complete. No engine is picked. Spikes must not become the
 product store.
 
