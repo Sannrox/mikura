@@ -1,0 +1,6 @@
+/target/
+/data/
+/spikes/scratch/
+.DS_Store
+*.sqlite
+*.swp
