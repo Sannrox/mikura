@@ -132,9 +132,15 @@ returned objects (evaluate returns counts/sums, not object payloads).
 `gen` assigned by `append`. It is writeback of object bytes, not admission
 or attestation.
 
+## Hosted service
+
+Not built. [ADR 0003](decisions/0003-hosted-service.md) records the shape:
+single process over the existing `Store`; loopback-only bind until auth
+exists; implement after slimmer join maps ([#15](https://github.com/Sannrox/mikura/issues/15)).
+
 ## What v1 does not do
 
-- Hosted RPC or multi-process replication
+- Hosted RPC or multi-process replication (shape decided in ADR 0003)
 - Encrypt logs
 - Incremental join WAL (sidecar is a full rewrite of visible join rows)
 - Track which Action produced a generation
