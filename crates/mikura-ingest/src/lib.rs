@@ -17,30 +17,53 @@ impl BatchIngest {
 }
 
 pub struct StreamIngest {
-    pending: Vec<ObjectRecord>,
+    bound: usize,
+    uncommitted: usize,
 }
 
 impl StreamIngest {
-    pub fn new() -> Self {
-        Self {
-            pending: Vec::new(),
+    /// Bound outstanding uncommitted records. `bound` must be greater than 0.
+    pub fn new(bound: usize) -> Result<Self, String> {
+        if bound == 0 {
+            return Err("stream ingest bound must be greater than 0".into());
         }
+        Ok(Self {
+            bound,
+            uncommitted: 0,
+        })
     }
 
-    pub fn push(&mut self, record: ObjectRecord) -> Result<(), String> {
-        self.pending.push(record);
+    pub fn bound(&self) -> usize {
+        self.bound
+    }
+
+    pub fn uncommitted(&self) -> usize {
+        self.uncommitted
+    }
+
+    /// Append without `commit`. Live maps update immediately. When the bound is
+    /// hit, returns an error and does not append (fail closed, no silent drop).
+    pub fn push(&mut self, store: &mut Store, record: ObjectRecord) -> Result<(), String> {
+        if self.uncommitted >= self.bound {
+            return Err(format!(
+                "stream ingest bound {} exceeded; flush before pushing more",
+                self.bound
+            ));
+        }
+        store.append_uncommitted(record)?;
+        self.uncommitted += 1;
+        Ok(())
+    }
+
+    /// Group-commit uncommitted records. Rebuild after this sees them.
+    pub fn flush(&mut self, store: &mut Store) -> Result<(), String> {
+        store.commit()?;
+        self.uncommitted = 0;
         Ok(())
     }
 
     pub fn flush_into(&mut self, store: &mut Store) -> Result<(), String> {
-        let records = std::mem::take(&mut self.pending);
-        BatchIngest::run(store, records)
-    }
-}
-
-impl Default for StreamIngest {
-    fn default() -> Self {
-        Self::new()
+        self.flush(store)
     }
 }
 
@@ -48,7 +71,8 @@ impl Default for StreamIngest {
 mod tests {
     use super::*;
     use mikura::{
-        Action, Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectSet, PropertyAcl, Store,
+        Action, Aggregate, ComputeError, EvaluateRequest, Hop, LocalCompute, ObjectSet,
+        PropertyAcl, Store,
     };
     use std::collections::HashMap;
 
@@ -149,19 +173,155 @@ mod tests {
         let (dir, log) = temp_log("stream");
         let mut store = Store::create(&log).unwrap();
         BatchIngest::run(&mut store, fixture()).unwrap();
-        let mut stream = StreamIngest::new();
+        let mut stream = StreamIngest::new(8).unwrap();
         stream
-            .push(rec(
-                "Shipment",
-                "s3",
-                false,
-                &[("order_id", "o1"), ("amount", "7")],
-            ))
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s3",
+                    false,
+                    &[("order_id", "o1"), ("amount", "7")],
+                ),
+            )
             .unwrap();
-        stream.flush_into(&mut store).unwrap();
         let oss = ObjectSet::new(LocalCompute);
+        let live = oss.evaluate(&store, &fixture_request()).unwrap();
+        assert_eq!(live.sum_amount, 17);
+        stream.flush_into(&mut store).unwrap();
         let streamed = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(streamed.sum_amount, 17);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stream_bound_n_plus_one_fails_closed_without_drop() {
+        let (dir, log) = temp_log("stream-bound");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, fixture()).unwrap();
+        let mut stream = StreamIngest::new(2).unwrap();
+        stream
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s3",
+                    false,
+                    &[("order_id", "o1"), ("amount", "1")],
+                ),
+            )
+            .unwrap();
+        stream
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s4",
+                    false,
+                    &[("order_id", "o1"), ("amount", "2")],
+                ),
+            )
+            .unwrap();
+        let overflow = rec(
+            "Shipment",
+            "s5",
+            false,
+            &[("order_id", "o1"), ("amount", "99")],
+        );
+        let err = stream.push(&mut store, overflow).unwrap_err();
+        assert!(
+            err.contains("bound 2 exceeded"),
+            "expected fail-closed bound error, got {err}"
+        );
+        let oss = ObjectSet::new(LocalCompute);
+        let live = oss.evaluate(&store, &fixture_request()).unwrap();
+        assert_eq!(live.sum_amount, 13);
+        stream.flush(&mut store).unwrap();
+        let reopened = Store::open(&log).unwrap();
+        let committed = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(committed.sum_amount, 13);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stream_unflushed_records_are_not_on_rebuild() {
+        let (dir, log) = temp_log("stream-unflushed");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, fixture()).unwrap();
+        let mut stream = StreamIngest::new(4).unwrap();
+        stream
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s3",
+                    false,
+                    &[("order_id", "o1"), ("amount", "7")],
+                ),
+            )
+            .unwrap();
+        drop(store);
+        let reopened = Store::open(&log).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let from_log = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(from_log.sum_amount, 10);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stream_flush_survives_reopen() {
+        let (dir, log) = temp_log("stream-flush-reopen");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, fixture()).unwrap();
+        let mut stream = StreamIngest::new(4).unwrap();
+        stream
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s3",
+                    false,
+                    &[("order_id", "o1"), ("amount", "7")],
+                ),
+            )
+            .unwrap();
+        stream.flush(&mut store).unwrap();
+        drop(store);
+        let reopened = Store::open(&log).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let from_log = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(from_log.sum_amount, 17);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stream_hidden_records_excluded_and_acl_fails_closed() {
+        let (dir, log) = temp_log("stream-hidden-acl");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, fixture()).unwrap();
+        let mut stream = StreamIngest::new(4).unwrap();
+        stream
+            .push(
+                &mut store,
+                rec(
+                    "Shipment",
+                    "s_hidden",
+                    true,
+                    &[("order_id", "o1"), ("amount", "50")],
+                ),
+            )
+            .unwrap();
+        stream.flush(&mut store).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let visible = oss.evaluate(&store, &fixture_request()).unwrap();
+        assert_eq!(visible.sum_amount, 10);
+        let mut denied = fixture_request();
+        denied.acl = PropertyAcl::deny_property("Shipment", "amount");
+        let err = oss.evaluate(&store, &denied).unwrap_err();
+        assert!(matches!(
+            err,
+            ComputeError::Acl(mikura::AclError::Denied { .. })
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
