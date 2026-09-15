@@ -7,9 +7,10 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–009. Live hop projection holds 10⁷ two-hop at 0 ms;
-restart loads a 781 KiB hop sidecar in 7 ms instead of replaying the log.
-No engine is picked. Spikes must not become the product store.
+Vision plus spikes 001–010. Live hop projection holds 10⁷ two-hop at 0 ms.
+Join-map sidecar restart: 156 ms load vs 22 s Live replay (count + sum).
+v0 spikes are complete. No engine is picked. Spikes must not become the
+product store.
 
 ## Layout
 

@@ -97,9 +97,10 @@ as a **storage adapter**, not by merging repos.
 
 ## Success
 
-v0 (this tree): vision, non-goals, and spikes 001–009. Live hop projection
-holds 10⁷ two-hop at 0 ms. [009](spikes/009-persist-hop/NOTES.md) restart
-loads a hop sidecar in **7 ms** vs 8 s JSONL rebuild. No engine pick.
+v0 (this tree): vision, non-goals, and spikes 001–010. Live hop projection
+holds 10⁷ two-hop at 0 ms. [009](spikes/009-persist-hop/NOTES.md) reachable
+sidecar 7 ms; [010](spikes/010-persist-joins/NOTES.md) join maps (count +
+sum) load **156 ms** vs 22 s Live replay. v0 spikes complete. No engine pick.
 
 v1: funnel + object log + one in-process object-set evaluate on a 10⁷
 fixture, with rebuild-from-log after deleting projections.
