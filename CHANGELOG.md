@@ -12,6 +12,8 @@ window.
 - `BatchIngest` and `StreamIngest` moved to the `mikura-ingest` workspace crate.
   `mikura` is log/store/evaluate only. Callers use `mikura_ingest::BatchIngest`.
   Log format (`MIKURAV1`) is unchanged.
+- `mikura-ingest::StreamIngest` requires a bound. `push` appends uncommitted
+  (live maps update) and fails closed when the bound is hit. `flush` commits.
 
 ## [0.1.0] - 2026-09-15
 

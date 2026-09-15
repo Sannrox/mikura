@@ -95,9 +95,11 @@ path). It is a test/rebuild helper, not a production compaction API.
 and group-commits once via `Store::commit`. The `mikura` crate has no ingest
 types.
 
-`mikura-ingest::StreamIngest` is an in-memory `Vec` plus `flush_into`. It does
-not bound memory, apply backpressure, or fsync on a schedule. Streaming under
-load is [Issue #4](https://github.com/Sannrox/mikura/issues/4).
+`mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
+records. `push` calls `Store::append_uncommitted` (live maps update
+immediately). A push that would exceed the bound returns an error and does
+not append. `flush` / `flush_into` calls `Store::commit`. A crash before
+flush drops the uncommitted tail; rebuild reads only committed pages.
 
 ## Evaluate
 

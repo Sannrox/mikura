@@ -23,4 +23,5 @@ meaning; say it is undefined.
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |
 | **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate appends. |
+| **Stream bound** | Max outstanding uncommitted records on `StreamIngest`. Excess `push` fails closed. |
 | **Spike** | Throwaway harness under `spikes/`. A spike may use JSONL or SQLite as a *vehicle*. That vehicle is not mikura’s store of record. |
