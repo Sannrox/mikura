@@ -19,6 +19,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 ingest crate | `mikura-ingest` workspace crate ([#9](https://github.com/Sannrox/mikura/issues/9)) |
 | v3 stream bound | Bounded `StreamIngest`, fail closed on overflow ([#4](https://github.com/Sannrox/mikura/issues/4)) |
 | v3 host shape | Single-process ingest/evaluate over `Store`; loopback until auth; wait on #15 to implement ([ADR 0003](docs/decisions/0003-hosted-service.md), [#5](https://github.com/Sannrox/mikura/issues/5)) |
+| v2 ingest merge | Source records and admitted edits merge by identity in `mikura-ingest` ([#10](https://github.com/Sannrox/mikura/issues/10)) |
 
 ## Next (this repository, in order)
 
@@ -26,10 +27,9 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
    restart without duplicating identity; no full sidecar rewrite per batch).
    Follow-up from the 10⁸ miss — more projection work, not a new engine.
    ([#15](https://github.com/Sannrox/mikura/issues/15))
-2. Snapshot changelog and merge of source records + admitted edits by
-   identity, in `mikura-ingest` (not in a control plane).
-   ([#11](https://github.com/Sannrox/mikura/issues/11),
-   [#10](https://github.com/Sannrox/mikura/issues/10))
+2. Snapshot changelog of source records into upserts, in `mikura-ingest`
+   (not in a control plane).
+   ([#11](https://github.com/Sannrox/mikura/issues/11))
 3. Hosted ingest/evaluate service as sketched in ADR 0003
    ([#18](https://github.com/Sannrox/mikura/issues/18), blocked on #15).
 4. Compute backend only if in-process hops/aggregates still miss after the

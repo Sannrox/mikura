@@ -7,6 +7,13 @@ window.
 
 ## [Unreleased]
 
+### Added
+
+- `mikura-ingest::merge_source_and_edits` and `MergeIngest::run` merge a
+  source snapshot with admitted edits by `(kind, key)`. Edits replace source
+  for the same identity, including `hidden`. The object log after append
+  remains authority.
+
 ### Changed
 
 - `BatchIngest` and `StreamIngest` moved to the `mikura-ingest` workspace crate.

@@ -17,7 +17,7 @@ and for contributing to the kernel. Not a production hosted store.
 | Implemented | Not implemented |
 | --- | --- |
 | 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Hosted gRPC |
-| Batch ingest, bounded stream ingest, Action append | Principal-aware ACL on the wire |
+| Batch ingest, source/edit merge, bounded stream ingest, Action append | Principal-aware ACL on the wire |
 | Object-set hop / count / sum from join sidecar ([ADR 0002](docs/decisions/0002-join-sidecar.md)) | Cluster compute |
 | Property deny-list (fail closed) | |
 
@@ -77,7 +77,7 @@ returns `AclError::Denied` rather than a guessed value.
 
 ```
 src/                      mikura library (log, store, evaluate)
-crates/mikura-ingest/     write orchestrator (batch / stream append)
+crates/mikura-ingest/     write orchestrator (batch / merge / stream append)
 docs/                     architecture, glossary, ADRs
 spikes/              historical measurements; not the store
 VISION.md            why this project exists
