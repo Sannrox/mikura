@@ -69,7 +69,7 @@ and dual-SQL rows: they do not exist here.
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
 | `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
-| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. There is no `scripts/gh-verified-push.sh`; use ordinary `git push` unless the user asks otherwise. Next work is [ROADMAP.md](ROADMAP.md). |
+| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `scripts/gh-verified-push.sh`. Land with squash. Next work is [ROADMAP.md](ROADMAP.md). |
 | `prepare-release` | GitHub tags are allowed. `publish = false` in `Cargo.toml` until crates.io is explicitly authorized. |
 
 ## Ontology
@@ -94,11 +94,35 @@ Postgres, or Spark in the default suite.
 
 ## Git
 
-Short imperative subjects (`feat: persist join maps in Store`). Never
-`--no-gpg-sign`. If GPG fails, stop.
+Short imperative subjects (`feat: persist join maps in Store`). Keep commits
+narrow. Hosted repo: `https://github.com/Sannrox/mikura`.
 
-Hosted repo: `https://github.com/Sannrox/mikura`. PRs follow
-[CONTRIBUTING.md](CONTRIBUTING.md).
+### Verified commits on GitHub
+
+Prefer publishing PR branch tips with GitHub-signed commits so GitHub shows
+**Verified**:
+
+1. Implement and commit locally as usual (`commit.gpgsign` may still apply).
+2. Publish the branch tip with `scripts/gh-verified-push.sh` instead of a plain
+   `git push` when you want the hosted commit Verified (GraphQL
+   `createCommitOnBranch`). That path creates one server-side commit with the
+   local `HEAD` tree; committer is typically **GitHub**.
+3. New branch:  
+   `scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local`
+4. Existing PR branch:  
+   `scripts/gh-verified-push.sh --branch <topic> --sync-local`  
+   (uses the current remote tip as `expectedHeadOid`).
+5. Never pass `--no-gpg-sign` for local commits; if GPG fails, stop and fix it.
+6. After publish, confirm `verification.verified=true` (the script prints this).
+
+When merging PRs, prefer **squash** (`gh pr merge --squash --delete-branch`) so
+the land commit on `main` is also GitHub-signed/Verified and history stays
+linear. Use `gh pr merge --merge` only when multi-commit history must be kept
+(original SHAs preserved). Avoid GitHub **rebase** merges when Verified history
+matters: rebase-merge rewrites commits and drops signatures. Do not rewrite
+protected `main` after merging unless the user explicitly approves; if
+protection is temporarily relaxed, restore force-push and status-check settings
+immediately after the correction.
 
 ## Always / Ask first / Never
 

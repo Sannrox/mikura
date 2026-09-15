@@ -70,3 +70,19 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Do not commit `target/`, `*.mikura`, SQLite files, or secrets.
 
 Open a pull request against `main`. Do not invent issue numbers.
+
+Publish the PR branch tip with `scripts/gh-verified-push.sh` so GitHub shows
+**Verified**. Land with squash:
+
+```bash
+# new branch
+scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local
+
+# existing PR branch
+scripts/gh-verified-push.sh --branch <topic> --sync-local
+
+gh pr merge --squash --delete-branch
+```
+
+Do not use GitHub rebase-merge when Verified history matters. Never pass
+`--no-gpg-sign` for local commits.
