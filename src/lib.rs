@@ -83,10 +83,10 @@ mod tests {
 
     #[test]
     fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
-        let dir = std::env::temp_dir().join("kura-v1-lib-test");
+        let dir = std::env::temp_dir().join("mikura-v1-lib-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let log = dir.join("objects.kura");
+        let log = dir.join("objects.mikura");
         let mut store = Store::create(&log).unwrap();
         BatchIngest::run(&mut store, fixture()).unwrap();
 

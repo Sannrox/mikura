@@ -1,8 +1,8 @@
-# kura
+# mikura
 
-kura is an **object database**: applications read and write objects, not SQL
-tables or search hits. The object log is the store of record. Indexes are
-projections you can delete and rebuild.
+**mikura** (御倉) is an **object database**: applications read and write
+objects, not SQL tables or search hits. The object log is the store of
+record. Indexes are projections you can delete and rebuild.
 
 v1 is an in-process Rust library. A hosted service is the destination, not
 the current crate.
@@ -29,7 +29,7 @@ Requires a stable Rust toolchain (edition 2021).
 
 ```bash
 git clone <this-repository>
-cd kura
+cd mikura
 cargo test --locked
 cargo run --example quickstart
 ```
@@ -43,15 +43,15 @@ sum amount: 10
 after action: 15
 ```
 
-Use the crate from another package only after kura is a tagged dependency.
+Use the crate from another package only after mikura is a tagged dependency.
 Until then, develop inside this repository.
 
 ```rust
-use kura::{
+use mikura::{
     Aggregate, BatchIngest, EvaluateRequest, Hop, LocalCompute, ObjectSet, PropertyAcl, Store,
 };
 
-let mut store = Store::create("data/objects.kura")?;
+let mut store = Store::create("data/objects.mikura")?;
 BatchIngest::run(&mut store, records)?;
 let response = ObjectSet::new(LocalCompute).evaluate(
     &store,
@@ -97,9 +97,9 @@ ROADMAP.md           what to build next, in order
 
 ## Independence
 
-kura is its own git repository and crate. It does not depend on a control
-plane. A governed control plane may later **depend** on a published kura tag.
-Do not vendor this tree into another repo, and do not use SQL as kura's
+mikura is its own git repository and crate. It does not depend on a control
+plane. A governed control plane may later **depend** on a published mikura tag.
+Do not vendor this tree into another repo, and do not use SQL as mikura's
 store of record.
 
 ## License

@@ -1,4 +1,4 @@
-//! Live in-memory projection updated by the funnel. Throwaway. Not kura's store.
+//! Live in-memory projection updated by the funnel. Throwaway. Not mikura's store.
 //!
 //! Evaluate reads the live map. Dual-read rebuilds from the JSONL log (vehicle)
 //! and compares identity + two-hop. JSONL is not the product format.
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-live-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-live-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn live_matches_rebuild_and_incremental_skips_log_scan() {
-        let dir = std::env::temp_dir().join("kura-live-projection-test");
+        let dir = std::env::temp_dir().join("mikura-live-projection-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.jsonl");

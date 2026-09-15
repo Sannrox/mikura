@@ -1,12 +1,12 @@
 [package]
-name = "kura-persist-joins-spike"
+name = "mikura-persist-joins-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway persisted join maps. Not the kura store."
+description = "Throwaway persisted join maps. Not the mikura store."
 
 [[bin]]
-name = "kura-persist-joins-spike"
+name = "mikura-persist-joins-spike"
 path = "src/main.rs"
 
 [dependencies]

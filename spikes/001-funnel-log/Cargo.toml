@@ -1,12 +1,12 @@
 [package]
-name = "kura-funnel-log-spike"
+name = "mikura-funnel-log-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway funnel + file log. Not the kura store."
+description = "Throwaway funnel + file log. Not the mikura store."
 
 [[bin]]
-name = "kura-funnel-log-spike"
+name = "mikura-funnel-log-spike"
 path = "src/main.rs"
 
 [dependencies]

@@ -66,7 +66,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kura-binary-log-spike"
+name = "mikura-binary-log-spike"
 version = "0.0.0"
 dependencies = [
  "crc32fast",

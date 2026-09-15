@@ -10,7 +10,7 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
           Action append               └── hop / count / sum
 ```
 
-The public surface is the `kura` library (`src/lib.rs`). There is no server
+The public surface is the `mikura` library (`src/lib.rs`). There is no server
 process in v1.
 
 ## Object model
@@ -34,7 +34,7 @@ Records do **not** store an Action id, principal, or schema version.
 `src/log.rs` implements a single-file paged log.
 
 - Page size: 4096 bytes.
-- Page 0 is the superblock: CRC32, magic `KURAV1\n\n`, page-size `u16`,
+- Page 0 is the superblock: CRC32, magic `MIKURAV1`, page-size `u16`,
   `committed_pages` `u32`.
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
 - Record body: `gen` `u64`, `hidden` `u8`, kind, key, property count, then

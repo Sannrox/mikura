@@ -1,12 +1,12 @@
 [package]
-name = "kura-paged-log-spike"
+name = "mikura-paged-log-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway 4KiB checksummed pages. Not the kura store."
+description = "Throwaway 4KiB checksummed pages. Not the mikura store."
 
 [[bin]]
-name = "kura-paged-log-spike"
+name = "mikura-paged-log-spike"
 path = "src/main.rs"
 
 [dependencies]

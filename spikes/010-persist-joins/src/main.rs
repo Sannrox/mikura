@@ -1,5 +1,5 @@
 //! Persist join maps (order→customer, shipment→order+amount) beside the log.
-//! Throwaway. Not kura's store. Restart answers two-hop count and sum(amount)
+//! Throwaway. Not mikura's store. Restart answers two-hop count and sum(amount)
 //! without replaying the Live object map.
 
 use crc32fast::Hasher as Crc;
@@ -306,7 +306,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-persist-joins-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-persist-joins-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn persist_load_matches_live_count_and_sum_checksum_fails_closed_hidden_out() {
-        let dir = std::env::temp_dir().join("kura-persist-joins-test");
+        let dir = std::env::temp_dir().join("mikura-persist-joins-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let log = dir.join("objects.jsonl");

@@ -1,12 +1,12 @@
 [package]
-name = "kura-group-commit-spike"
+name = "mikura-group-commit-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway group commit. Not the kura store."
+description = "Throwaway group commit. Not the mikura store."
 
 [[bin]]
-name = "kura-group-commit-spike"
+name = "mikura-group-commit-spike"
 path = "src/main.rs"
 
 [dependencies]

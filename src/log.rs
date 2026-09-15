@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
-const MAGIC: &[u8; 8] = b"KURAV1\n\n";
+const MAGIC: &[u8; 8] = b"MIKURAV1";
 const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
@@ -325,10 +325,10 @@ mod tests {
 
     #[test]
     fn orphan_page_is_not_authority() {
-        let dir = std::env::temp_dir().join("kura-log-orphan");
+        let dir = std::env::temp_dir().join("mikura-log-orphan");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("objects.kura");
+        let path = dir.join("objects.mikura");
         let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
         writer
             .append_record(&ObjectRecord {

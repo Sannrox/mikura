@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve kura. This crate is pre-1.0: focused changes with
+Thanks for helping improve mikura. This crate is pre-1.0: focused changes with
 tests and an honest impact note are easier to review than broad rewrites.
 
 All participation is governed by the [code of conduct](CODE_OF_CONDUCT.md).
@@ -57,7 +57,7 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Fail closed on checksum mismatch, missing committed pages, and ACL denial.
 - Keep compute behind `ComputeBackend`. Cluster compute stays unsupported
   until a published envelope says in-process cannot hold.
-- This crate must not depend on a control plane. Do not vendor kura into
+- This crate must not depend on a control plane. Do not vendor mikura into
   another repository.
 
 ## Pull requests
@@ -65,7 +65,7 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Keep the change one coherent outcome.
 - Use a short imperative subject (`feat: persist join maps in Store`).
 - Describe behavior, tests run, and any log-format or API impact.
-- Do not commit `target/`, `*.kura`, SQLite files, or secrets.
+- Do not commit `target/`, `*.mikura`, SQLite files, or secrets.
 
 Until a GitHub remote is configured, commit locally. Do not invent a remote
 or issue numbers.

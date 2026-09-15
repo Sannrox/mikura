@@ -1,12 +1,12 @@
 [package]
-name = "kura-persist-hop-spike"
+name = "mikura-persist-hop-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway persisted hop sidecar. Not the kura store."
+description = "Throwaway persisted hop sidecar. Not the mikura store."
 
 [[bin]]
-name = "kura-persist-hop-spike"
+name = "mikura-persist-hop-spike"
 path = "src/main.rs"
 
 [dependencies]

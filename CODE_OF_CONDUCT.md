@@ -2,7 +2,7 @@
 
 ## Our commitment
 
-Participation in kura should be a respectful, harassment-free experience for
+Participation in mikura should be a respectful, harassment-free experience for
 everyone, regardless of background, identity, experience level, or personal
 characteristics.
 

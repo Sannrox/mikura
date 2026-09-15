@@ -1,4 +1,4 @@
-//! Data page fsync, then superblock commit pointer. Throwaway. Not kura's store.
+//! Data page fsync, then superblock commit pointer. Throwaway. Not mikura's store.
 //!
 //! Rebuild trusts only pages 1..=committed. An extra CRC-valid page is not
 //! authority. A committed page with a bad CRC fails closed.
@@ -239,7 +239,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-fsync-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-fsync-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn uncommitted_page_is_not_authority_and_missing_committed_fails_closed() {
-        let dir = std::env::temp_dir().join("kura-fsync-commit-test");
+        let dir = std::env::temp_dir().join("mikura-fsync-commit-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.pages");

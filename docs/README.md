@@ -5,7 +5,7 @@ the job.
 
 | Page | Type | Job |
 | --- | --- | --- |
-| [../VISION.md](../VISION.md) | Explanation | Why kura exists and what is out of scope |
+| [../VISION.md](../VISION.md) | Explanation | Why mikura exists and what is out of scope |
 | [../ROADMAP.md](../ROADMAP.md) | Explanation | What to build next |
 | [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
 | [glossary.md](glossary.md) | Reference | Project terms |

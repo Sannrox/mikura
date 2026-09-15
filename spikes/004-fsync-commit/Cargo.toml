@@ -1,12 +1,12 @@
 [package]
-name = "kura-fsync-commit-spike"
+name = "mikura-fsync-commit-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway fsync + superblock commit pointer. Not the kura store."
+description = "Throwaway fsync + superblock commit pointer. Not the mikura store."
 
 [[bin]]
-name = "kura-fsync-commit-spike"
+name = "mikura-fsync-commit-spike"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,5 +1,5 @@
 //! Group commit: fsync a batch of data pages, then one superblock.
-//! Throwaway. Not kura's store.
+//! Throwaway. Not mikura's store.
 
 use crc32fast::Hasher as Crc;
 use sha2::{Digest, Sha256};
@@ -235,7 +235,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-group-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-group-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn uncommitted_group_tail_is_not_authority() {
-        let dir = std::env::temp_dir().join("kura-group-commit-test");
+        let dir = std::env::temp_dir().join("mikura-group-commit-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.pages");

@@ -1,4 +1,4 @@
-//! Throwaway funnel + JSONL object log. Not kura's store of record.
+//! Throwaway funnel + JSONL object log. Not mikura's store of record.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -60,7 +60,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-funnel-log-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-funnel-log-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn rebuild_replays_last_generation_and_keeps_hidden_out_of_hops() {
-        let dir = std::env::temp_dir().join("kura-funnel-log-test");
+        let dir = std::env::temp_dir().join("mikura-funnel-log-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.jsonl");

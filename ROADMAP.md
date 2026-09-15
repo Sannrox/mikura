@@ -30,20 +30,20 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 ## Later (not this repository)
 
-A control plane may, after kura is a tagged crate:
+A control plane may, after mikura is a tagged crate:
 
-1. Dual-read its object index against kura.
-2. Serve object-set evaluate from kura projections.
+1. Dual-read its object index against mikura.
+2. Serve object-set evaluate from mikura projections.
 3. Stop writing a SQL object-type index — only after soak plus an ADR **in
    that** repository.
 
-Depend on kura by git tag or crates.io. Do not vendor this tree.
+Depend on mikura by git tag or crates.io. Do not vendor this tree.
 
 ## Stop rules
 
 - No Spark, search engine, or warehouse as the object store of record.
 - No merging this git repository into another product.
-- No vendoring `crates/kura` into another product.
+- No vendoring `crates/mikura` into another product.
 - A miss is a note, not an engine pick.
 - Do not claim a projection is durable until it has a restart path and a
   dual-read against the log.

@@ -1,12 +1,12 @@
 [package]
-name = "kura-hop-projection-spike"
+name = "mikura-hop-projection-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway live hop projection. Not the kura store."
+description = "Throwaway live hop projection. Not the mikura store."
 
 [[bin]]
-name = "kura-hop-projection-spike"
+name = "mikura-hop-projection-spike"
 path = "src/main.rs"
 
 [dependencies]

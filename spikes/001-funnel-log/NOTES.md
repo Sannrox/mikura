@@ -32,7 +32,7 @@ Evidence: second `rebuild()` digest matches live map; hidden `c0` / `o0` /
 What worked: last-generation wins; funnel snapshot + 1k incremental appends;
 in-process hash hop over the projection, not over the log.
 
-What this is not: kura’s on-disk format. JSONL is the spike vehicle. No
+What this is not: mikura’s on-disk format. JSONL is the spike vehicle. No
 pages, no checksums per record, no crash recovery, no 10⁷ envelope.
 
 Recommendation: keep the log-as-authority split. Next spike: length-prefixed

@@ -25,7 +25,7 @@ cargo run --release -- --objects 1000000
 JSONL (001) proved the funnel split. This spike proves a **checksummed
 record stream** can be the log vehicle without a database.
 
-What this is not: pages, fsync policy, compaction, or kura’s product
+What this is not: pages, fsync policy, compaction, or mikura’s product
 format. CRC32 is not a cryptographic MAC.
 
 Recommendation: keep binary records. Next: pages (fixed-size, checksum per

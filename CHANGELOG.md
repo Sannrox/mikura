@@ -7,8 +7,11 @@ window.
 
 ## [Unreleased]
 
-Documentation and project-governance files for an independent crate. No
-on-disk log format change.
+### Changed
+
+- Renamed the crate from `kura` to `mikura` (御倉). On-disk superblock magic
+  is `MIKURAV1`. Local `KURAV1` logs from the private `kura` name are not
+  readable; recreate them. No published format existed.
 
 ## [0.1.0] - 2026-09-15
 

@@ -1,8 +1,8 @@
 # Vision
 
-kura is a **hosted object database**. Applications ask questions about
-objects. They do not query SQL tables or search hits as the source of
-identity.
+**mikura** (御倉, a storehouse for valuables) is a **hosted object
+database**. Applications ask questions about objects. They do not query
+SQL tables or search hits as the source of identity.
 
 Indexing and querying stay split. The object log is authority. Projections
 are rebuildable: if you delete them, the store can still answer from the log.
@@ -11,9 +11,9 @@ v1 is an in-process library so that kernel can be tested. The destination is
 a hosted service (ingest, store, object-set API), not “only a library.”
 
 This repository is independent. Other products may **depend** on a published
-kura tag. They must not vendor this tree.
+mikura tag. They must not vendor this tree.
 
-## Questions kura exists to answer
+## Questions mikura exists to answer
 
 1. What is the current object for this primary key?
 2. What links leave or enter it?
@@ -34,12 +34,12 @@ in-process deny list, not a principal.
 
 | Kind of data | Where |
 | --- | --- |
-| Object instances (keys, properties, links, generations) | **kura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
-| Hop / join indexes | **kura projections** (in memory in v1; persisted sidecars next) |
+| Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
+| Hop / join indexes | **mikura projections** (in memory in v1; persisted sidecars next) |
 | Who / policy / receipts / type catalogs | A **control plane**, not this crate |
 | Portable ontology CLI | A separate ontology database — never the object log |
 
-kura is the warehouse of things. A control plane may be the clerk (identity,
+mikura is the warehouse of things. A control plane may be the clerk (identity,
 policy, receipts). The clerk’s ledger is not the graph engine.
 
 ## Long-horizon target (not current claims)
@@ -78,33 +78,33 @@ property ACL; Action writeback; rebuildable projections; envelopes.
 **Out until an ADR:** control-plane policy, budgets, or LLM routing; ontology
 CLI databases; cloning a vendor API; using Spark, search, or a warehouse as
 the object store of record; merging this git repository into another product;
-vendoring kura as a nested crate copy.
+vendoring mikura as a nested crate copy.
 
 ## First consumer (optional)
 
 [sekai-chisei](https://github.com/Sannrox/sekai-chisei) is a governed control
-plane that may later depend on a tagged kura crate. That cutover lives in
+plane that may later depend on a tagged mikura crate. That cutover lives in
 *that* repository, not here.
 
-| | Control plane | kura |
+| | Control plane | mikura |
 | --- | --- | --- |
 | Job | Who, policy, receipts | Object instances |
 | Form | Its own service | Library now; hosted service later |
 | Authority | Admission and audit | Object log + generations |
-| Query | Its public RPCs | Object-set evaluate over kura projections |
+| Query | Its public RPCs | Object-set evaluate over mikura projections |
 | Storage | Its clerk database | This paged log |
 
-No shared database. No git submodule. No nested `crates/kura` copy.
+No shared database. No git submodule. No nested `crates/mikura` copy.
 
 Keep control-plane RPCs in the control plane. Never move receipts, tenants,
-or policy compile into kura. Never make kura the policy engine.
+or policy compile into mikura. Never make mikura the policy engine.
 
 ## Alternatives rejected
 
 - **Build the object log inside the control plane.** Receipts must not wait
   on a storage engine.
-- **Vendor kura into the consumer.** Independent crate; reference later.
-- **SQL as kura’s store of record.** SQL may remain a clerk. It is not the
+- **Vendor mikura into the consumer.** Independent crate; reference later.
+- **SQL as mikura’s store of record.** SQL may remain a clerk. It is not the
   graph engine.
 - **Start with cluster compute.** In-process hop count holds at 10⁷ (0 ms
   with a hop projection). Cluster compute waits for a miss in-process cannot

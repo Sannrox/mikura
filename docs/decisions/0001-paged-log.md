@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-15
-- Owners: kura maintainers
+- Owners: mikura maintainers
 - Related: spikes 003–005
 - Supersedes: none
 - Superseded by: none
@@ -19,9 +19,12 @@ that can lag written pages so a crash cannot promote an un-fsynced page.
 
 ## Decision
 
-The kura `Store` log is 4 KiB CRC32 pages (`src/log.rs`).
+The mikura `Store` log is 4 KiB CRC32 pages (`src/log.rs`).
 
-- Page 0 is a superblock: magic `KURAV1\n\n`, page size, `committed_pages`.
+- Page 0 is a superblock: magic `MIKURAV1` (8 bytes), page size,
+  `committed_pages`.
+- The crate was briefly named `kura` in private development. `MIKURAV1`
+  is the only product magic; there was no published `KURAV1` format.
 - Rebuild reads only pages `1..=committed_pages`.
 - Writers may fsync a group of data pages, then the superblock.
 - Default policy on `Store::create` / `Store::open` is `SyncPolicy::Group(32)`.

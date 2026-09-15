@@ -1,4 +1,4 @@
-//! Fixed-size checksummed pages. Throwaway. Not kura's store.
+//! Fixed-size checksummed pages. Throwaway. Not mikura's store.
 //!
 //! A torn write cannot look like a valid short record: readers only accept
 //! complete 4KiB pages whose CRC covers the whole page.
@@ -145,7 +145,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-paged-log-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-paged-log-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn torn_last_page_is_dropped_middle_page_fails_closed() {
-        let dir = std::env::temp_dir().join("kura-paged-log-test");
+        let dir = std::env::temp_dir().join("mikura-paged-log-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.pages");

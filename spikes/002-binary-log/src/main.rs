@@ -1,4 +1,4 @@
-//! Length-prefixed records + CRC32. Throwaway. Not kura's store.
+//! Length-prefixed records + CRC32. Throwaway. Not mikura's store.
 
 use crc32fast::Hasher as Crc;
 use sha2::{Digest, Sha256};
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-binary-log-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-binary-log-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn checksum_mismatch_fails_closed_and_truncated_tail_is_ignored() {
-        let dir = std::env::temp_dir().join("kura-binary-log-test");
+        let dir = std::env::temp_dir().join("mikura-binary-log-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.log");

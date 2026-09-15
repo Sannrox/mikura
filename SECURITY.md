@@ -1,6 +1,6 @@
 # Security policy
 
-kura is pre-1.0 (`0.1.x`, `publish = false`). Security work targets current
+mikura is pre-1.0 (`0.1.x`, `publish = false`). Security work targets current
 `main`. Older snapshots do not receive separate support.
 
 ## Reporting a vulnerability
@@ -34,13 +34,13 @@ These are **not** a security boundary yet:
   principal, session, or wire ACL.
 - There is no authentication, authorization service, or multi-tenant isolation
   in this crate.
-- Object logs on disk are not encrypted by kura.
+- Object logs on disk are not encrypted by mikura.
 
-Treat a kura log file as sensitive application data. Do not commit `*.kura`
+Treat a mikura log file as sensitive application data. Do not commit `*.mikura`
 files or copy them into issues.
 
 ## Safe defaults
 
 - Keep development logs under a temp directory or gitignored `data/`.
-- Do not expose a kura process on a non-loopback address until hosted gRPC
+- Do not expose a mikura process on a non-loopback address until hosted gRPC
   and on-the-wire ACL exist ([ROADMAP.md](ROADMAP.md)).

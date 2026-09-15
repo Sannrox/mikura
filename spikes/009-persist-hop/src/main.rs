@@ -1,4 +1,4 @@
-//! Persist reachable hop keys beside the object log. Throwaway. Not kura's store.
+//! Persist reachable hop keys beside the object log. Throwaway. Not mikura's store.
 //!
 //! Restart loads the hop sidecar instead of replaying JSONL. The sidecar is a
 //! checksummed blob replaced atomically. JSONL remains the object-log vehicle.
@@ -240,7 +240,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-persist-hop-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-persist-hop-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn persist_load_matches_and_checksum_fails_closed() {
-        let dir = std::env::temp_dir().join("kura-persist-hop-test");
+        let dir = std::env::temp_dir().join("mikura-persist-hop-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let log = dir.join("objects.jsonl");

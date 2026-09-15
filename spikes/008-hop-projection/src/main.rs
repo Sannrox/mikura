@@ -1,5 +1,5 @@
 //! Live hop projection: join indexes maintained on funnel apply.
-//! Throwaway. Not kura's store. JSONL log is a vehicle.
+//! Throwaway. Not mikura's store. JSONL log is a vehicle.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -172,7 +172,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("kura-hop-{}", std::process::id()));
+    let dir = env::temp_dir().join(format!("mikura-hop-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     if let Err(error) = fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn hop_projection_matches_scan_and_ignores_hidden() {
-        let dir = std::env::temp_dir().join("kura-hop-projection-test");
+        let dir = std::env::temp_dir().join("mikura-hop-projection-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.jsonl");

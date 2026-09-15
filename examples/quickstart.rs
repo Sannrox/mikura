@@ -1,6 +1,6 @@
 //! Ingest a tiny graph, evaluate two hops, apply an Action, reopen the log.
 
-use kura::{
+use mikura::{
     Action, Aggregate, BatchIngest, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet,
     PropertyAcl, Store,
 };
@@ -40,10 +40,10 @@ fn request() -> EvaluateRequest {
 }
 
 fn main() -> Result<(), String> {
-    let dir = std::env::temp_dir().join("kura-quickstart");
+    let dir = std::env::temp_dir().join("mikura-quickstart");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    let log = dir.join("objects.kura");
+    let log = dir.join("objects.mikura");
 
     let mut store = Store::create(&log)?;
     BatchIngest::run(

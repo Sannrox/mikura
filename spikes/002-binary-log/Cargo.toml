@@ -1,12 +1,12 @@
 [package]
-name = "kura-binary-log-spike"
+name = "mikura-binary-log-spike"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Throwaway length-prefixed checksummed log. Not the kura store."
+description = "Throwaway length-prefixed checksummed log. Not the mikura store."
 
 [[bin]]
-name = "kura-binary-log-spike"
+name = "mikura-binary-log-spike"
 path = "src/main.rs"
 
 [dependencies]

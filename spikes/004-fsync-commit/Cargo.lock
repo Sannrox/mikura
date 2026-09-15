@@ -66,7 +66,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kura-fsync-commit-spike"
+name = "mikura-fsync-commit-spike"
 version = "0.0.0"
 dependencies = [
  "crc32fast",

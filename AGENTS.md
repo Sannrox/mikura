@@ -1,6 +1,6 @@
 # Repository guidelines
 
-kura is a Rust 2021 crate for an object database: ingest, object log,
+mikura is a Rust 2021 crate for an object database: ingest, object log,
 object-set evaluate, property ACLs, Action writeback. v1 is an in-process
 library. Hosted service is later.
 
@@ -52,16 +52,16 @@ this repo.
 - Do not add a control-plane crate as a dependency.
 - Do not vendor this tree into another product.
 - Do not use SQL or `sekai --db` as the object log.
-- A consumer may later depend on a published kura tag. That cutover is not
+- A consumer may later depend on a published mikura tag. That cutover is not
   work in this repository.
 
 ## Skills
 
-Copied from sekai-chisei. Procedure is the same; substitute kura paths,
+Copied from sekai-chisei. Procedure is the same; substitute mikura paths,
 VISION/ROADMAP/architecture, and this file. Ignore gateway, proto, provider,
 and dual-SQL rows: they do not exist here.
 
-| Skill | Use in kura |
+| Skill | Use in mikura |
 | --- | --- |
 | `verify-change` | After implementation. Gates: fmt-check, `cargo test --locked`, clippy `-D warnings`, `cargo run --example quickstart` when examples or the public API changed. |
 | `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
@@ -76,7 +76,7 @@ and dual-SQL rows: they do not exist here.
 
 If a portable ontology is used, follow the `sekai-ontology` skill. Validate
 before relying on it. State absence rather than inferring. Do not use the
-kura object log or a control-plane database as that file.
+mikura object log or a control-plane database as that file.
 
 ## Style and tests
 
@@ -113,17 +113,17 @@ Do not invent a GitHub remote. When one exists, PRs follow
 **Ask first**
 
 - Changing the on-disk log format (needs a new ADR).
-- Adding a GitHub remote, publishing a crate, or referencing kura from
+- Adding a GitHub remote, publishing a crate, or referencing mikura from
   another product.
 - Introducing gRPC, Spark, or a second storage engine.
 - Bumping Rust edition.
 
 **Never**
 
-- Commit secrets, object logs (`*.kura`), SQLite files, or `target/`.
-- Vendor kura into another product or depend on a control plane from this
+- Commit secrets, object logs (`*.mikura`), SQLite files, or `target/`.
+- Vendor mikura into another product or depend on a control plane from this
   crate.
-- Use SQL as kura's store of record.
+- Use SQL as mikura's store of record.
 - Pick Spark/search/warehouse from a spike miss.
 - Clone vendor API names or protobufs.
 - Overwrite uncommitted work in another checkout.
