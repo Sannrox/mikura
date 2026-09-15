@@ -13,6 +13,9 @@ window.
   source snapshot with admitted edits by `(kind, key)`. Edits replace source
   for the same identity, including `hidden`. The object log after append
   remains authority.
+- `mikura-ingest::snapshot_changelog` and `ChangelogIngest::run` diff two
+  source snapshots into upserts and hides. Identical snapshots append
+  nothing. Changelog output is valid source input to `MergeIngest`.
 
 ### Changed
 
