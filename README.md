@@ -8,9 +8,9 @@ Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.
 ## Status
 
 - v0 spikes 001–010: log, pages, fsync, group commit, live hop, join sidecar.
-- **v1 crate (`kura`)**: in-process store + batch/stream ingest + local
-  object-set evaluate + property ACL fail-closed + Action writeback.
-  `SparkCompute` exists as a seam and returns unsupported until an envelope.
+- **v1 crate (`kura`)**: paged log (ADR 0001) + ingest + evaluate + ACL +
+  Action writeback. Independent of sekai-chisei. `SparkCompute` stays
+  unsupported until an envelope.
 
 ```text
 cargo test --offline --manifest-path Cargo.toml

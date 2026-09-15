@@ -43,8 +43,9 @@ rebuild identity from the log.
 **v0 (done):** spikes 001–010. See `spikes/README.md`.
 
 **v1 (this crate):** in-process store + ingest + object-set evaluate +
-property ACL + Action writeback. Dual-read projections vs log. JSONL or
-pages as the log vehicle until a format ADR.
+property ACL + Action writeback. Log is 4KiB pages + group commit
+([ADR 0001](docs/decisions/0001-paged-log.md)). Independent git repo;
+sekai-chisei does not vendor it.
 
 **v2:** 10⁸ envelope; durable paged log + group commit + persisted join
 maps in one process; soak dual-read.

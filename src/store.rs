@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::actions::Action;
+use crate::log::{LogWriter, SyncPolicy, read_records};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {
@@ -50,36 +49,37 @@ impl JoinMaps {
 
 pub struct Store {
     log: PathBuf,
+    writer: LogWriter,
     objects: HashMap<(String, String), ObjectRecord>,
     joins: JoinMaps,
 }
 
 impl Store {
     pub fn create(log: &Path) -> Result<Self, String> {
-        if let Some(parent) = log.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        File::create(log).map_err(|e| e.to_string())?;
+        Self::create_with_sync(log, SyncPolicy::Group(32))
+    }
+
+    pub fn create_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         Ok(Self {
             log: log.to_path_buf(),
+            writer: LogWriter::create(log, sync)?,
             objects: HashMap::new(),
             joins: JoinMaps::default(),
         })
     }
 
     pub fn open(log: &Path) -> Result<Self, String> {
+        Self::open_with_sync(log, SyncPolicy::Group(32))
+    }
+
+    pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         let mut store = Self {
             log: log.to_path_buf(),
+            writer: LogWriter::open(log, sync)?,
             objects: HashMap::new(),
             joins: JoinMaps::default(),
         };
-        let file = File::open(log).map_err(|e| e.to_string())?;
-        for line in BufReader::new(file).lines() {
-            let line = line.map_err(|e| e.to_string())?;
-            if line.is_empty() {
-                continue;
-            }
-            let record: ObjectRecord = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        for record in read_records(log)? {
             store.apply_record(record);
         }
         Ok(store)
@@ -101,7 +101,8 @@ impl Store {
         } else if record.gen == 0 {
             record.gen = 1;
         }
-        self.write_log(&record)?;
+        self.writer.append_record(&record)?;
+        self.writer.flush()?;
         self.apply_record(record);
         Ok(())
     }
@@ -134,25 +135,13 @@ impl Store {
             .filter(|record| record.kind != kind)
             .cloned()
             .collect();
-        File::create(&self.log).map_err(|e| e.to_string())?;
+        self.writer = LogWriter::create(&self.log, SyncPolicy::Group(32))?;
         self.objects.clear();
         self.joins = JoinMaps::default();
         for record in keep.into_iter().chain(records) {
             self.append(record)?;
         }
         Ok(())
-    }
-
-    fn write_log(&self, record: &ObjectRecord) -> Result<(), String> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log)
-            .map_err(|e| e.to_string())?;
-        let mut out = BufWriter::new(file);
-        serde_json::to_writer(&mut out, record).map_err(|e| e.to_string())?;
-        out.write_all(b"\n").map_err(|e| e.to_string())?;
-        out.flush().map_err(|e| e.to_string())
     }
 
     fn unindex(&mut self, record: &ObjectRecord) {

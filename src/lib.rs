@@ -8,6 +8,7 @@ mod acl;
 mod actions;
 mod compute;
 mod ingest;
+mod log;
 mod objectset;
 mod store;
 
@@ -82,7 +83,7 @@ mod tests {
         let dir = std::env::temp_dir().join("kura-v1-lib-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let log = dir.join("objects.jsonl");
+        let log = dir.join("objects.kura");
         let mut store = Store::create(&log).unwrap();
         BatchIngest::run(&mut store, fixture()).unwrap();
 
