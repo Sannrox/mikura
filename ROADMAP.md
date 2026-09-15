@@ -18,13 +18,17 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 1. Persist join maps in `Store` (spike 010 as the restart path; dual-read
    versus log replay). Generic kinds, not only Customer/Order/Shipment.
+   ([#1](https://github.com/Sannrox/mikura/issues/1))
 2. Use group commit on the ingest path. `Store::append` currently flushes
    every record; the writer already supports `SyncPolicy::Group(32)`.
+   ([#2](https://github.com/Sannrox/mikura/issues/2))
 3. 10⁸ envelope on hop count + sum. Miss → more projection work, not a new
-   engine.
+   engine. ([#3](https://github.com/Sannrox/mikura/issues/3))
 4. Streaming ingest under load (bounded queue, backpressure, fail closed).
    `StreamIngest` today is an in-memory `Vec`.
+   ([#4](https://github.com/Sannrox/mikura/issues/4))
 5. Hosted service for ingest/evaluate; property ACL on the wire.
+   ([#5](https://github.com/Sannrox/mikura/issues/5))
 6. Compute backend only if in-process hops/aggregates miss a published
    envelope.
 
