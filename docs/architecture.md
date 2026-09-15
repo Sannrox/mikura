@@ -53,10 +53,16 @@ Records do **not** store an Action id, principal, or schema version.
 
 `Store::create` / `Store::open` use `Group(32)`. That matches [ADR 0001](decisions/0001-paged-log.md).
 
-**Current ingest caveat:** `Store::append` calls `LogWriter::flush` after
-every record, so each append commits the current page. Group commit only
-batches if the caller appends many records before flush. Batching ingest
-onto the writer is roadmap item 2.
+**Ingest / fsync contract:**
+
+- `Store::append` of one record flushes the writer, then persists join maps.
+  A single-record append is a complete commit.
+- `BatchIngest::run` appends every record onto the writer, then flushes once.
+  Under `Group(32)` that fsyncs data pages in batches of 32, then the
+  superblock. A crash mid-batch drops the uncommitted tail; rebuild reads
+  only `1..=committed_pages`.
+- Orphan pages after `committed_pages` are ignored. Missing committed pages
+  fail closed.
 
 JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
@@ -83,7 +89,7 @@ path). It is a test/rebuild helper, not a production compaction API.
 
 ## Ingest
 
-`BatchIngest::run` appends each record through `Store`.
+`BatchIngest::run` buffers records on the log writer and group-commits once.
 
 `StreamIngest` is an in-memory `Vec` plus `flush_into`. It does not bound
 memory, apply backpressure, or fsync on a schedule. Streaming under load is

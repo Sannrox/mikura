@@ -14,20 +14,18 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v1 library | In-process crate: ingest, evaluate, property deny-list, Action append |
 | v1 log format | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | v2 join maps | Persist generic join sidecar in `Store`; dual-read versus log ([ADR 0002](docs/decisions/0002-join-sidecar.md), [#1](https://github.com/Sannrox/mikura/issues/1)) |
+| v2 ingest | Group commit on batch ingest; single-record `append` stays a complete commit ([#2](https://github.com/Sannrox/mikura/issues/2)) |
 
 ## Next (this repository, in order)
 
-1. Use group commit on the ingest path. `Store::append` currently flushes
-   every record; the writer already supports `SyncPolicy::Group(32)`.
-   ([#2](https://github.com/Sannrox/mikura/issues/2))
-2. 10⁸ envelope on hop count + sum. Miss → more projection work, not a new
+1. 10⁸ envelope on hop count + sum. Miss → more projection work, not a new
    engine. ([#3](https://github.com/Sannrox/mikura/issues/3))
-3. Streaming ingest under load (bounded queue, backpressure, fail closed).
+2. Streaming ingest under load (bounded queue, backpressure, fail closed).
    `StreamIngest` today is an in-memory `Vec`.
    ([#4](https://github.com/Sannrox/mikura/issues/4))
-4. Hosted service for ingest/evaluate; property ACL on the wire.
+3. Hosted service for ingest/evaluate; property ACL on the wire.
    ([#5](https://github.com/Sannrox/mikura/issues/5))
-5. Compute backend only if in-process hops/aggregates miss a published
+4. Compute backend only if in-process hops/aggregates miss a published
    envelope.
 
 ## Later (not this repository)

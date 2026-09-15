@@ -340,7 +340,15 @@ impl Store {
         self.objects.insert(id, record);
     }
 
-    pub fn append(&mut self, mut record: ObjectRecord) -> Result<(), String> {
+    pub fn append(&mut self, record: ObjectRecord) -> Result<(), String> {
+        self.append_uncommitted(record)?;
+        self.commit()
+    }
+
+    /// Buffer a record on the writer and update live maps. Durability requires
+    /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
+    /// the rebuild (ADR 0001).
+    pub(crate) fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
         let id = (record.kind.clone(), record.key.clone());
         if let Some(existing) = self.objects.get(&id) {
             record.gen = existing.gen.max(1) + 1;
@@ -348,9 +356,19 @@ impl Store {
             record.gen = 1;
         }
         self.writer.append_record(&record)?;
-        self.writer.flush()?;
         self.apply_record(record);
+        Ok(())
+    }
+
+    /// Group-commit the current writer pages and persist join maps.
+    pub(crate) fn commit(&mut self) -> Result<(), String> {
+        self.writer.flush()?;
         self.persist_joins()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn log_fsync_count(&self) -> u64 {
+        self.writer.fsync_count()
     }
 
     pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
@@ -386,9 +404,9 @@ impl Store {
         self.objects.clear();
         self.joins = JoinMaps::default();
         for record in keep.into_iter().chain(records) {
-            self.append(record)?;
+            self.append_uncommitted(record)?;
         }
-        Ok(())
+        self.commit()
     }
 
     fn persist_joins(&self) -> Result<(), String> {

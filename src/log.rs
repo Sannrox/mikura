@@ -44,6 +44,7 @@ pub struct LogWriter {
     written: u32,
     committed: u32,
     sync: SyncPolicy,
+    fsync_count: u64,
 }
 
 impl LogWriter {
@@ -59,6 +60,7 @@ impl LogWriter {
             written: 0,
             committed: 0,
             sync,
+            fsync_count: 0,
         };
         writer.write_superblock()?;
         Ok(writer)
@@ -80,7 +82,13 @@ impl LogWriter {
             written: committed,
             committed,
             sync,
+            fsync_count: 0,
         })
+    }
+
+    #[cfg(test)]
+    pub fn fsync_count(&self) -> u64 {
+        self.fsync_count
     }
 
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
@@ -129,9 +137,7 @@ impl LogWriter {
         if self.written == self.committed {
             return Ok(());
         }
-        if self.sync.durable() {
-            self.file.sync_data().map_err(|e| e.to_string())?;
-        }
+        self.sync_data()?;
         self.committed = self.written;
         self.write_superblock()
     }
@@ -150,12 +156,18 @@ impl LogWriter {
         self.file
             .write_all(&superblock)
             .map_err(|e| e.to_string())?;
-        if self.sync.durable() {
-            self.file.sync_data().map_err(|e| e.to_string())?;
-        }
+        self.sync_data()?;
         self.file
             .seek(SeekFrom::Start(pos.max(PAGE as u64)))
             .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn sync_data(&mut self) -> Result<(), String> {
+        if self.sync.durable() {
+            self.file.sync_data().map_err(|e| e.to_string())?;
+            self.fsync_count += 1;
+        }
         Ok(())
     }
 }
@@ -350,6 +362,35 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let after = read_records(&path).unwrap();
         assert_eq!(after.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_committed_page_fails_closed() {
+        let dir = std::env::temp_dir().join("mikura-log-missing");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("objects.mikura");
+        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        writer
+            .append_record(&ObjectRecord {
+                gen: 1,
+                kind: "Customer".into(),
+                key: "c1".into(),
+                hidden: false,
+                props: HashMap::from([("region".into(), "eu".into())]),
+            })
+            .unwrap();
+        writer.flush().unwrap();
+        assert_eq!(read_records(&path).unwrap().len(), 1);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.len() >= PAGE * 2);
+        std::fs::write(&path, &bytes[..PAGE]).unwrap();
+        let err = read_records(&path).unwrap_err();
+        assert!(
+            err.contains("missing") || err.contains("committed"),
+            "{err}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
