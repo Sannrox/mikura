@@ -7,9 +7,9 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–006. Live projection is the evaluate path; log
-rebuild is recovery/dual-read. No engine is picked. Spikes must not become
-the product store.
+Vision plus spikes 001–007. Live projection is the evaluate path. At 10⁷,
+two-hop misses 500 ms (7.0 s); incremental 1k holds. No engine is picked.
+Spikes must not become the product store.
 
 ## Layout
 

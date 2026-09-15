@@ -97,10 +97,9 @@ as a **storage adapter**, not by merging repos.
 
 ## Success
 
-v0 (this tree): vision, non-goals, and spikes
-[001-funnel-log](spikes/001-funnel-log/NOTES.md) through
-[006-live-projection](spikes/006-live-projection/NOTES.md) (evaluate the
-live map; dual-read vs log rebuild; 10⁶ hop 395 ms live vs 824 ms rebuild).
+v0 (this tree): vision, non-goals, and spikes 001–007. Live map is the
+evaluate path. [007](spikes/007-ten-million-envelope/NOTES.md): 10⁷ two-hop
+**7.0 s miss** vs 500 ms; incremental 1k **6 ms hold**; dual-read holds.
 No engine pick.
 
 v1: funnel + object log + one in-process object-set evaluate on a 10⁷
