@@ -102,6 +102,12 @@ source rows stay hidden unless an edit unhides them. `MergeIngest::run` appends
 that merged list through `BatchIngest`. The merge list is not authority; rebuild
 reads only the committed log.
 
+`mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
+changed `props`/`hidden` emit the current row; keys that disappear emit a hide
+of the last visible payload. Identical snapshots emit nothing.
+`ChangelogIngest::run` appends only that diff. Changelog output is valid source
+input to `MergeIngest`. The list is not authority.
+
 `mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
 records. `push` calls `Store::append_uncommitted` (live maps update
 immediately). A push that would exceed the bound returns an error and does
