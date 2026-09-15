@@ -5,7 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#1](https://github.com/Sannrox/mikura/issues/1), spike 010
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [ADR 0004](0004-slim-join-maps.md) for sidecar layout (`MKJOIN02`)
 
 ## Context
 

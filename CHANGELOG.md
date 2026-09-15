@@ -16,6 +16,10 @@ window.
 - `mikura-ingest::snapshot_changelog` and `ChangelogIngest::run` diff two
   source snapshots into upserts and hides. Identical snapshots append
   nothing. Changelog output is valid source input to `MergeIngest`.
+- Slim interned join maps (`MKJOIN02`). Restart answers hop/sum from the
+  sidecar without hydrating object payloads. Dirty commits write
+  `{log}.joins.delta` instead of rewriting the checkpoint. Old `MKJOIN01`
+  files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md)).
 
 ### Changed
 

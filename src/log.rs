@@ -90,6 +90,10 @@ impl LogWriter {
         self.fsync_count
     }
 
+    pub fn committed_pages(&self) -> u32 {
+        self.committed
+    }
+
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
         let body = encode_body(record)?;
         let framed = framed_record(&body)?;

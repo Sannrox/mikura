@@ -67,3 +67,21 @@ Recommendation: more projection work.
 
 Follow-up: [#15](https://github.com/Sannrox/mikura/issues/15) slim join maps.
 No Spark / search / warehouse pick.
+
+## Addendum (2026-09-16): slim maps landed
+
+[#15](https://github.com/Sannrox/mikura/issues/15) / [ADR 0004](../../docs/decisions/0004-slim-join-maps.md)
+changed the product projection to `MKJOIN02`: interned join keys and sum
+columns, restart from the sidecar without hydrating object payloads, and
+a dirty-set delta instead of rewriting the checkpoint on every batch.
+
+This addendum does **not** re-run the 10⁷ query or 10⁸ ingest. Crate tests
+prove persist/reopen, dual-read, fail-closed, and delta-not-full-rewrite.
+Re-measure on the same 32 GiB class of machine before claiming the 500 ms
+envelope holds:
+
+```text
+cargo run --release -- --objects 10000000
+```
+
+Until that run, the published 10⁷ query result remains a **miss**.

@@ -72,19 +72,23 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
 `src/store.rs` keeps:
 
-- `objects: HashMap<(kind, key), ObjectRecord>` — live identity
-- `joins: JoinMaps` — projection of visible `(kind, key, props)`
+- slim identity `(kind, key) → (gen, hidden)` — enough to bump generation
+- `joins: JoinMaps` — interned join keys and sum columns ([ADR 0004](decisions/0004-slim-join-maps.md))
 - `LogWriter` — durable append
 
-`Store::open` replays the committed log into identity. Join maps load from
-the checksummed sidecar `{log}.joins` when present ([ADR 0002](decisions/0002-join-sidecar.md)).
-A missing sidecar, or one whose identity stamp does not match live records,
-is rebuilt from the log. Checksum mismatch, truncation, or bad magic fails
+`Store::open` loads identity and hop/sum from `{log}.joins` when present.
+It does not hydrate object payloads. The sidecar stamp is log
+`committed_pages`. A missing or stale sidecar rebuilds from the log.
+Checksum mismatch, truncation, or bad magic (`MKJOIN01` included) fails
 closed; deleting the sidecar recovers from the log.
 
-`JoinMaps` is generic over kind and property name. Every visible record is
-indexed. Hidden records are absent. `LocalCompute` answers hop / count / sum
-from these maps, not by scanning `objects`.
+After the first checkpoint, a dirty commit writes `{log}.joins.delta`
+instead of rewriting the whole sidecar. Compact when dirty rows exceed a
+quarter of identity.
+
+`JoinMaps` is generic over kind and property name. Strings are interned.
+Hidden records are absent from hop/sum. `LocalCompute` answers from these
+maps, not from a hot object map.
 
 `replace_kind` rewrites the whole log (creates a new writer at the same
 path). It is a test/rebuild helper, not a production compaction API.
@@ -149,13 +153,13 @@ or attestation.
 
 Not built. [ADR 0003](decisions/0003-hosted-service.md) records the shape:
 single process over the existing `Store`; loopback-only bind until auth
-exists; implement after slimmer join maps ([#15](https://github.com/Sannrox/mikura/issues/15)).
+exists; implement as [#18](https://github.com/Sannrox/mikura/issues/18).
 
 ## What v1 does not do
 
 - Hosted RPC or multi-process replication (shape decided in ADR 0003)
 - Encrypt logs
-- Incremental join WAL (sidecar is a full rewrite of visible join rows)
+- Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Track which Action produced a generation
 - Enforce ACLs per principal or on individual properties of a loaded object
 - Compact or checkpoint the log except via `replace_kind`

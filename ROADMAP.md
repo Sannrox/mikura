@@ -18,19 +18,16 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 envelope | 10⁸ hop count+sum on product join maps: query **miss** vs 500 ms; dual-read holds at 10⁷ ([#3](https://github.com/Sannrox/mikura/issues/3), spike 011) |
 | v2 ingest crate | `mikura-ingest` workspace crate ([#9](https://github.com/Sannrox/mikura/issues/9)) |
 | v3 stream bound | Bounded `StreamIngest`, fail closed on overflow ([#4](https://github.com/Sannrox/mikura/issues/4)) |
-| v3 host shape | Single-process ingest/evaluate over `Store`; loopback until auth; wait on #15 to implement ([ADR 0003](docs/decisions/0003-hosted-service.md), [#5](https://github.com/Sannrox/mikura/issues/5)) |
+| v3 host shape | Single-process ingest/evaluate over `Store`; loopback until auth ([ADR 0003](docs/decisions/0003-hosted-service.md), [#5](https://github.com/Sannrox/mikura/issues/5)) |
 | v2 ingest merge | Source records and admitted edits merge by identity in `mikura-ingest` ([#10](https://github.com/Sannrox/mikura/issues/10)) |
 | v2 ingest changelog | Snapshot changelog into upserts and hides in `mikura-ingest` ([#11](https://github.com/Sannrox/mikura/issues/11)) |
+| v2 slim joins | Interned `MKJOIN02` sidecar; restart without hot payloads; dirty-set delta ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)) |
 
 ## Next (this repository, in order)
 
-1. Slim join maps so hop count/sum can hold at 10⁸ (join columns only;
-   restart without duplicating identity; no full sidecar rewrite per batch).
-   Follow-up from the 10⁸ miss — more projection work, not a new engine.
-   ([#15](https://github.com/Sannrox/mikura/issues/15))
-2. Hosted ingest/evaluate service as sketched in ADR 0003
-   ([#18](https://github.com/Sannrox/mikura/issues/18), blocked on #15).
-3. Compute backend only if in-process hops/aggregates still miss after the
+1. Hosted ingest/evaluate service as sketched in ADR 0003
+   ([#18](https://github.com/Sannrox/mikura/issues/18)).
+2. Compute backend only if in-process hops/aggregates still miss after the
    slimmer projection.
 
 ## Later (not this repository)
