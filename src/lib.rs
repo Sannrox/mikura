@@ -188,6 +188,7 @@ mod tests {
         drop(store);
 
         let reopened = Store::open(&log).unwrap();
+        assert_eq!(reopened.hot_payloads(), 0);
         let from_maps = oss.evaluate(&reopened, &fixture_request()).unwrap();
         assert_eq!(from_maps.two_hop_count, live.two_hop_count);
         assert_eq!(from_maps.sum_amount, live.sum_amount);
@@ -339,6 +340,69 @@ mod tests {
         drop(store);
         let reopened = Store::open(&log).unwrap();
         assert!(reopened.joins().is_visible("Customer", "c1"));
+        assert_eq!(reopened.hot_payloads(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_join_sidecar_magic_fails_closed() {
+        let (dir, log) = temp_log("join-old-magic");
+        let sidecar = Store::join_map_path(&log);
+        let mut store = Store::create(&log).unwrap();
+        append_all(&mut store, fixture());
+        drop(store);
+        let mut bytes = std::fs::read(&sidecar).unwrap();
+        let crc_at = bytes.len() - 4;
+        bytes[..8].copy_from_slice(b"MKJOIN01");
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&bytes[..crc_at]);
+        bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
+        std::fs::write(&sidecar, &bytes).unwrap();
+        let err = match Store::open(&log) {
+            Err(err) => err,
+            Ok(_) => panic!("old magic should fail closed"),
+        };
+        assert!(err.contains("magic") || err.contains("checksum"), "{err}");
+        std::fs::remove_file(&sidecar).unwrap();
+        let recovered = Store::open(&log).unwrap();
+        assert!(recovered.joins().is_visible("Customer", "c1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn batch_commit_writes_delta_not_full_sidecar() {
+        let (dir, log) = temp_log("join-delta");
+        let sidecar = Store::join_map_path(&log);
+        let delta = Store::join_delta_path(&log);
+        let mut store = Store::create(&log).unwrap();
+        for record in generic_records() {
+            store.append_uncommitted(record).unwrap();
+        }
+        store.commit().unwrap();
+        let checkpoint = std::fs::metadata(&sidecar).unwrap().len();
+        assert!(!delta.exists());
+        store
+            .append(rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o1"), ("amount", "5")],
+            ))
+            .unwrap();
+        let after = std::fs::metadata(&sidecar).unwrap().len();
+        assert_eq!(after, checkpoint, "checkpoint should not be rewritten");
+        assert!(delta.is_file(), "dirty commit should write a delta");
+        assert!(
+            std::fs::metadata(&delta).unwrap().len() < checkpoint,
+            "delta should be smaller than the checkpoint"
+        );
+        drop(store);
+        let reopened = Store::open(&log).unwrap();
+        assert_eq!(reopened.hot_payloads(), 0);
+        let oss = ObjectSet::new(LocalCompute);
+        let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(response.two_hop_count, 1);
+        assert_eq!(response.sum_amount, 15);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

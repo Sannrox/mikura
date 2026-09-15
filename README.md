@@ -18,7 +18,7 @@ and for contributing to the kernel. Not a production hosted store.
 | --- | --- |
 | 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Hosted gRPC |
 | Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Principal-aware ACL on the wire |
-| Object-set hop / count / sum from join sidecar ([ADR 0002](docs/decisions/0002-join-sidecar.md)) | Cluster compute |
+| Object-set hop / count / sum from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Cluster compute |
 | Property deny-list (fail closed) | |
 
 Spikes 001–010 are throwaway evidence under [`spikes/`](spikes/README.md).
