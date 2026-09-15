@@ -4,7 +4,7 @@ Hosted **object database**: ingest, object-sets, property ACLs, Action
 writeback. Independent of `sekai-chisei`. Not a vendor clone.
 
 **Read [VISION.md](VISION.md)** (what and why) and **[ROADMAP.md](ROADMAP.md)**
-(order of work).
+(order of work). Agent and contributor workflow: **[AGENTS.md](AGENTS.md)**.
 
 ## Status
 
