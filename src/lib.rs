@@ -11,7 +11,6 @@
 mod acl;
 mod actions;
 mod compute;
-mod ingest;
 mod log;
 mod objectset;
 mod store;
@@ -19,7 +18,6 @@ mod store;
 pub use acl::{AclError, PropertyAcl};
 pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
-pub use ingest::{BatchIngest, StreamIngest};
 pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Hop, ObjectSet};
 pub use store::{JoinMaps, ObjectRecord, Store};
 
@@ -121,6 +119,12 @@ mod tests {
         (dir, log)
     }
 
+    fn append_all(store: &mut Store, records: Vec<ObjectRecord>) {
+        for record in records {
+            store.append(record).unwrap();
+        }
+    }
+
     #[test]
     fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
         let dir = std::env::temp_dir().join("mikura-v1-lib-test");
@@ -128,7 +132,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("objects.mikura");
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, fixture()).unwrap();
+        append_all(&mut store, fixture());
 
         let oss = ObjectSet::new(LocalCompute);
         let visible = oss.evaluate(&store, &fixture_request()).unwrap();
@@ -165,19 +169,6 @@ mod tests {
         let err = spark.evaluate(&store, &fixture_request()).unwrap_err();
         assert!(matches!(err, ComputeError::UnsupportedBackend { .. }));
 
-        let mut stream = StreamIngest::new();
-        stream
-            .push(rec(
-                "Shipment",
-                "s3",
-                false,
-                &[("order_id", "o1"), ("amount", "7")],
-            ))
-            .unwrap();
-        stream.flush_into(&mut store).unwrap();
-        let streamed = oss.evaluate(&store, &fixture_request()).unwrap();
-        assert_eq!(streamed.sum_amount, 22);
-
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -185,7 +176,7 @@ mod tests {
     fn persist_reopen_hop_count_and_sum_match_live_evaluate() {
         let (dir, log) = temp_log("join-reopen");
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, generic_records()).unwrap();
+        append_all(&mut store, generic_records());
         let oss = ObjectSet::new(LocalCompute);
         let live = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(live.two_hop_count, 1);
@@ -211,7 +202,7 @@ mod tests {
         let (dir, log) = temp_log("join-dual-read");
         let sidecar = Store::join_map_path(&log);
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, generic_records()).unwrap();
+        append_all(&mut store, generic_records());
         let oss = ObjectSet::new(LocalCompute);
         let from_projection = oss.evaluate(&store, &fixture_request()).unwrap();
         let from_projection_asset = oss.evaluate(&store, &asset_request()).unwrap();
@@ -235,7 +226,7 @@ mod tests {
     fn generic_kind_join_property_survives_reopen() {
         let (dir, log) = temp_log("join-generic");
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, generic_records()).unwrap();
+        append_all(&mut store, generic_records());
         assert!(store.joins().is_visible("Asset", "a1"));
         assert_eq!(store.joins().prop("Asset", "a1", "owner_id"), Some("c1"));
         drop(store);
@@ -254,7 +245,7 @@ mod tests {
     fn hidden_keys_absent_from_join_maps_after_reopen() {
         let (dir, log) = temp_log("join-hidden");
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, generic_records()).unwrap();
+        append_all(&mut store, generic_records());
         drop(store);
 
         let reopened = Store::open(&log).unwrap();
@@ -272,7 +263,7 @@ mod tests {
         let (dir, log) = temp_log("join-checksum");
         let sidecar = Store::join_map_path(&log);
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, generic_records()).unwrap();
+        append_all(&mut store, generic_records());
         let oss = ObjectSet::new(LocalCompute);
         let live = oss.evaluate(&store, &fixture_request()).unwrap();
         drop(store);
@@ -314,7 +305,7 @@ mod tests {
         let (dir, log) = temp_log("join-stale");
         let sidecar = Store::join_map_path(&log);
         let mut store = Store::create(&log).unwrap();
-        BatchIngest::run(&mut store, fixture()).unwrap();
+        append_all(&mut store, fixture());
         drop(store);
         let stale = std::fs::read(&sidecar).unwrap();
 
@@ -335,64 +326,6 @@ mod tests {
         let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
         assert_eq!(response.two_hop_count, 1);
         assert_eq!(response.sum_amount, 15);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    fn page_filling_records(n: usize) -> Vec<ObjectRecord> {
-        (0..n)
-            .map(|i| {
-                rec(
-                    "Item",
-                    &format!("k{i:04}"),
-                    false,
-                    &[("payload", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")],
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn batch_ingest_group_commits_fewer_fsyncs_than_one_per_record() {
-        let (dir, log) = temp_log("group-commit-batch");
-        let records = page_filling_records(400);
-        let mut batched = Store::create(&log).unwrap();
-        let before_batch = batched.log_fsync_count();
-        BatchIngest::run(&mut batched, records.clone()).unwrap();
-        let batch_fsyncs = batched.log_fsync_count() - before_batch;
-        drop(batched);
-
-        let one_dir = dir.join("one");
-        std::fs::create_dir_all(&one_dir).unwrap();
-        let one_log = one_dir.join("objects.mikura");
-        let mut one = Store::create(&one_log).unwrap();
-        let before_one = one.log_fsync_count();
-        for record in records {
-            one.append(record).unwrap();
-        }
-        let one_fsyncs = one.log_fsync_count() - before_one;
-        assert!(
-            batch_fsyncs < one_fsyncs,
-            "batch fsyncs {batch_fsyncs} should be fewer than one-per-record {one_fsyncs}"
-        );
-        assert!(
-            batch_fsyncs < 16,
-            "400 records under Group(32) should not fsync per record, got {batch_fsyncs}"
-        );
-
-        let oss = ObjectSet::new(LocalCompute);
-        let req = EvaluateRequest {
-            root_kind: "Item".into(),
-            hops: vec![],
-            sum_kind: "Item".into(),
-            sum_property: "n".into(),
-            aggregate: Aggregate::CountAndSum,
-            acl: PropertyAcl::allow_all(),
-        };
-        let live = oss.evaluate(&one, &req).unwrap();
-        assert_eq!(live.two_hop_count, 400);
-        let reopened = Store::open(&log).unwrap();
-        let from_batch = oss.evaluate(&reopened, &req).unwrap();
-        assert_eq!(from_batch.two_hop_count, 400);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

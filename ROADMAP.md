@@ -15,18 +15,24 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v1 log format | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | v2 join maps | Persist generic join sidecar in `Store`; dual-read versus log ([ADR 0002](docs/decisions/0002-join-sidecar.md), [#1](https://github.com/Sannrox/mikura/issues/1)) |
 | v2 ingest | Group commit on batch ingest; single-record `append` stays a complete commit ([#2](https://github.com/Sannrox/mikura/issues/2)) |
+| v2 envelope | 10⁸ hop count+sum on product join maps: query **miss** vs 500 ms; dual-read holds at 10⁷ ([#3](https://github.com/Sannrox/mikura/issues/3), spike 011) |
+| v2 ingest crate | `mikura-ingest` workspace crate ([#9](https://github.com/Sannrox/mikura/issues/9)) |
+| v3 stream bound | Bounded `StreamIngest`, fail closed on overflow ([#4](https://github.com/Sannrox/mikura/issues/4)) |
 
 ## Next (this repository, in order)
 
-1. 10⁸ envelope on hop count + sum. Miss → more projection work, not a new
-   engine. ([#3](https://github.com/Sannrox/mikura/issues/3))
-2. Streaming ingest under load (bounded queue, backpressure, fail closed).
-   `StreamIngest` today is an in-memory `Vec`.
-   ([#4](https://github.com/Sannrox/mikura/issues/4))
+1. Slim join maps so hop count/sum can hold at 10⁸ (join columns only;
+   restart without duplicating identity; no full sidecar rewrite per batch).
+   Follow-up from the 10⁸ miss — more projection work, not a new engine.
+   ([#15](https://github.com/Sannrox/mikura/issues/15))
+2. Snapshot changelog and merge of source records + admitted edits by
+   identity, in `mikura-ingest` (not in a control plane).
+   ([#11](https://github.com/Sannrox/mikura/issues/11),
+   [#10](https://github.com/Sannrox/mikura/issues/10))
 3. Hosted service for ingest/evaluate; property ACL on the wire.
    ([#5](https://github.com/Sannrox/mikura/issues/5))
-4. Compute backend only if in-process hops/aggregates miss a published
-   envelope.
+4. Compute backend only if in-process hops/aggregates still miss after the
+   slimmer projection.
 
 ## Later (not this repository)
 

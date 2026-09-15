@@ -39,6 +39,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mikura-hundred-million-envelope"
+version = "0.0.0"
+dependencies = [
+ "mikura",
+ "mikura-ingest",
+]
+
+[[package]]
 name = "mikura-ingest"
 version = "0.1.0"
 dependencies = [

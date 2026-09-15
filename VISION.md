@@ -36,7 +36,7 @@ id; ACL is an in-process deny list, not a principal.
 | --- | --- |
 | Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
 | Hop / join indexes | **mikura projections** (`{log}.joins` sidecar; rebuild from the log) |
-| Who / policy / receipts / type catalogs | A **control plane**, not this crate |
+| Who / policy / receipts / type catalogs | A **control plane**, not this crate. The clerk maps datasets/Actions to records; `mikura-ingest` appends. |
 | Portable ontology CLI | A separate ontology database — never the object log |
 
 mikura is the warehouse of things. A control plane may be the clerk (identity,
@@ -61,7 +61,7 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 **v1 (this crate):** in-process store, ingest, object-set evaluate, property
 deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md)).
 
-**v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope; dual-read soak (projection versus log).
+**v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope **miss** on query (spike 011, [#3](https://github.com/Sannrox/mikura/issues/3)); dual-read holds at 10⁷. Next projection work is [#15](https://github.com/Sannrox/mikura/issues/15), not a new engine.
 
 **v3:** streaming ingest under load; hosted service; ACL on the wire.
 

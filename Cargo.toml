@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/mikura-ingest"]
+resolver = "2"
+
 [package]
 name = "mikura"
 version = "0.1.0"

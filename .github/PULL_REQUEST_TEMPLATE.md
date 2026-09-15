@@ -5,8 +5,8 @@
 ## Tests
 
 - [ ] `cargo fmt --check`
-- [ ] `cargo test --locked`
-- [ ] `cargo clippy --all-targets --locked -- -D warnings`
+- [ ] `cargo test --workspace --locked`
+- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
 
 ## Impact
 

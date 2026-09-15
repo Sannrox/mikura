@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "mikura-hundred-million-envelope"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway 10^8 hop count/sum envelope against the mikura Store. Not the store of record."
+
+[[bin]]
+name = "mikura-hundred-million-envelope"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
+mikura-ingest = { path = "../../crates/mikura-ingest" }

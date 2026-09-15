@@ -10,8 +10,10 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
           Action append               └── hop / count / sum
 ```
 
-The public surface is the `mikura` library (`src/lib.rs`). There is no server
-process in v1.
+The public surface is two crates: `mikura` (`src/lib.rs`) for the log and
+evaluate, and `mikura-ingest` for batch/stream append. A control plane maps
+datasets and admitted edits to `ObjectRecord`s; it does not live in this
+repository. There is no server process in v1.
 
 ## Object model
 
@@ -57,7 +59,7 @@ Records do **not** store an Action id, principal, or schema version.
 
 - `Store::append` of one record flushes the writer, then persists join maps.
   A single-record append is a complete commit.
-- `BatchIngest::run` appends every record onto the writer, then flushes once.
+- `mikura-ingest::BatchIngest::run` appends every record onto the writer, then flushes once.
   Under `Group(32)` that fsyncs data pages in batches of 32, then the
   superblock. A crash mid-batch drops the uncommitted tail; rebuild reads
   only `1..=committed_pages`.
@@ -89,11 +91,15 @@ path). It is a test/rebuild helper, not a production compaction API.
 
 ## Ingest
 
-`BatchIngest::run` buffers records on the log writer and group-commits once.
+`mikura-ingest::BatchIngest::run` buffers records with `Store::append_uncommitted`
+and group-commits once via `Store::commit`. The `mikura` crate has no ingest
+types.
 
-`StreamIngest` is an in-memory `Vec` plus `flush_into`. It does not bound
-memory, apply backpressure, or fsync on a schedule. Streaming under load is
-roadmap item 4.
+`mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
+records. `push` calls `Store::append_uncommitted` (live maps update
+immediately). A push that would exceed the bound returns an error and does
+not append. `flush` / `flush_into` calls `Store::commit`. A crash before
+flush drops the uncommitted tail; rebuild reads only committed pages.
 
 ## Evaluate
 
