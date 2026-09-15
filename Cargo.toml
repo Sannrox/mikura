@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mikura-ingest"]
+members = ["crates/mikura-ingest", "crates/mikura-host"]
 resolver = "2"
 
 [package]

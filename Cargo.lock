@@ -39,6 +39,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mikura-host"
+version = "0.1.0"
+dependencies = [
+ "mikura",
+ "mikura-ingest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mikura-ingest"
 version = "0.1.0"
 dependencies = [

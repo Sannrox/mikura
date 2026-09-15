@@ -16,8 +16,9 @@ and for contributing to the kernel. Not a production hosted store.
 
 | Implemented | Not implemented |
 | --- | --- |
-| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Hosted gRPC |
+| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Non-loopback / authenticated host |
 | Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Principal-aware ACL on the wire |
+| Loopback ingest/evaluate host ([ADR 0003](docs/decisions/0003-hosted-service.md)) | |
 | Object-set hop / count / sum from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Cluster compute |
 | Property deny-list (fail closed) | |
 
@@ -78,6 +79,7 @@ returns `AclError::Denied` rather than a guessed value.
 ```
 src/                      mikura library (log, store, evaluate)
 crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append)
+crates/mikura-host/       loopback ingest/evaluate host
 docs/                     architecture, glossary, ADRs
 spikes/              historical measurements; not the store
 VISION.md            why this project exists

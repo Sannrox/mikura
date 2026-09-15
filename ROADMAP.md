@@ -22,12 +22,11 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 ingest merge | Source records and admitted edits merge by identity in `mikura-ingest` ([#10](https://github.com/Sannrox/mikura/issues/10)) |
 | v2 ingest changelog | Snapshot changelog into upserts and hides in `mikura-ingest` ([#11](https://github.com/Sannrox/mikura/issues/11)) |
 | v2 slim joins | Interned `MKJOIN02` sidecar; restart without hot payloads; dirty-set delta ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)) |
+| v3 loopback host | Single-process ingest/evaluate on loopback ([#18](https://github.com/Sannrox/mikura/issues/18), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 
 ## Next (this repository, in order)
 
-1. Hosted ingest/evaluate service as sketched in ADR 0003
-   ([#18](https://github.com/Sannrox/mikura/issues/18)).
-2. Compute backend only if in-process hops/aggregates still miss after the
+1. Compute backend only if in-process hops/aggregates still miss after the
    slimmer projection.
 
 ## Later (not this repository)
