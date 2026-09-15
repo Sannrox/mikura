@@ -7,9 +7,9 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–004 (JSONL, records, 4KiB pages, fsync+commit
-pointer). Orphan pages are not authority. No engine is picked. Spikes must
-not become the product store.
+Vision plus spikes 001–005 (log, pages, fsync, group commit). Durable
+group-32 ingest is ~8× no-sync at 10⁴, not 175×. No engine is picked.
+Spikes must not become the product store.
 
 ## Layout
 
