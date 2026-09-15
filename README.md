@@ -1,31 +1,33 @@
 # kura
 
-Hosted **object database** (ingest, object-sets, property ACLs, Action
-writeback). Not `sekai-chisei`. Not a vendor clone.
+Hosted **object database**: ingest, object-sets, property ACLs, Action
+writeback. Independent of `sekai-chisei`. Not a vendor clone.
 
-Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.
+**Read [VISION.md](VISION.md)** (what and why) and **[ROADMAP.md](ROADMAP.md)**
+(order of work).
 
 ## Status
 
-- v0 spikes 001–010: log, pages, fsync, group commit, live hop, join sidecar.
-- **v1 crate (`kura`)**: paged log (ADR 0001) + ingest + evaluate + ACL +
-  Action writeback. Independent of sekai-chisei. `SparkCompute` stays
-  unsupported until an envelope.
+- v0 spikes 001–010 (throwaway).
+- v1 crate: paged log (ADR 0001) + ingest + evaluate + ACL + writeback.
+- Not referenced from sekai-chisei. `SparkCompute` returns unsupported
+  until an envelope.
 
 ```text
-cargo test --offline --manifest-path Cargo.toml
+cargo test
 ```
 
 ## Layout
 
 ```
-VISION.md      product target and cutover rules
-src/           v1 library
-spikes/        throwaway measurements (not the store)
+VISION.md                 product source of truth
+ROADMAP.md                ordered next work
+docs/decisions/           ADRs (0001 paged log)
+src/                      v1 library
+spikes/                   measurements; not the store
 ```
 
 ## Non-coupling
 
-Do not add `sekai-chisei` as a crate dependency. Do not use the control-plane
-database or the ontology CLI database as kura’s log. Do not delete sekai-chisei
-object-index RPCs until a dual-read adapter ADR lands.
+Do not add `sekai-chisei` as a dependency. Do not use `data/sekai.db` or
+`sekai --db` as the object log. Do not vendor this tree into sekai-chisei.
