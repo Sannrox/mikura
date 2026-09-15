@@ -7,9 +7,9 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–008. Live hop projection holds 10⁷ two-hop at 0 ms;
-scanning the object map still misses. No engine is picked. Spikes must not
-become the product store.
+Vision plus spikes 001–009. Live hop projection holds 10⁷ two-hop at 0 ms;
+restart loads a 781 KiB hop sidecar in 7 ms instead of replaying the log.
+No engine is picked. Spikes must not become the product store.
 
 ## Layout
 
