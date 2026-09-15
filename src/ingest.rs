@@ -5,9 +5,9 @@ pub struct BatchIngest;
 impl BatchIngest {
     pub fn run(store: &mut Store, records: Vec<ObjectRecord>) -> Result<(), String> {
         for record in records {
-            store.append(record)?;
+            store.append_uncommitted(record)?;
         }
-        Ok(())
+        store.commit()
     }
 }
 
