@@ -18,6 +18,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 envelope | 10⁸ hop count+sum on product join maps: query **miss** vs 500 ms; dual-read holds at 10⁷ ([#3](https://github.com/Sannrox/mikura/issues/3), spike 011) |
 | v2 ingest crate | `mikura-ingest` workspace crate ([#9](https://github.com/Sannrox/mikura/issues/9)) |
 | v3 stream bound | Bounded `StreamIngest`, fail closed on overflow ([#4](https://github.com/Sannrox/mikura/issues/4)) |
+| v3 host shape | Single-process ingest/evaluate over `Store`; loopback until auth; wait on #15 to implement ([ADR 0003](docs/decisions/0003-hosted-service.md), [#5](https://github.com/Sannrox/mikura/issues/5)) |
 
 ## Next (this repository, in order)
 
@@ -29,8 +30,8 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
    identity, in `mikura-ingest` (not in a control plane).
    ([#11](https://github.com/Sannrox/mikura/issues/11),
    [#10](https://github.com/Sannrox/mikura/issues/10))
-3. Hosted service for ingest/evaluate; property ACL on the wire.
-   ([#5](https://github.com/Sannrox/mikura/issues/5))
+3. Hosted ingest/evaluate service as sketched in ADR 0003
+   ([#18](https://github.com/Sannrox/mikura/issues/18), blocked on #15).
 4. Compute backend only if in-process hops/aggregates still miss after the
    slimmer projection.
 
