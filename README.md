@@ -1,26 +1,31 @@
 # kura
 
-Side project: a canonical **object store** (write funnel, object log, object-set
-reads). Not `sekai-chisei`.
+Hosted **object database** (ingest, object-sets, property ACLs, Action
+writeback). Not `sekai-chisei`. Not a vendor clone.
 
 Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spikes 001–010. Live hop projection holds 10⁷ two-hop at 0 ms.
-Join-map sidecar restart: 1.0 s load vs 13 s Live replay (count + sum).
-v0 spikes are complete. No engine is picked. Spikes must not become the
-product store.
+- v0 spikes 001–010: log, pages, fsync, group commit, live hop, join sidecar.
+- **v1 crate (`kura`)**: in-process store + batch/stream ingest + local
+  object-set evaluate + property ACL fail-closed + Action writeback.
+  `SparkCompute` exists as a seam and returns unsupported until an envelope.
+
+```text
+cargo test --offline --manifest-path Cargo.toml
+```
 
 ## Layout
 
 ```
-VISION.md      why this exists
-README.md      this file
-spikes/        throwaway measurements (gitignored contents ok; keep notes)
+VISION.md      product target and cutover rules
+src/           v1 library
+spikes/        throwaway measurements (not the store)
 ```
 
 ## Non-coupling
 
 Do not add `sekai-chisei` as a crate dependency. Do not use the control-plane
-database (`data/sekai.db`) or the ontology CLI database as kura’s log.
+database or the ontology CLI database as kura’s log. Do not delete sekai-chisei
+object-index RPCs until a dual-read adapter ADR lands.

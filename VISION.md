@@ -1,124 +1,122 @@
 # VISION
 
-`kura` is a side project: a **canonical object store** with a write funnel and
-read projections. It is not a control plane, not a lakehouse, and not
-`sekai-chisei`.
+`kura` is a **hosted object database**: ingest (batch + stream) into a
+canonical object log, serve object-sets (filter, hop, aggregate), enforce
+property ACLs, and apply Action writeback. Indexing and querying stay
+split. Projections are rebuildable. This is not `sekai-chisei`, not a
+lakehouse, and not a clone of any vendor wire format.
 
-The shape is Object Storage v2: objects are the store of record; indexing and
-querying are separate; Search Around / aggregations are engines over the store,
-not the store.
+Spikes 001–010 proved the local kernel (paged log, group commit, live hop,
+join sidecar). v1 is that kernel as a library. Later versions add hosting
+and scale **only after envelopes**.
 
 ## Purpose
 
-Hold typed object instances, properties, links, and governed edits so
-applications can filter, load, hop, and aggregate without treating a search
-index, a SQL table, or a page cache as identity.
-
-The store answers:
+Applications should talk to **objects**, not tables or search hits:
 
 1. What is the current object for this primary key?
 2. What links leave or enter it?
-3. What Action/edit produced this version?
-4. What object-set (filter, hop, aggregate) can be served from projections
-   that we can delete and rebuild?
+3. What Action produced this generation?
+4. Which object-set (filter, hop, aggregate) can we serve from projections
+   we can delete and rebuild?
+5. Which properties is this principal allowed to see?
 
-## Problem
+## Target (long horizon)
 
-`sekai-chisei` already owns governance: namespaces, policy, receipts, budgets,
-dual SQLite/PostgreSQL as the **control-plane** pair (ADR 0080). Its object
-index (`#877` / `#889`) is a **projection**. That is the right split.
+These are **product goals**, not current claims:
 
-What it does not own is a **purpose-built object database**:
+| Capability | Meaning here |
+| --- | --- |
+| Hosted | Multi-process service, not a laptop spike. Still one logical store. |
+| Tens of billions | Envelope at 10⁸, then 10⁹, then 10¹⁰. Misses do not pick Spark. |
+| Streaming ingest | Append object/edit records as they arrive; incremental index. |
+| Object-set service | Filter, load, hop (Search Around), aggregate. No query language. |
+| Heavy compute | In-process first. A cluster engine (e.g. Spark) only after a published hop/agg envelope that in-process misses. |
+| Property ACLs | Fail closed: denied properties are absent, not guessed. |
+| Action writeback | Governed edits become new object generations on the log. |
 
-- Graph rows and SQL tables mix persistence with query planning
-- Nested-loop hops miss at modest scale; a hop projection holds only because
-  we precompute reachability
-- A search cluster or warehouse as the object SoR repeats the Phonograph
-  mistake (index + query + edits in one service)
-- A homemade engine inside the control plane would couple durability
-  experiments to production governance
+Fail the project if a projection becomes recovery material, or if we cannot
+rebuild identity from the log.
 
-`kura` exists so that experiment can fail without taking the control plane
-with it.
+## Stages
 
-## Vision
+**v0 (done):** spikes 001–010. See `spikes/README.md`.
 
-If this project succeeds:
+**v1 (this crate):** in-process store + ingest + object-set evaluate +
+property ACL + Action writeback. Dual-read projections vs log. JSONL or
+pages as the log vehicle until a format ADR.
 
-- A process can ingest tabular snapshots and Action deltas into objects
-  (**funnel**), with incremental index and a fail-closed full rebuild
-- Reads go through an object-set API (**OSS-shaped**): filter, load, hop
-  (Search Around), aggregate. No query language. Descriptors are not
-  authority
-- On-disk format is **ours** (log + object pages), not “Postgres with an
-  ontology façade.” Early spikes may sit on a file-backed log; they must not
-  freeze that log as the product
-- Query engines are **pluggable projections**: in-process hash/hop first;
-  Spark or a search engine only after a published envelope
-- Deleting every projection and rebuilding from the object log restores the
-  same primary keys, link identities, and edit history
-- Hidden / marked properties stay out of unauthorized reads (fail closed)
+**v2:** 10⁸ envelope; durable paged log + group commit + persisted join
+maps in one process; soak dual-read.
 
-Scale target for v1 research, not a promise: **10⁸ objects, two-hop p95 ≤
-500 ms, incremental ingest of 1k keys ≤ 60 s**, on a declared machine. Misses
-are recorded; they do not license an engine pick.
+**v3:** streaming ingest under load; hosted gRPC; property ACL on the
+service boundary.
+
+**v4:** pluggable compute backend for hops/aggs that miss in-process.
+Spark is a candidate, not a default.
 
 ## Product boundary
 
 ### In
 
-- Object types as schemas (primary key, properties, link types)
-- Funnel: batch snapshot, incremental append, Action edit application
-- Object log: identity, properties, links, edit generation
-- Object-set evaluate: filter, bounded hops, aggregations
-- Rebuildable membership and hop projections
-- Envelope harnesses and hardware-profile notes
+- Object types (primary key, properties, links)
+- Batch and streaming ingest into the object log
+- Object-set evaluate (filter, bounded hops, aggregations)
+- Property-level ACL (fail closed)
+- Action writeback (new generation on the log)
+- Rebuildable membership, hop, and join projections
+- Envelope notes with hardware profile
 
-### Out
+### Out (until an ADR)
 
 - Agent policy, budgets, LLM routing (`sekai-chisei`)
-- Portable ontology CLI database (`sekai --db`)
-- Customer warehouse connectors as the product (ingest adapters later)
-- Hosted multi-tenant mesh
-- Phonograph-style “the index is the database”
+- Portable ontology CLI database
+- Cloning vendor APIs or names as the product
+- Spark/search/warehouse as the object SoR
+- Merging into `sekai-chisei`
 
 ## Relationship to sekai-chisei
 
 | | sekai-chisei | kura |
 | --- | --- | --- |
-| Job | Governed control plane | Object store experiment |
-| Authority | Sources, Actions, receipts, graph facts | Object log + edit generation |
+| Job | Governed control plane | Object database |
+| Authority | Sources, Actions, receipts | Object log + Action generations |
 | Query | ObjectSet over a projection | ObjectSet over kura projections |
-| Storage | Dual SQLite / PostgreSQL | Self-built store (this repo) |
+| Storage | Dual SQLite / PostgreSQL | Self-built store |
 
-No shared database. No import of `sekai-chisei` crates until a measured
-adapter is an explicit ADR here. If kura ever backs typed objects, it does so
-as a **storage adapter**, not by merging repos.
+No shared database. A future adapter is an explicit ADR here, after
+measurement.
 
-## Success
+## Later: what leaves sekai-chisei (and what never does)
 
-v0 (this tree): vision, non-goals, and spikes 001–010. Live hop projection
-holds 10⁷ two-hop at 0 ms. [009](spikes/009-persist-hop/NOTES.md) reachable
-sidecar 7 ms; [010](spikes/010-persist-joins/NOTES.md) join maps (count +
-sum) load **1.0 s** vs 13 s Live replay. v0 spikes complete. No engine pick.
+**Do not remove anything from sekai-chisei now.** kura is not a substitute
+until it is hosted, measured, and chosen by ADR.
 
-v1: funnel + object log + one in-process object-set evaluate on a 10⁷
-fixture, with rebuild-from-log after deleting projections.
+When (if) kura is the object database:
 
-v2: 10⁸ envelope; hop projection as a named engine; dual-read against the log
-during soak; fail closed on mismatch.
+| Move to kura | Stay in sekai-chisei |
+| --- | --- |
+| Object instance storage and reindex | Tenants, principals, credentials |
+| Object-set hops/aggregations (`EvaluateObjectSet` over an index) | Policy compile, budget, receipts |
+| Datasource funnel into objects | Graph of **definitions**, grants, audit |
+| Property-level read projection | Classification / fail-closed authz **decisions** |
+| Action **writeback of object generations** | Action **admission**, effects, attestation |
 
-Fail the project if we cannot rebuild identity from the log, or if a
-projection becomes recovery material.
+`#877`/`#878`/`#889` become a **kura adapter** behind the same gRPC
+contract, not deleted RPCs. Dual SQLite/PostgreSQL (ADR 0080) remains the
+control-plane pair. Indexes in sekai-chisei stay projections until the
+adapter dual-reads kura and the control plane agrees.
+
+Cutover: dual-write (sekai index + kura), dual-read, soak, then stop
+writing the sekai object-type index. Never make kura the policy engine.
 
 ## Alternatives rejected
 
-- **Do this inside sekai-chisei.** Rejected: dual-runtime ADR 0080 and
-  production receipts must not wait on a storage-engine spike.
-- **Postgres or SQLite as the object SoR for kura.** Rejected: that is the
-  control-plane pair, not a canonical object store. They remain allowed only
-  as throwaway spike vehicles, same as the `#876` envelope harness.
-- **Start with Spark or Lucene.** Rejected: no kura envelope yet. In-process
-  first.
-- **Clone vendor APIs.** Rejected: copy the split (funnel / store / object
-  sets), not product names or wire formats.
+- **Do this inside sekai-chisei.** Control-plane receipts must not wait on
+  a storage-engine product.
+- **Postgres/SQLite as kura’s SoR.** That pair is the control plane (ADR
+  0080). Allowed only as spike vehicles.
+- **Start with Spark.** In-process hop already holds 10⁷ count at 0 ms.
+  Spark waits for a miss that in-process cannot fix, plus an envelope.
+- **Clone vendor APIs.** Copy the split (ingest / store / object sets /
+  ACL / writeback), not names or protobufs.
