@@ -1,0 +1,64 @@
+name: Refactoring
+description: Propose a focused structural improvement with preserved behavior.
+title: "refactor: "
+labels: ["type:refactor"]
+body:
+  - type: textarea
+    id: friction
+    attributes:
+      label: Concrete friction
+      description: Defect risk, duplication, blocked work, or a measured constraint.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link code, tests, or measurements.
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Behavior to preserve
+      description: Public API, log format, ACL fail-closed, and restart-from-log invariants.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Affected modules and explicit non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Which tests prove behavior is preserved?
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Primary area
+      options:
+        - Object log
+        - Store / projections
+        - Ingest
+        - Object-set evaluate
+        - ACL
+        - Action writeback
+        - Compute backend
+        - Documentation or tooling
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: The proposal is motivated by concrete evidence rather than style preference alone.
+          required: true

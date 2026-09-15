@@ -13,9 +13,11 @@ Agent instructions: [AGENTS.md](AGENTS.md).
 
 ## Before you start
 
-- Search existing issues and pull requests when a hosted remote exists.
-- Open an issue (or a written proposal) before changing the on-disk log
-  format, the public Rust API, or the product boundary.
+- Search existing issues and pull requests at
+  [Sannrox/mikura](https://github.com/Sannrox/mikura).
+- Open an issue before changing the on-disk log format, the public Rust API,
+  or the product boundary. Use the Bug, Feature, Refactoring, or Research
+  form.
 - Capture accepted durable choices as an ADR. Copy
   [docs/decisions/0000-template.md](docs/decisions/0000-template.md) and update
   [docs/decisions/README.md](docs/decisions/README.md).
@@ -67,5 +69,4 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Describe behavior, tests run, and any log-format or API impact.
 - Do not commit `target/`, `*.mikura`, SQLite files, or secrets.
 
-Until a GitHub remote is configured, commit locally. Do not invent a remote
-or issue numbers.
+Open a pull request against `main`. Do not invent issue numbers.

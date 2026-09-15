@@ -5,9 +5,10 @@ mikura is pre-1.0 (`0.1.x`, `publish = false`). Security work targets current
 
 ## Reporting a vulnerability
 
-Report vulnerabilities **privately** to the repository maintainers. If this
-repository is hosted on GitHub, use GitHub's private vulnerability reporting
-on the Security tab.
+Report vulnerabilities **privately** via GitHub's private vulnerability
+reporting: open the
+[Security tab](https://github.com/Sannrox/mikura/security/advisories/new)
+and click **"Report a vulnerability"**.
 
 Do not open a public issue or pull request for an exploitable vulnerability.
 

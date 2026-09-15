@@ -1,0 +1,70 @@
+name: Feature request
+description: Propose a focused capability or improvement.
+title: "feat: "
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What cannot be done with the crate today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Observable behavior, not only an implementation sketch.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Tests, measurements, or dual-read checks that prove the outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Related behavior intentionally outside this request.
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Primary area
+      options:
+        - Object log
+        - Store / projections
+        - Ingest
+        - Object-set evaluate
+        - ACL
+        - Action writeback
+        - Compute backend
+        - Hosted service
+        - Documentation
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility and risk
+      description: Log format, public API, ACL, or restart-path impact.
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: GitHub dependencies
+      description: Issues this cannot start until they land. Write "None" if unblocked.
+      placeholder: "None"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: This stays inside VISION.md / ROADMAP.md, or explains why the boundary should change.
+          required: true

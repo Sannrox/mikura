@@ -68,9 +68,9 @@ and dual-SQL rows: they do not exist here.
 | `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
-| `shape-work-item` | Draft locally. Do not publish GitHub issues until a hosted remote and templates exist. |
-| `deliver-ready-issue` / `advance-issue-frontier` | Dormant until Issues exist. Next work is [ROADMAP.md](ROADMAP.md). There is no `scripts/gh-verified-push.sh` here. |
-| `prepare-release` | Dormant. `publish = false` in `Cargo.toml`. |
+| `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
+| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. There is no `scripts/gh-verified-push.sh`; use ordinary `git push` unless the user asks otherwise. Next work is [ROADMAP.md](ROADMAP.md). |
+| `prepare-release` | GitHub tags are allowed. `publish = false` in `Cargo.toml` until crates.io is explicitly authorized. |
 
 ## Ontology
 
@@ -97,7 +97,7 @@ Postgres, or Spark in the default suite.
 Short imperative subjects (`feat: persist join maps in Store`). Never
 `--no-gpg-sign`. If GPG fails, stop.
 
-Do not invent a GitHub remote. When one exists, PRs follow
+Hosted repo: `https://github.com/Sannrox/mikura`. PRs follow
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Always / Ask first / Never
@@ -113,8 +113,7 @@ Do not invent a GitHub remote. When one exists, PRs follow
 **Ask first**
 
 - Changing the on-disk log format (needs a new ADR).
-- Adding a GitHub remote, publishing a crate, or referencing mikura from
-  another product.
+- Publishing to crates.io, or referencing mikura from another product.
 - Introducing gRPC, Spark, or a second storage engine.
 - Bumping Rust edition.
 

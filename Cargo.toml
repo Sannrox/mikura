@@ -6,6 +6,10 @@ publish = false
 description = "Object database: durable object log, object-set evaluate, property ACLs, and Action writeback."
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/Sannrox/mikura"
+homepage = "https://github.com/Sannrox/mikura"
+keywords = ["database", "object-store", "log"]
+categories = ["database-implementations"]
 
 [dependencies]
 crc32fast = "1"

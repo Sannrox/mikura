@@ -28,7 +28,7 @@ Spikes 001–010 are throwaway evidence under [`spikes/`](spikes/README.md).
 Requires a stable Rust toolchain (edition 2021).
 
 ```bash
-git clone <this-repository>
+git clone https://github.com/Sannrox/mikura.git
 cd mikura
 cargo test --locked
 cargo run --example quickstart

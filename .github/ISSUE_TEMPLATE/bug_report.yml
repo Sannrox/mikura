@@ -1,0 +1,59 @@
+name: Bug report
+description: Report reproducible incorrect behavior in mikura.
+title: "bug: "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials or object-log contents.
+        Report exploitable vulnerabilities through the private security link instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Smallest commands, inputs, or code needed to reproduce.
+      placeholder: |
+        1. Create a Store ...
+        2. Ingest ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or git SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and `rustc --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted diagnostics
+      description: Error strings only. Do not paste object logs.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I removed secrets and object-log contents.
+          required: true
+        - label: This is not an exploitable security vulnerability.
+          required: true

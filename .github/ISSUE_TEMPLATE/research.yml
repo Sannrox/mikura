@@ -1,0 +1,64 @@
+name: Research
+description: Time-box an investigation that must end in a decision.
+title: "research: "
+labels: ["type:research"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Decision question
+      description: What decision should this investigation make possible?
+    validations:
+      required: true
+  - type: textarea
+    id: hypotheses
+    attributes:
+      label: Hypotheses or options
+      description: Credible approaches to evaluate. A miss is a note, not an engine pick.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Product boundary, log format, fail-closed rules, hardware, fixture size.
+    validations:
+      required: true
+  - type: input
+    id: timebox
+    attributes:
+      label: Time box
+      placeholder: "2 developer-days"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence to collect
+      description: Benchmarks, dual-reads, spike NOTES, or a throwaway harness.
+    validations:
+      required: true
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit condition
+      description: Recommendation plus follow-up Issue, ADR, spike NOTES, or no action.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: GitHub dependencies
+      description: Issues this cannot start until they land. Write "None" if unblocked.
+      placeholder: "None"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I will close this investigation with a recommendation or explicit no-action result.
+          required: true

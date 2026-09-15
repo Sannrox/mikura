@@ -7,12 +7,6 @@ window.
 
 ## [Unreleased]
 
-### Changed
-
-- Renamed the crate from `kura` to `mikura` (御倉). On-disk superblock magic
-  is `MIKURAV1`. Local `KURAV1` logs from the private `kura` name are not
-  readable; recreate them. No published format existed.
-
 ## [0.1.0] - 2026-09-15
 
 ### Added
@@ -24,5 +18,9 @@ window.
 - `LocalCompute` hop/count/sum path. `SparkCompute` returns unsupported.
 - Spikes 001–010 under `spikes/` as throwaway measurements.
 
-[Unreleased]: #unreleased
-[0.1.0]: #010---2026-09-15
+### Changed
+
+- Public name is `mikura` (御倉). On-disk superblock magic is `MIKURAV1`.
+
+[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Sannrox/mikura/releases/tag/v0.1.0
