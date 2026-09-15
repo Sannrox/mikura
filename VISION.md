@@ -25,17 +25,17 @@ mikura tag. They must not vendor this tree.
 Fail the project if a projection becomes recovery material, or if identity
 cannot be rebuilt from the log.
 
-Today the crate answers (1) and (4) for a small in-process graph. (2) is
-partial (join maps for three demo kinds). (3) and (5) are product intent:
-Action append exists, but records do not store an Action id; ACL is an
-in-process deny list, not a principal.
+Today the crate answers (1), (2), and (4) for a small in-process graph:
+identity from the log, generic join maps persisted as a sidecar. (3) and (5)
+are product intent: Action append exists, but records do not store an Action
+id; ACL is an in-process deny list, not a principal.
 
 ## Where data is saved
 
 | Kind of data | Where |
 | --- | --- |
 | Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
-| Hop / join indexes | **mikura projections** (in memory in v1; persisted sidecars next) |
+| Hop / join indexes | **mikura projections** (`{log}.joins` sidecar; rebuild from the log) |
 | Who / policy / receipts / type catalogs | A **control plane**, not this crate |
 | Portable ontology CLI | A separate ontology database — never the object log |
 
@@ -61,8 +61,7 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 **v1 (this crate):** in-process store, ingest, object-set evaluate, property
 deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md)).
 
-**v2:** persist join maps in `Store`; 10⁸ envelope; dual-read soak (projection
-versus log).
+**v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope; dual-read soak (projection versus log).
 
 **v3:** streaming ingest under load; hosted service; ACL on the wire.
 

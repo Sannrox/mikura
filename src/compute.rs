@@ -1,53 +1,22 @@
 use crate::acl::AclError;
 use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse};
-use crate::store::{ObjectRecord, Store};
-use std::collections::{HashMap, HashSet};
+use crate::store::Store;
 
 fn evaluate_local(store: &Store, request: &EvaluateRequest) -> EvaluateResponse {
-    let mut paths: Vec<Vec<&ObjectRecord>> = store
-        .visible_of_kind(&request.root_kind)
-        .into_iter()
-        .map(|record| vec![record])
+    let hops: Vec<(&str, &str)> = request
+        .hops
+        .iter()
+        .map(|hop| (hop.far_kind.as_str(), hop.join_property.as_str()))
         .collect();
-    for hop in &request.hops {
-        let children = store.visible_of_kind(&hop.far_kind);
-        let mut by_value: HashMap<&str, Vec<&ObjectRecord>> = HashMap::new();
-        for child in &children {
-            if let Some(value) = child.props.get(&hop.join_property) {
-                by_value.entry(value.as_str()).or_default().push(*child);
-            }
-        }
-        let mut next = Vec::new();
-        for path in &paths {
-            let parent = path[path.len() - 1];
-            if let Some(matched) = by_value.get(parent.key.as_str()) {
-                for child in matched {
-                    let mut joined = path.clone();
-                    joined.push(*child);
-                    next.push(joined);
-                }
-            }
-        }
-        paths = next;
-    }
-    let mut roots = HashSet::new();
-    let mut sum = 0i64;
-    for path in &paths {
-        roots.insert(path[0].key.as_str());
-        let leaf = path[path.len() - 1];
-        if leaf.kind == request.sum_kind {
-            if let Some(amount) = leaf
-                .props
-                .get(&request.sum_property)
-                .and_then(|raw| raw.parse::<i64>().ok())
-            {
-                sum += amount;
-            }
-        }
-    }
+    let (two_hop_count, sum_amount) = store.joins().count_and_sum(
+        &request.root_kind,
+        &hops,
+        &request.sum_kind,
+        &request.sum_property,
+    );
     EvaluateResponse {
-        two_hop_count: roots.len(),
-        sum_amount: sum,
+        two_hop_count,
+        sum_amount,
     }
 }
 

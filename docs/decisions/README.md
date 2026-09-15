@@ -6,6 +6,7 @@ a new ADR. Allocate the next number and list it here.
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0001](0001-paged-log.md) | Paged object log with group commit | accepted |
+| [0002](0002-join-sidecar.md) | Checksummed generic join sidecar | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should
