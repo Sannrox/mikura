@@ -1,9 +1,10 @@
 //! Ingest a tiny graph, evaluate two hops, apply an Action, reopen the log.
 
 use mikura::{
-    Action, Aggregate, BatchIngest, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet,
-    PropertyAcl, Store,
+    Action, Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,
+    Store,
 };
+use mikura_ingest::BatchIngest;
 use std::collections::HashMap;
 
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {

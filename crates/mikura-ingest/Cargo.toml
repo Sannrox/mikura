@@ -1,0 +1,12 @@
+[package]
+name = "mikura-ingest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Write orchestrator for mikura: batch and stream append of object records."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Sannrox/mikura"
+readme = "../../README.md"
+
+[dependencies]
+mikura = { path = "../.." }

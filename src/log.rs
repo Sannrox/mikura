@@ -86,7 +86,6 @@ impl LogWriter {
         })
     }
 
-    #[cfg(test)]
     pub fn fsync_count(&self) -> u64 {
         self.fsync_count
     }
