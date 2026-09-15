@@ -10,6 +10,7 @@ as a **vehicle**. It is not kura’s store of record.
 | [003-paged-log](003-paged-log/NOTES.md) | 4KiB pages; torn last page dropped; middle CRC fail closed | VALIDATED |
 | [004-fsync-commit](004-fsync-commit/NOTES.md) | Fsync page then superblock pointer; orphan page is not authority | VALIDATED |
 | [005-group-commit](005-group-commit/NOTES.md) | Fsync a page batch then one superblock; ~8× no-sync at group 32 | VALIDATED |
+| [006-live-projection](006-live-projection/NOTES.md) | Evaluate the live map; dual-read vs log rebuild; 1k incr 2 ms at 10⁶ | VALIDATED |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.

@@ -1,0 +1,15 @@
+[package]
+name = "kura-live-projection-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway live projection. Not the kura store."
+
+[[bin]]
+name = "kura-live-projection-spike"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
