@@ -84,13 +84,13 @@ Spark is a candidate, not a default.
 | Query | ObjectSet over a projection | ObjectSet over kura projections |
 | Storage | Dual SQLite / PostgreSQL | Self-built store |
 
-No shared database. A future adapter is an explicit ADR here, after
-measurement.
+No shared database. The first adapter is opt-in dual-read in sekai-chisei
+(`SEKAI_OBJECT_STORE`, default `sql`). See [ROADMAP.md](ROADMAP.md).
 
 ## Later: what leaves sekai-chisei (and what never does)
 
-**Do not remove anything from sekai-chisei now.** kura is not a substitute
-until it is hosted, measured, and chosen by ADR.
+**Do not remove the SQL object-type index until dual soak + a later ADR.**
+kura is not a substitute for the control plane.
 
 When (if) kura is the object database:
 

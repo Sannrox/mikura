@@ -3,7 +3,7 @@
 Hosted **object database** (ingest, object-sets, property ACLs, Action
 writeback). Not `sekai-chisei`. Not a vendor clone.
 
-Read [VISION.md](VISION.md) first.
+Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.
 
 ## Status
 
