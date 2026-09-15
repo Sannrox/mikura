@@ -1,0 +1,15 @@
+[package]
+name = "kura-funnel-log-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway funnel + file log. Not the kura store."
+
+[[bin]]
+name = "kura-funnel-log-spike"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

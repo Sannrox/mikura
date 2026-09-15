@@ -97,7 +97,9 @@ as a **storage adapter**, not by merging repos.
 
 ## Success
 
-v0 (this tree): vision, non-goals, and a spike plan. No engine pick.
+v0 (this tree): vision, non-goals, and spike
+[001-funnel-log](spikes/001-funnel-log/NOTES.md) (JSONL vehicle at 10⁴;
+rebuild identity holds). No engine pick.
 
 v1: funnel + object log + one in-process object-set evaluate on a 10⁷
 fixture, with rebuild-from-log after deleting projections.

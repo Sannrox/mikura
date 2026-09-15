@@ -7,8 +7,8 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision only. No engine is picked. Spikes belong under `spikes/` and must not
-become the product store.
+Vision plus spike `001-funnel-log` (JSONL vehicle, 10⁴, rebuild identity
+holds). No engine is picked. Spikes must not become the product store.
 
 ## Layout
 
