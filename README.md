@@ -7,8 +7,9 @@ Read [VISION.md](VISION.md) first.
 
 ## Status
 
-Vision plus spike `001-funnel-log` (JSONL vehicle, 10⁴, rebuild identity
-holds). No engine is picked. Spikes must not become the product store.
+Vision plus spikes `001-funnel-log` and `002-binary-log` (JSONL then
+checksummed binary records). Rebuild identity holds at 10⁴ / 10⁶. No engine
+is picked. Spikes must not become the product store.
 
 ## Layout
 
