@@ -20,12 +20,18 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 1. 10⁸ envelope on hop count + sum. Miss → more projection work, not a new
    engine. ([#3](https://github.com/Sannrox/mikura/issues/3))
-2. Streaming ingest under load (bounded queue, backpressure, fail closed).
-   `StreamIngest` today is an in-memory `Vec`.
-   ([#4](https://github.com/Sannrox/mikura/issues/4))
-3. Hosted service for ingest/evaluate; property ACL on the wire.
+2. `mikura-ingest` workspace crate: write orchestrator that depends on
+   `mikura` only. Clerk maps datasets/Actions to records; this crate appends.
+   ([#9](https://github.com/Sannrox/mikura/issues/9))
+3. Snapshot changelog and merge of source records + admitted edits by
+   identity, in `mikura-ingest` (not in a control plane).
+   ([#11](https://github.com/Sannrox/mikura/issues/11),
+   [#10](https://github.com/Sannrox/mikura/issues/10))
+4. Streaming ingest under load (bounded queue, backpressure, fail closed)
+   in `mikura-ingest`. ([#4](https://github.com/Sannrox/mikura/issues/4))
+5. Hosted service for ingest/evaluate; property ACL on the wire.
    ([#5](https://github.com/Sannrox/mikura/issues/5))
-4. Compute backend only if in-process hops/aggregates miss a published
+6. Compute backend only if in-process hops/aggregates miss a published
    envelope.
 
 ## Later (not this repository)
