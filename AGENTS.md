@@ -18,12 +18,12 @@ tracked. Do not treat that directory as gitignored.
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | `src/store.rs` | Identity, generic join sidecar, rebuild from log |
-| `src/ingest.rs` | Batch ingest; in-memory stream buffer |
+| `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `StreamIngest`. Depends on `mikura` only |
 | `src/objectset.rs` | Evaluate request/response |
 | `src/acl.rs` | Property deny-list (fail closed) |
 | `src/actions.rs` | Action writeback → new generation |
 | `src/compute.rs` | `LocalCompute`; `SparkCompute` fails closed |
-| `examples/` | Runnable examples (`quickstart`) |
+| `crates/mikura-ingest/examples/` | Runnable examples (`quickstart`) |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs |
 | `.agents/skills/` | Copied from sekai-chisei; apply as below |
@@ -35,9 +35,9 @@ Runtime object logs belong under gitignored `data/` or a temp dir.
 ```sh
 cargo fmt
 cargo fmt --check
-cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
-cargo run --example quickstart
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo run -p mikura-ingest --example quickstart
 ```
 
 `cargo test` is the short loop. Spike crates are separate packages under
@@ -49,7 +49,7 @@ this repo.
 
 ## Independence
 
-- Do not add a control-plane crate as a dependency.
+- Do not add a control-plane crate as a dependency. `mikura-ingest` depends on `mikura` only.
 - Do not vendor this tree into another product.
 - Do not use SQL or `sekai --db` as the object log.
 - A consumer may later depend on a published mikura tag. That cutover is not

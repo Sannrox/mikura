@@ -347,8 +347,8 @@ impl Store {
 
     /// Buffer a record on the writer and update live maps. Durability requires
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
-    /// the rebuild (ADR 0001).
-    pub(crate) fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
+    /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
+    pub fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
         let id = (record.kind.clone(), record.key.clone());
         if let Some(existing) = self.objects.get(&id) {
             record.gen = existing.gen.max(1) + 1;
@@ -361,13 +361,13 @@ impl Store {
     }
 
     /// Group-commit the current writer pages and persist join maps.
-    pub(crate) fn commit(&mut self) -> Result<(), String> {
+    pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
         self.persist_joins()
     }
 
-    #[cfg(test)]
-    pub(crate) fn log_fsync_count(&self) -> u64 {
+    /// Writer `fsync` count. Used by ingest tests to characterize group commit.
+    pub fn log_fsync_count(&self) -> u64 {
         self.writer.fsync_count()
     }
 

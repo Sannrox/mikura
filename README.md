@@ -30,8 +30,8 @@ Requires a stable Rust toolchain (edition 2021).
 ```bash
 git clone https://github.com/Sannrox/mikura.git
 cd mikura
-cargo test --locked
-cargo run --example quickstart
+cargo test --workspace --locked
+cargo run -p mikura-ingest --example quickstart
 ```
 
 The example writes a temp log, ingests Customer → Order → Shipment records,
@@ -48,8 +48,9 @@ Until then, develop inside this repository.
 
 ```rust
 use mikura::{
-    Aggregate, BatchIngest, EvaluateRequest, Hop, LocalCompute, ObjectSet, PropertyAcl, Store,
+    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectSet, PropertyAcl, Store,
 };
+use mikura_ingest::BatchIngest;
 
 let mut store = Store::create("data/objects.mikura")?;
 BatchIngest::run(&mut store, records)?;
@@ -75,9 +76,9 @@ returns `AclError::Denied` rather than a guessed value.
 ## Layout
 
 ```
-src/                 v1 library
-examples/            runnable crate examples
-docs/                architecture, glossary, ADRs
+src/                      mikura library (log, store, evaluate)
+crates/mikura-ingest/     write orchestrator (batch / stream append)
+docs/                     architecture, glossary, ADRs
 spikes/              historical measurements; not the store
 VISION.md            why this project exists
 ROADMAP.md           what to build next, in order

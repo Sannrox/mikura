@@ -31,9 +31,9 @@ Agent instructions: [AGENTS.md](AGENTS.md).
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-cargo run --example quickstart
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo run -p mikura-ingest --example quickstart
 ```
 
 `cargo test` is the short loop. There is no local server and no environment

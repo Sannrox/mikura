@@ -36,7 +36,7 @@ id; ACL is an in-process deny list, not a principal.
 | --- | --- |
 | Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
 | Hop / join indexes | **mikura projections** (`{log}.joins` sidecar; rebuild from the log) |
-| Who / policy / receipts / type catalogs | A **control plane**, not this crate |
+| Who / policy / receipts / type catalogs | A **control plane**, not this crate. The clerk maps datasets/Actions to records; `mikura-ingest` appends. |
 | Portable ontology CLI | A separate ontology database — never the object log |
 
 mikura is the warehouse of things. A control plane may be the clerk (identity,
