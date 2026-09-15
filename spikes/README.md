@@ -12,6 +12,7 @@ as a **vehicle**. It is not kura’s store of record.
 | [005-group-commit](005-group-commit/NOTES.md) | Fsync a page batch then one superblock; ~8× no-sync at group 32 | VALIDATED |
 | [006-live-projection](006-live-projection/NOTES.md) | Evaluate the live map; dual-read vs log rebuild; 1k incr 2 ms at 10⁶ | VALIDATED |
 | [007-ten-million-envelope](007-ten-million-envelope/NOTES.md) | 10⁷ live two-hop 7.0 s **miss** vs 500 ms; incr 6 ms hold; dual-read hold | PARTIAL |
+| [008-hop-projection](008-hop-projection/NOTES.md) | Live hop index; 10⁷ two-hop **0 ms hold**; scan oracle 4.0 s; dual-read hold | VALIDATED |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.

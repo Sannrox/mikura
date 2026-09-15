@@ -97,10 +97,10 @@ as a **storage adapter**, not by merging repos.
 
 ## Success
 
-v0 (this tree): vision, non-goals, and spikes 001–007. Live map is the
-evaluate path. [007](spikes/007-ten-million-envelope/NOTES.md): 10⁷ two-hop
-**7.0 s miss** vs 500 ms; incremental 1k **6 ms hold**; dual-read holds.
-No engine pick.
+v0 (this tree): vision, non-goals, and spikes 001–008. Live map is the
+evaluate path. [007](spikes/007-ten-million-envelope/NOTES.md) two-hop
+missed at 10⁷; [008](spikes/008-hop-projection/NOTES.md) hop projection
+**holds 0 ms** at 10⁷ vs a 4.0 s scan oracle. No engine pick.
 
 v1: funnel + object log + one in-process object-set evaluate on a 10⁷
 fixture, with rebuild-from-log after deleting projections.
