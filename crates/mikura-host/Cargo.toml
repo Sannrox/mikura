@@ -1,0 +1,15 @@
+[package]
+name = "mikura-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Loopback ingest/evaluate host over an in-process mikura Store."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Sannrox/mikura"
+readme = "../../README.md"
+
+[dependencies]
+mikura = { path = "../.." }
+mikura-ingest = { path = "../mikura-ingest" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

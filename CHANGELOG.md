@@ -20,6 +20,8 @@ window.
   sidecar without hydrating object payloads. Dirty commits write
   `{log}.joins.delta` instead of rewriting the checkpoint. Old `MKJOIN01`
   files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md)).
+- `mikura-host` loopback ingest/evaluate process. `Host::bind` refuses
+  non-loopback addresses. Stream overflow fails closed.
 
 ### Changed
 

@@ -151,13 +151,15 @@ or attestation.
 
 ## Hosted service
 
-Not built. [ADR 0003](decisions/0003-hosted-service.md) records the shape:
-single process over the existing `Store`; loopback-only bind until auth
-exists; implement as [#18](https://github.com/Sannrox/mikura/issues/18).
+`mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
+Line-delimited JSON RPCs: `ingest_batch`, `ingest_stream_push`,
+`ingest_stream_flush`, `evaluate`. The request ACL deny list fails closed.
+`Host::bind` accepts loopback only; a non-loopback address is refused.
+No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do
 
-- Hosted RPC or multi-process replication (shape decided in ADR 0003)
+- Multi-process replication or non-loopback bind (loopback host exists)
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Track which Action produced a generation
