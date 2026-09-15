@@ -22,6 +22,7 @@ meaning; say it is undefined.
 | **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` returns unsupported until an envelope. |
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |
-| **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate appends. |
+| **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate merges by identity and appends. |
+| **Edit overlay** | One-cycle merge of source records and admitted edits by `(kind, key)`. Edits replace source, including `hidden`. Only the log after append is authority. |
 | **Stream bound** | Max outstanding uncommitted records on `StreamIngest`. Excess `push` fails closed. |
 | **Spike** | Throwaway harness under `spikes/`. A spike may use JSONL or SQLite as a *vehicle*. That vehicle is not mikura’s store of record. |

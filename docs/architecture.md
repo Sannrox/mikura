@@ -95,6 +95,13 @@ path). It is a test/rebuild helper, not a production compaction API.
 and group-commits once via `Store::commit`. The `mikura` crate has no ingest
 types.
 
+`mikura-ingest::merge_source_and_edits` folds a source snapshot and admitted
+edits by `(kind, key)` for one write cycle. Within each input the last record
+for an identity wins; edits then replace source, including `hidden`. Hidden
+source rows stay hidden unless an edit unhides them. `MergeIngest::run` appends
+that merged list through `BatchIngest`. The merge list is not authority; rebuild
+reads only the committed log.
+
 `mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
 records. `push` calls `Store::append_uncommitted` (live maps update
 immediately). A push that would exceed the bound returns an error and does
