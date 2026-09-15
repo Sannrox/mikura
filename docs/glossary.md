@@ -11,7 +11,7 @@ meaning; say it is undefined.
 | **Superblock** | Page 0 of the log. Holds magic `MIKURAV1`, page size, and `committed_pages`. |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |
-| **Sidecar** | A projection file next to the log. Spike 010 measured one; v1 `Store` does not persist it yet. |
+| **Sidecar** | A projection file next to the log (`{log}.joins`). Checksummed; deletable; rebuilt from the log. [ADR 0002](decisions/0002-join-sidecar.md). |
 | **Object-set** | A request to filter / hop / aggregate objects. There is no query language. |
 | **Hop** | Join from parent `key` to child `props[join_property]`. |
 | **Envelope** | A published measurement with fixture size, hardware, hold/miss, and the question asked. A miss is not an engine pick. |

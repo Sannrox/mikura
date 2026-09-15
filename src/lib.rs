@@ -1,7 +1,8 @@
 //! In-process object database: ingest → object log → object-set evaluate.
 //!
-//! The log is the store of record ([`Store`]). Indexes are live maps rebuilt
-//! on open. [`LocalCompute`] answers hop / count / sum in-process.
+//! The log is the store of record ([`Store`]). Join maps persist as a
+//! checksummed sidecar and rebuild from the log if absent. [`LocalCompute`]
+//! answers hop / count / sum from those maps.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.
 //!
@@ -81,6 +82,45 @@ mod tests {
         ]
     }
 
+    fn generic_records() -> Vec<ObjectRecord> {
+        let mut records = fixture();
+        records.push(rec(
+            "Asset",
+            "a1",
+            false,
+            &[("owner_id", "c1"), ("mass", "4")],
+        ));
+        records.push(rec(
+            "Asset",
+            "a0",
+            true,
+            &[("owner_id", "c0"), ("mass", "99")],
+        ));
+        records
+    }
+
+    fn asset_request() -> EvaluateRequest {
+        EvaluateRequest {
+            root_kind: "Customer".into(),
+            hops: vec![Hop {
+                far_kind: "Asset".into(),
+                join_property: "owner_id".into(),
+            }],
+            sum_kind: "Asset".into(),
+            sum_property: "mass".into(),
+            aggregate: Aggregate::CountAndSum,
+            acl: PropertyAcl::allow_all(),
+        }
+    }
+
+    fn temp_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("mikura-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("objects.mikura");
+        (dir, log)
+    }
+
     #[test]
     fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
         let dir = std::env::temp_dir().join("mikura-v1-lib-test");
@@ -138,6 +178,163 @@ mod tests {
         let streamed = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(streamed.sum_amount, 22);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_reopen_hop_count_and_sum_match_live_evaluate() {
+        let (dir, log) = temp_log("join-reopen");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, generic_records()).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let live = oss.evaluate(&store, &fixture_request()).unwrap();
+        assert_eq!(live.two_hop_count, 1);
+        assert_eq!(live.sum_amount, 10);
+        let live_asset = oss.evaluate(&store, &asset_request()).unwrap();
+        assert_eq!(live_asset.two_hop_count, 1);
+        assert_eq!(live_asset.sum_amount, 4);
+        assert!(Store::join_map_path(&log).is_file());
+        drop(store);
+
+        let reopened = Store::open(&log).unwrap();
+        let from_maps = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(from_maps.two_hop_count, live.two_hop_count);
+        assert_eq!(from_maps.sum_amount, live.sum_amount);
+        let from_maps_asset = oss.evaluate(&reopened, &asset_request()).unwrap();
+        assert_eq!(from_maps_asset.two_hop_count, live_asset.two_hop_count);
+        assert_eq!(from_maps_asset.sum_amount, live_asset.sum_amount);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dual_read_projection_equals_log_replay() {
+        let (dir, log) = temp_log("join-dual-read");
+        let sidecar = Store::join_map_path(&log);
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, generic_records()).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let from_projection = oss.evaluate(&store, &fixture_request()).unwrap();
+        let from_projection_asset = oss.evaluate(&store, &asset_request()).unwrap();
+        drop(store);
+
+        std::fs::remove_file(&sidecar).unwrap();
+        let replayed = Store::open(&log).unwrap();
+        let from_log = oss.evaluate(&replayed, &fixture_request()).unwrap();
+        let from_log_asset = oss.evaluate(&replayed, &asset_request()).unwrap();
+        assert_eq!(from_log.two_hop_count, from_projection.two_hop_count);
+        assert_eq!(from_log.sum_amount, from_projection.sum_amount);
+        assert_eq!(
+            from_log_asset.two_hop_count,
+            from_projection_asset.two_hop_count
+        );
+        assert_eq!(from_log_asset.sum_amount, from_projection_asset.sum_amount);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generic_kind_join_property_survives_reopen() {
+        let (dir, log) = temp_log("join-generic");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, generic_records()).unwrap();
+        assert!(store.joins().is_visible("Asset", "a1"));
+        assert_eq!(store.joins().prop("Asset", "a1", "owner_id"), Some("c1"));
+        drop(store);
+
+        let reopened = Store::open(&log).unwrap();
+        assert!(reopened.joins().is_visible("Asset", "a1"));
+        assert_eq!(reopened.joins().prop("Asset", "a1", "owner_id"), Some("c1"));
+        let oss = ObjectSet::new(LocalCompute);
+        let response = oss.evaluate(&reopened, &asset_request()).unwrap();
+        assert_eq!(response.two_hop_count, 1);
+        assert_eq!(response.sum_amount, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hidden_keys_absent_from_join_maps_after_reopen() {
+        let (dir, log) = temp_log("join-hidden");
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, generic_records()).unwrap();
+        drop(store);
+
+        let reopened = Store::open(&log).unwrap();
+        assert!(!reopened.joins().is_visible("Customer", "c0"));
+        assert!(!reopened.joins().is_visible("Order", "o0"));
+        assert!(!reopened.joins().is_visible("Shipment", "s0"));
+        assert!(!reopened.joins().is_visible("Asset", "a0"));
+        assert!(reopened.joins().is_visible("Customer", "c1"));
+        assert!(reopened.joins().is_visible("Asset", "a1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn join_sidecar_checksum_mismatch_and_truncate_fail_closed() {
+        let (dir, log) = temp_log("join-checksum");
+        let sidecar = Store::join_map_path(&log);
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, generic_records()).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let live = oss.evaluate(&store, &fixture_request()).unwrap();
+        drop(store);
+
+        let good = std::fs::read(&sidecar).unwrap();
+        let mut flipped = good.clone();
+        let last = flipped.len() - 5;
+        flipped[last] ^= 0x01;
+        std::fs::write(&sidecar, &flipped).unwrap();
+        let flipped_err = match Store::open(&log) {
+            Err(err) => err,
+            Ok(_) => panic!("bit-flip should fail closed"),
+        };
+        assert!(
+            flipped_err.contains("checksum"),
+            "bit-flip should fail closed: {flipped_err}"
+        );
+
+        std::fs::write(&sidecar, &good[..3]).unwrap();
+        let truncated_err = match Store::open(&log) {
+            Err(err) => err,
+            Ok(_) => panic!("truncate should fail closed"),
+        };
+        assert!(
+            truncated_err.contains("short") || truncated_err.contains("checksum"),
+            "truncate should fail closed: {truncated_err}"
+        );
+
+        std::fs::remove_file(&sidecar).unwrap();
+        let recovered = Store::open(&log).unwrap();
+        let from_log = oss.evaluate(&recovered, &fixture_request()).unwrap();
+        assert_eq!(from_log.two_hop_count, live.two_hop_count);
+        assert_eq!(from_log.sum_amount, live.sum_amount);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_join_sidecar_rebuilds_from_log() {
+        let (dir, log) = temp_log("join-stale");
+        let sidecar = Store::join_map_path(&log);
+        let mut store = Store::create(&log).unwrap();
+        BatchIngest::run(&mut store, fixture()).unwrap();
+        drop(store);
+        let stale = std::fs::read(&sidecar).unwrap();
+
+        let mut store = Store::open(&log).unwrap();
+        store
+            .append(rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o1"), ("amount", "5")],
+            ))
+            .unwrap();
+        drop(store);
+        std::fs::write(&sidecar, stale).unwrap();
+
+        let reopened = Store::open(&log).unwrap();
+        let oss = ObjectSet::new(LocalCompute);
+        let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
+        assert_eq!(response.two_hop_count, 1);
+        assert_eq!(response.sum_amount, 15);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

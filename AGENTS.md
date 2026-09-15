@@ -17,7 +17,7 @@ tracked. Do not treat that directory as gitignored.
 | --- | --- |
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
-| `src/store.rs` | Identity, live maps, rebuild from log |
+| `src/store.rs` | Identity, generic join sidecar, rebuild from log |
 | `src/ingest.rs` | Batch ingest; in-memory stream buffer |
 | `src/objectset.rs` | Evaluate request/response |
 | `src/acl.rs` | Property deny-list (fail closed) |

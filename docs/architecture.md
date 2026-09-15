@@ -65,23 +65,18 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 `src/store.rs` keeps:
 
 - `objects: HashMap<(kind, key), ObjectRecord>` — live identity
-- `joins: JoinMaps` — in-memory projection
+- `joins: JoinMaps` — projection of visible `(kind, key, props)`
 - `LogWriter` — durable append
 
-`Store::open` replays the committed log and rebuilds both maps. That is the
-restart path for v1: **no sidecar file**.
+`Store::open` replays the committed log into identity. Join maps load from
+the checksummed sidecar `{log}.joins` when present ([ADR 0002](decisions/0002-join-sidecar.md)).
+A missing sidecar, or one whose identity stamp does not match live records,
+is rebuilt from the log. Checksum mismatch, truncation, or bad magic fails
+closed; deleting the sidecar recovers from the log.
 
-`JoinMaps` is **hardcoded** to three kinds:
-
-| Kind | Indexed as |
-| --- | --- |
-| `Customer` | visible key set |
-| `Order` | `key → customer_id` |
-| `Shipment` | `key → (order_id, amount)` |
-
-Unknown kinds still persist on the log and participate in
-`visible_of_kind` / `LocalCompute` hops. They do not enter `JoinMaps`.
-Persisting generic join maps is roadmap item 1.
+`JoinMaps` is generic over kind and property name. Every visible record is
+indexed. Hidden records are absent. `LocalCompute` answers hop / count / sum
+from these maps, not by scanning `objects`.
 
 `replace_kind` rewrites the whole log (creates a new writer at the same
 path). It is a test/rebuild helper, not a production compaction API.
@@ -98,10 +93,10 @@ roadmap item 4.
 
 `ObjectSet<B: ComputeBackend>::evaluate` delegates to the backend.
 
-`LocalCompute` (generic kinds):
+`LocalCompute` (generic kinds, from `JoinMaps`):
 
-1. Start from visible records of `root_kind`.
-2. For each `Hop`, join `parent.key` to `child.props[join_property]` among
+1. Start from visible keys of `root_kind`.
+2. For each `Hop`, join `parent.key` to child `join_property` among
    visible children of `far_kind`.
 3. Count distinct root keys in surviving paths (`EvaluateResponse.two_hop_count`
    — the field name is historical; hop count is `request.hops.len()`).
@@ -129,7 +124,7 @@ or attestation.
 
 - Hosted RPC or multi-process replication
 - Encrypt logs
-- Persist join/hop sidecars (measured in spike 010, not wired into `Store`)
+- Incremental join WAL (sidecar is a full rewrite of visible join rows)
 - Track which Action produced a generation
 - Enforce ACLs per principal or on individual properties of a loaded object
 - Compact or checkpoint the log except via `replace_kind`
