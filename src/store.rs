@@ -120,6 +120,29 @@ impl Store {
         &self.joins
     }
 
+    pub fn visible_of_kind(&self, kind: &str) -> Vec<&ObjectRecord> {
+        self.objects
+            .values()
+            .filter(|record| record.kind == kind && !record.hidden)
+            .collect()
+    }
+
+    pub fn replace_kind(&mut self, kind: &str, records: Vec<ObjectRecord>) -> Result<(), String> {
+        let keep: Vec<ObjectRecord> = self
+            .objects
+            .values()
+            .filter(|record| record.kind != kind)
+            .cloned()
+            .collect();
+        File::create(&self.log).map_err(|e| e.to_string())?;
+        self.objects.clear();
+        self.joins = JoinMaps::default();
+        for record in keep.into_iter().chain(records) {
+            self.append(record)?;
+        }
+        Ok(())
+    }
+
     fn write_log(&self, record: &ObjectRecord) -> Result<(), String> {
         let file = OpenOptions::new()
             .create(true)

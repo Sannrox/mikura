@@ -15,7 +15,7 @@ pub use acl::{AclError, PropertyAcl};
 pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use ingest::{BatchIngest, StreamIngest};
-pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, ObjectSet};
+pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Hop, ObjectSet};
 pub use store::{JoinMaps, ObjectRecord, Store};
 
 #[cfg(test)]
@@ -33,6 +33,26 @@ mod tests {
                 .iter()
                 .map(|(k, v)| ((*k).into(), (*v).into()))
                 .collect(),
+        }
+    }
+
+    fn fixture_request() -> EvaluateRequest {
+        EvaluateRequest {
+            root_kind: "Customer".into(),
+            hops: vec![
+                Hop {
+                    far_kind: "Order".into(),
+                    join_property: "customer_id".into(),
+                },
+                Hop {
+                    far_kind: "Shipment".into(),
+                    join_property: "order_id".into(),
+                },
+            ],
+            sum_kind: "Shipment".into(),
+            sum_property: "amount".into(),
+            aggregate: Aggregate::CountAndSum,
+            acl: PropertyAcl::allow_all(),
         }
     }
 
@@ -70,10 +90,7 @@ mod tests {
         let visible = oss
             .evaluate(
                 &store,
-                &EvaluateRequest {
-                    aggregate: Aggregate::CountAndSum,
-                    acl: PropertyAcl::allow_all(),
-                },
+                &fixture_request(),
             )
             .unwrap();
         assert_eq!(visible.two_hop_count, 1);
@@ -92,31 +109,21 @@ mod tests {
         let after = oss
             .evaluate(
                 &store,
-                &EvaluateRequest {
-                    aggregate: Aggregate::CountAndSum,
-                    acl: PropertyAcl::allow_all(),
-                },
+                &fixture_request(),
             )
             .unwrap();
         assert_eq!(after.sum_amount, 15);
 
-        let denied = oss.evaluate(
-            &store,
-            &EvaluateRequest {
-                aggregate: Aggregate::CountAndSum,
-                acl: PropertyAcl::deny_property("Shipment", "amount"),
-            },
-        );
+        let mut denied_req = fixture_request();
+        denied_req.acl = PropertyAcl::deny_property("Shipment", "amount");
+        let denied = oss.evaluate(&store, &denied_req);
         assert!(matches!(denied, Err(ComputeError::Acl(AclError::Denied { .. }))));
 
         let rebuilt = Store::open(&log).unwrap();
         let from_log = oss
             .evaluate(
                 &rebuilt,
-                &EvaluateRequest {
-                    aggregate: Aggregate::CountAndSum,
-                    acl: PropertyAcl::allow_all(),
-                },
+                &fixture_request(),
             )
             .unwrap();
         assert_eq!(from_log.two_hop_count, after.two_hop_count);
@@ -126,10 +133,7 @@ mod tests {
         let err = spark
             .evaluate(
                 &store,
-                &EvaluateRequest {
-                    aggregate: Aggregate::CountAndSum,
-                    acl: PropertyAcl::allow_all(),
-                },
+                &fixture_request(),
             )
             .unwrap_err();
         assert!(matches!(err, ComputeError::UnsupportedBackend { .. }));
@@ -147,10 +151,7 @@ mod tests {
         let streamed = oss
             .evaluate(
                 &store,
-                &EvaluateRequest {
-                    aggregate: Aggregate::CountAndSum,
-                    acl: PropertyAcl::allow_all(),
-                },
+                &fixture_request(),
             )
             .unwrap();
         assert_eq!(streamed.sum_amount, 22);

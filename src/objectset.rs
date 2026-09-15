@@ -8,7 +8,17 @@ pub enum Aggregate {
 }
 
 #[derive(Clone, Debug)]
+pub struct Hop {
+    pub far_kind: String,
+    pub join_property: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct EvaluateRequest {
+    pub root_kind: String,
+    pub hops: Vec<Hop>,
+    pub sum_kind: String,
+    pub sum_property: String,
     pub aggregate: Aggregate,
     pub acl: PropertyAcl,
 }
