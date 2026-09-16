@@ -37,7 +37,7 @@ window.
   aggregate still returns `AclError::Denied`.
 - [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
   clerk-owned bearer checked for equality. Loopback stays unauthenticated.
-  Not implemented on `Host::bind` yet.
+  `Host::bind` takes the optional secret; JSON lines carry `token`.
 
 ### Changed
 
