@@ -32,6 +32,8 @@ count/sum.
 Identity is `(kind, key)`. A later append replaces the live record.
 
 Records do **not** store an Action id, principal, or schema version.
+[ADR 0006](decisions/0006-action-provenance.md) accepts an optional
+clerk-assigned Action id on the log; that codec is not in `src/` yet.
 
 ## Object log
 
@@ -159,7 +161,8 @@ returned objects (evaluate returns counts/sums, not object payloads).
 
 `Store::apply_action` appends an `ObjectRecord` with `hidden: false` and
 `gen` assigned by `append`. It is writeback of object bytes, not admission
-or attestation.
+or attestation. The producing Action id is accepted in
+[ADR 0006](decisions/0006-action-provenance.md) and is not stored yet.
 
 ## Hosted service
 
@@ -175,7 +178,8 @@ address is refused. No tenants, policy compile, receipts, or principals.
 - Multi-process replication or non-loopback bind (loopback host exists)
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
-- Track which Action produced a generation
+- Track which Action produced a generation (accepted in
+  [ADR 0006](decisions/0006-action-provenance.md); not in `src/` yet)
 - Enforce ACLs per principal or on individual properties of a loaded object
 - Compact or checkpoint the log
 

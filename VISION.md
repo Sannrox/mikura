@@ -71,7 +71,7 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v5 (done):** exact-match filter on evaluate (question 4) ([#45](https://github.com/Sannrox/mikura/issues/45)); load by primary key ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language.
 
-**v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
+**v6:** store which Action produced a generation (question 3; [ADR 0006](docs/decisions/0006-action-provenance.md) accepted, [#64](https://github.com/Sannrox/mikura/issues/64)). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 
 **v7:** non-loopback bind only after an auth ADR ([#48](https://github.com/Sannrox/mikura/issues/48)). Bearer tokens owned by the control plane. Still one process, one `Store`.
 
