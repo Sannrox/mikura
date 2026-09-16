@@ -27,14 +27,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 projection remasure | After #29/#28/#27, 10⁷ query **1012 ms miss** vs 500 ms; 10⁶ **105 ms hold**; `Store::open` 15.5 s; dual-read holds ([#43](https://github.com/Sannrox/mikura/issues/43), spike 011 addendum) |
 | v5 load | `Store::load` returns the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)) |
 | v5 filter | Exact-match filter on evaluate roots ([#45](https://github.com/Sannrox/mikura/issues/45)) |
+| v4 hop fold | Last-hop fold + packed join children; 10⁷ query **878 ms miss** vs 500 ms; 10⁶ **33 ms hold**; dual-read holds ([#59](https://github.com/Sannrox/mikura/issues/59), spike 011 addendum) |
 
 ## Next (this repository, in order)
 
-1. Hop count and sum without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute stays closed until that remasure.
-2. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
-3. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
-4. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
-5. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
+1. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
+2. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
+3. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
+4. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
 
 ## After Next (this repository)
 

@@ -77,7 +77,7 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
 - slim identity `(kind, key) → (gen, hidden)` — enough to bump generation
 - `hidden_props` — payloads for hidden identities (not hop-indexed)
-- `joins: JoinMaps` — interned property pairs and hop/sum indexes ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md))
+- `joins: JoinMaps` — interned property pairs, packed join-child lists, and hop/sum indexes ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md))
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
@@ -95,8 +95,8 @@ instead of rewriting the whole sidecar. Compact when dirty rows exceed a
 quarter of identity.
 
 `JoinMaps` is generic over kind and property name. Strings are interned.
-Hidden records are absent from hop/sum. `LocalCompute` answers from these
-maps, not from a hot object map.
+Join children are packed identity lists. Hidden records are absent from
+hop/sum. `LocalCompute` answers from these maps, not from a hot object map.
 
 ## Ingest
 
@@ -132,11 +132,15 @@ uncommitted tail; rebuild reads only committed pages.
 1. Start from visible keys of `root_kind`.
 2. If `request.filter` is set, keep only roots whose interned
    `props[property] == value`. Empty match is count 0, sum 0.
-3. For each `Hop`, join `parent.key` to child `join_property` among
-   visible children of `far_kind`.
-4. Count distinct root keys in surviving paths (`EvaluateResponse.two_hop_count`
+3. For each `Hop` except the last, join `parent.key` to child
+   `join_property` among visible children of `far_kind`, keeping
+   `(root, identity)` only for the current frontier.
+4. The last hop folds the linked set in place: it does not store a
+   `(root, leaf)` tuple per path.
+5. Count distinct roots that still have a path (`EvaluateResponse.two_hop_count`
    — the field name is historical; hop count is `request.hops.len()`).
-5. Sum `sum_property` on leaves whose kind is `sum_kind`.
+6. Sum `sum_property` on leaves whose kind is `sum_kind`, once per path
+   (fan-out multiplies; a diamond still counts the root once).
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
 a filter is present, on `(root_kind, filter.property)`.

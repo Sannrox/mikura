@@ -17,6 +17,81 @@ struct CountScratch {
 }
 
 impl CountScratch {
+    fn hop_index<'a>(
+        maps: &'a JoinMaps,
+        far_kind: &str,
+        join_property: &str,
+    ) -> Option<&'a HashMap<u32, Vec<u32>>> {
+        let far_id = *maps.intern_ix.get(far_kind)?;
+        let prop_id = *maps.intern_ix.get(join_property)?;
+        maps.by_prop.get(&(far_id, prop_id))
+    }
+
+    fn expand(&mut self, index: Option<&HashMap<u32, Vec<u32>>>) {
+        self.next.clear();
+        if let Some(index) = index {
+            for &(root, parent) in &self.paths {
+                let Some(children) = index.get(&parent) else {
+                    continue;
+                };
+                for &child in children {
+                    self.next.push((root, child));
+                }
+            }
+        }
+        std::mem::swap(&mut self.paths, &mut self.next);
+    }
+
+    fn fold_leaves(
+        &mut self,
+        maps: &JoinMaps,
+        index: Option<&HashMap<u32, Vec<u32>>>,
+        leaf_kind: &str,
+        sum_kind: &str,
+        sum_property: &str,
+    ) -> (usize, i64) {
+        let words = maps.intern.len().div_ceil(64);
+        if self.reachable.len() < words {
+            self.reachable.resize(words, 0);
+        } else {
+            self.reachable[..words].fill(0);
+        }
+        let amounts = match (
+            maps.intern_ix.get(sum_kind),
+            maps.intern_ix.get(sum_property),
+        ) {
+            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
+            _ => None,
+        };
+        let sum_leaves = leaf_kind == sum_kind;
+        let mut reachable = 0usize;
+        let mut total = 0i64;
+        if let Some(index) = index {
+            for &(root, parent) in &self.paths {
+                let Some(children) = index.get(&parent) else {
+                    continue;
+                };
+                if children.is_empty() {
+                    continue;
+                }
+                let word = root as usize / 64;
+                let bit = 1u64 << (root % 64);
+                if self.reachable[word] & bit == 0 {
+                    self.reachable[word] |= bit;
+                    reachable += 1;
+                }
+                if sum_leaves {
+                    for child in children {
+                        if let Some(amount) = amounts.and_then(|map| map.get(child)) {
+                            total += *amount;
+                        }
+                    }
+                }
+            }
+        }
+        (reachable, total)
+    }
+
     fn count_and_sum(
         &mut self,
         maps: &JoinMaps,
@@ -27,56 +102,35 @@ impl CountScratch {
         sum_property: &str,
     ) -> (usize, i64) {
         self.paths.clear();
-        self.next.clear();
         self.paths.extend(roots.iter().map(|&key| (key, key)));
-        for (far_kind, join_property) in hops {
-            self.next.clear();
-            if let (Some(&far_id), Some(&prop_id)) = (
-                maps.intern_ix.get(*far_kind),
-                maps.intern_ix.get(*join_property),
+        let Some((last, rest)) = hops.split_last() else {
+            let amounts = match (
+                maps.intern_ix.get(sum_kind),
+                maps.intern_ix.get(sum_property),
             ) {
-                if let Some(index) = maps.by_prop.get(&(far_id, prop_id)) {
-                    for (root, parent) in &self.paths {
-                        if let Some(children) = index.get(parent) {
-                            for child in children {
-                                self.next.push((*root, *child));
-                            }
-                        }
+                (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
+                _ => None,
+            };
+            let mut total = 0i64;
+            if root_kind == sum_kind {
+                for &(_, leaf) in &self.paths {
+                    if let Some(amount) = amounts.and_then(|map| map.get(&leaf)) {
+                        total += *amount;
                     }
                 }
             }
-            std::mem::swap(&mut self.paths, &mut self.next);
-        }
-        let leaf_kind = hops.last().map(|(kind, _)| *kind).unwrap_or(root_kind);
-        let words = maps.intern.len().div_ceil(64);
-        if self.reachable.len() < words {
-            self.reachable.resize(words, 0);
-        } else {
-            self.reachable[..words].fill(0);
-        }
-        let mut reachable = 0usize;
-        let mut total = 0i64;
-        let amounts = match (
-            maps.intern_ix.get(sum_kind),
-            maps.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
-            _ => None,
+            return (self.paths.len(), total);
         };
-        for (root, leaf) in &self.paths {
-            let word = (*root as usize) / 64;
-            let bit = 1u64 << (*root % 64);
-            if self.reachable[word] & bit == 0 {
-                self.reachable[word] |= bit;
-                reachable += 1;
-            }
-            if leaf_kind == sum_kind {
-                if let Some(amount) = amounts.and_then(|map| map.get(leaf)) {
-                    total += *amount;
-                }
-            }
+        for hop in rest {
+            self.expand(Self::hop_index(maps, hop.0, hop.1));
         }
-        (reachable, total)
+        self.fold_leaves(
+            maps,
+            Self::hop_index(maps, last.0, last.1),
+            last.0,
+            sum_kind,
+            sum_property,
+        )
     }
 }
 
@@ -90,14 +144,15 @@ pub(crate) struct LiveMeta {
 }
 
 /// Rebuildable hop/join projection. Hidden records are absent.
-/// Strings are interned once; hop/sum walks `u32` ids. Sidecar stores interned
-/// join keys and sum columns, not a second full-string object map.
+/// Strings are interned once; hop/sum walks `u32` ids. Join children are
+/// packed identity lists. Sidecar stores interned join keys and sum columns,
+/// not a second full-string object map.
 #[derive(Clone, Debug, Default)]
 pub struct JoinMaps {
     pub(crate) intern: Vec<String>,
     pub(crate) intern_ix: HashMap<String, u32>,
     by_kind: HashMap<u32, HashSet<u32>>,
-    by_prop: HashMap<(u32, u32), HashMap<u32, HashSet<u32>>>,
+    by_prop: HashMap<(u32, u32), HashMap<u32, Vec<u32>>>,
     amounts: HashMap<(u32, u32), HashMap<u32, i64>>,
     pub(crate) owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
 }
@@ -126,8 +181,8 @@ impl JoinMaps {
         None
     }
 
-    /// Distinct root keys in surviving hop paths, and the sum of `sum_property`
-    /// on leaves whose kind is `sum_kind`.
+    /// Distinct roots that still have a hop path, and the sum of `sum_property`
+    /// on every leaf along those paths (fan-out multiplies; diamonds do not).
     pub fn count_and_sum(
         &self,
         root_kind: &str,
@@ -250,7 +305,7 @@ impl JoinMaps {
                 .or_default()
                 .entry(value_id)
                 .or_default()
-                .insert(key_id);
+                .push(key_id);
             if let Ok(amount) = value.parse::<i64>() {
                 self.amounts
                     .entry((kind_id, prop_id))
@@ -276,7 +331,7 @@ impl JoinMaps {
                 .or_default()
                 .entry(value_id)
                 .or_default()
-                .insert(key_id);
+                .push(key_id);
             if let Ok(amount) = value.parse::<i64>() {
                 self.amounts
                     .entry((kind_id, prop_id))
@@ -320,7 +375,9 @@ impl JoinMaps {
         for (prop_id, value_id) in owned {
             if let Some(by_val) = self.by_prop.get_mut(&(kind_id, prop_id)) {
                 if let Some(keys) = by_val.get_mut(&value_id) {
-                    keys.remove(&key_id);
+                    if let Some(i) = keys.iter().position(|&k| k == key_id) {
+                        keys.swap_remove(i);
+                    }
                     if keys.is_empty() {
                         by_val.remove(&value_id);
                     }
