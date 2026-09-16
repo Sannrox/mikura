@@ -1,8 +1,84 @@
 use crc32fast::Hasher as Crc;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+thread_local! {
+    static COUNT_SCRATCH: RefCell<CountScratch> = RefCell::new(CountScratch::default());
+}
+
+#[derive(Default)]
+struct CountScratch {
+    paths: Vec<(u32, u32)>,
+    next: Vec<(u32, u32)>,
+    reachable: Vec<u64>,
+}
+
+impl CountScratch {
+    fn count_and_sum(
+        &mut self,
+        maps: &JoinMaps,
+        roots: &HashSet<u32>,
+        hops: &[(&str, &str)],
+        root_kind: &str,
+        sum_kind: &str,
+        sum_property: &str,
+    ) -> (usize, i64) {
+        self.paths.clear();
+        self.next.clear();
+        self.paths.extend(roots.iter().map(|&key| (key, key)));
+        for (far_kind, join_property) in hops {
+            self.next.clear();
+            if let (Some(&far_id), Some(&prop_id)) = (
+                maps.intern_ix.get(*far_kind),
+                maps.intern_ix.get(*join_property),
+            ) {
+                if let Some(index) = maps.by_prop.get(&(far_id, prop_id)) {
+                    for (root, parent) in &self.paths {
+                        if let Some(children) = index.get(parent) {
+                            for child in children {
+                                self.next.push((*root, *child));
+                            }
+                        }
+                    }
+                }
+            }
+            std::mem::swap(&mut self.paths, &mut self.next);
+        }
+        let leaf_kind = hops.last().map(|(kind, _)| *kind).unwrap_or(root_kind);
+        let words = maps.intern.len().div_ceil(64);
+        if self.reachable.len() < words {
+            self.reachable.resize(words, 0);
+        } else {
+            self.reachable[..words].fill(0);
+        }
+        let mut reachable = 0usize;
+        let mut total = 0i64;
+        let amounts = match (
+            maps.intern_ix.get(sum_kind),
+            maps.intern_ix.get(sum_property),
+        ) {
+            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
+            _ => None,
+        };
+        for (root, leaf) in &self.paths {
+            let word = (*root as usize) / 64;
+            let bit = 1u64 << (*root % 64);
+            if self.reachable[word] & bit == 0 {
+                self.reachable[word] |= bit;
+                reachable += 1;
+            }
+            if leaf_kind == sum_kind {
+                if let Some(amount) = amounts.and_then(|map| map.get(leaf)) {
+                    total += *amount;
+                }
+            }
+        }
+        (reachable, total)
+    }
+}
 
 pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN02";
 pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN2D";
@@ -65,44 +141,11 @@ impl JoinMaps {
         let Some(roots) = self.by_kind.get(&root_kind_id) else {
             return (0, 0);
         };
-        let mut paths: Vec<(u32, u32)> = roots.iter().map(|&key| (key, key)).collect();
-        for (far_kind, join_property) in hops {
-            let mut next = Vec::new();
-            if let (Some(&far_id), Some(&prop_id)) = (
-                self.intern_ix.get(*far_kind),
-                self.intern_ix.get(*join_property),
-            ) {
-                if let Some(index) = self.by_prop.get(&(far_id, prop_id)) {
-                    for (root, parent) in &paths {
-                        if let Some(children) = index.get(parent) {
-                            for child in children {
-                                next.push((*root, *child));
-                            }
-                        }
-                    }
-                }
-            }
-            paths = next;
-        }
-        let leaf_kind = hops.last().map(|(kind, _)| *kind).unwrap_or(root_kind);
-        let mut reachable = HashSet::new();
-        let mut total = 0i64;
-        let amounts = match (
-            self.intern_ix.get(sum_kind),
-            self.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => self.amounts.get(&(kind_id, prop_id)),
-            _ => None,
-        };
-        for (root, leaf) in &paths {
-            reachable.insert(*root);
-            if leaf_kind == sum_kind {
-                if let Some(amount) = amounts.and_then(|map| map.get(leaf)) {
-                    total += *amount;
-                }
-            }
-        }
-        (reachable.len(), total)
+        COUNT_SCRATCH.with(|scratch| {
+            scratch
+                .borrow_mut()
+                .count_and_sum(self, roots, hops, root_kind, sum_kind, sum_property)
+        })
     }
 
     pub(crate) fn intern(&mut self, value: &str) -> u32 {

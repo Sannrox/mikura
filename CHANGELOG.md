@@ -33,6 +33,8 @@ window.
 
 ### Changed
 
+- `JoinMaps::count_and_sum` reuses thread-local path buffers and a dense
+  root bitset instead of allocating a `Vec` per hop and a final `HashSet`.
 - Remeasured hop count+sum after slim maps ([#31](https://github.com/Sannrox/mikura/issues/31)):
   10⁷ query is 2.6 s (still a miss vs 500 ms); 10⁶ now holds at 86 ms;
   dual-read holds. Next work is in-process projection, not a compute
