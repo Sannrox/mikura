@@ -33,6 +33,9 @@ window.
 
 ### Changed
 
+- `Store::open` fills join indexes from intern ids in the checkpoint; it
+  no longer de-interns properties to `HashMap<String, String>` and
+  re-interns them.
 - `JoinMaps::count_and_sum` reuses thread-local path buffers and a dense
   root bitset instead of allocating a `Vec` per hop and a final `HashSet`.
 - Remeasured hop count+sum after slim maps ([#31](https://github.com/Sannrox/mikura/issues/31)):
