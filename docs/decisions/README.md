@@ -10,6 +10,7 @@ a new ADR. Allocate the next number and list it here.
 | [0003](0003-hosted-service.md) | Single-process hosted ingest/evaluate | accepted |
 | [0004](0004-slim-join-maps.md) | Slim interned join maps (`MKJOIN02`) | accepted |
 | [0005](0005-current-object-load.md) | Load the current object from slim identity | accepted |
+| [0006](0006-action-provenance.md) | Action provenance on the object log | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

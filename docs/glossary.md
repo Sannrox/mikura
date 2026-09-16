@@ -19,7 +19,7 @@ meaning; say it is undefined.
 | **Hold / miss** | Envelope result: the target latency or correctness check passed (hold) or failed (miss). |
 | **Fail closed** | On checksum mismatch, missing committed pages, or ACL denial: return an error. Do not guess. |
 | **Property ACL** | v1: in-process deny list of `(kind, property)` checked on the aggregate property. Not a principal. |
-| **Action** | Governed edit in the product sense. v1 `apply_action` appends a new visible generation; the record does not store an Action id. |
+| **Action** | Governed edit in the product sense. v1 `apply_action` appends a new visible generation. [ADR 0006](decisions/0006-action-provenance.md) stores the clerk-assigned Action id on that generation; the codec is not in `src/` yet. |
 | **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` returns unsupported until an envelope. |
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |

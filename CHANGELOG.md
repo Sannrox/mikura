@@ -29,9 +29,10 @@ window.
   sidecar without hydrating object payloads. Dirty commits write
   `{log}.joins.delta` instead of rewriting the checkpoint. Old `MKJOIN01`
   files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md)).
-- `EvaluateRequest.filter` is an optional exact-match on a root
-  property. Hop count and sum run on the surviving roots. ACL deny on the
-  filtered or summed property fails closed. Host JSON accepts `filter`.
+- Action provenance on the object log
+  ([ADR 0006](docs/decisions/0006-action-provenance.md)): optional
+  clerk-assigned Action id on the generation. Implementation is
+  [#64](https://github.com/Sannrox/mikura/issues/64).
 
 ### Changed
 
