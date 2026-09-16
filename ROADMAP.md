@@ -25,16 +25,16 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v3 loopback host | Single-process ingest/evaluate on loopback ([#18](https://github.com/Sannrox/mikura/issues/18), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 | v2 slim remasure | After `MKJOIN02`, 10⁷ query **2.6 s miss** vs 500 ms; 10⁶ now **86 ms hold**; dual-read holds ([#31](https://github.com/Sannrox/mikura/issues/31), spike 011 addendum) |
 | v2 projection remasure | After #29/#28/#27, 10⁷ query **1012 ms miss** vs 500 ms; 10⁶ **105 ms hold**; `Store::open` 15.5 s; dual-read holds ([#43](https://github.com/Sannrox/mikura/issues/43), spike 011 addendum) |
+| v5 load | `Store::load` returns the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)) |
 
 ## Next (this repository, in order)
 
-1. Load the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44)).
-2. Exact-match filter on evaluate ([#45](https://github.com/Sannrox/mikura/issues/45)).
-3. Hop count and sum without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute stays closed until that remasure. Does not block load or filter.
-4. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
-5. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
-6. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
-7. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
+1. Exact-match filter on evaluate ([#45](https://github.com/Sannrox/mikura/issues/45)).
+2. Hop count and sum without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute stays closed until that remasure. Does not block load or filter.
+3. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
+4. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
+5. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
+6. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
 
 ## After Next (this repository)
 

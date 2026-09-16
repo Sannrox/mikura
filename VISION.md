@@ -25,12 +25,12 @@ mikura tag. They must not vendor this tree.
 Fail the project if a projection becomes recovery material, or if identity
 cannot be rebuilt from the log.
 
-Today the crate answers (2) and a slice of (1) and (4) for a small
+Today the crate answers (1), (2), and a slice of (4) for a small
 in-process graph: slim identity and generic join maps persist as a sidecar.
-After restart, payloads are not loadable. Evaluate is hop + count/sum, not
-filter or load. (3) and (5) remain product intent: Action append exists, but
-records do not store an Action id; ACL is an in-process deny list, not a
-principal.
+`Store::load` returns the current object after restart. Evaluate is hop +
+count/sum, not filter. (3) and (5) remain product intent: Action append
+exists, but records do not store an Action id; ACL is an in-process deny
+list, not a principal.
 
 ## Where data is saved
 
@@ -67,9 +67,9 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest is still open.
 
-**v4:** remaining in-process hop walk without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute backend only if that remasure still misses and remaining in-process work is classified as a ceiling. A miss is not an engine pick. Load and filter (v5) wait on [#43](https://github.com/Sannrox/mikura/issues/43) having a published number, not on #59.
+**v4:** remaining in-process hop walk without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute backend only if that remasure still misses and remaining in-process work is classified as a ceiling. A miss is not an engine pick.
 
-**v5:** load the current object for a primary key (question 1); exact-match filter on evaluate (question 4). No query language. A payload map must stay deletable and rebuildable. Unblocked by [#43](https://github.com/Sannrox/mikura/issues/43).
+**v5:** exact-match filter on evaluate (question 4). Load by primary key landed ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language. A payload map must stay deletable and rebuildable.
 
 **v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 

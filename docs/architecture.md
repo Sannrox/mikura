@@ -76,14 +76,19 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 `src/store/` keeps:
 
 - slim identity `(kind, key) → (gen, hidden)` — enough to bump generation
-- `joins: JoinMaps` — interned join keys and sum columns ([ADR 0004](decisions/0004-slim-join-maps.md))
+- `hidden_props` — payloads for hidden identities (not hop-indexed)
+- `joins: JoinMaps` — interned property pairs and hop/sum indexes ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md))
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
-It does not hydrate object payloads. The sidecar stamp is log
-`committed_pages`. A missing or stale sidecar rebuilds from the log.
-Checksum mismatch, truncation, or bad magic (`MKJOIN01` included) fails
-closed; deleting the sidecar recovers from the log.
+It does not keep a hot payload map. `Store::load(kind, key)` reconstructs
+the live `ObjectRecord` from slim identity plus interned property pairs
+already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
+Hidden rows stay out of hop/sum; their property pairs sit in the identity
+row so load can still return them. A missing identity fails closed. The
+sidecar stamp is log `committed_pages`. A missing or stale sidecar rebuilds
+from the log. Checksum mismatch, truncation, or bad magic (`MKJOIN01`
+included) fails closed; deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. Compact when dirty rows exceed a

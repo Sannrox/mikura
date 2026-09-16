@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#15](https://github.com/Sannrox/mikura/issues/15), [#3](https://github.com/Sannrox/mikura/issues/3), spike 011
+- Related: [#15](https://github.com/Sannrox/mikura/issues/15), [#3](https://github.com/Sannrox/mikura/issues/3), spike 011, [ADR 0005](0005-current-object-load.md)
 - Supersedes: sidecar layout of [ADR 0002](0002-join-sidecar.md) (`MKJOIN01`)
 - Superseded by: none
 

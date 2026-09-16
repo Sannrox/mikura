@@ -324,3 +324,36 @@ fn sidecar_checksum_and_bad_magic_fail_closed() {
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
 }
+
+#[test]
+fn load_current_object_after_restart() {
+    let tmp = TempLog::new("load");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let live = store.load("Customer", "c1").unwrap();
+    let hidden = store.load("Customer", "c0").unwrap();
+    assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
+    assert!(hidden.hidden);
+    assert_eq!(hidden.props.get("region").map(String::as_str), Some("eu"));
+    assert!(!store.joins().is_visible("Customer", "c0"));
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(reopened.load("Customer", "c1").unwrap(), live);
+    assert_eq!(reopened.load("Customer", "c0").unwrap(), hidden);
+
+    let mut store = Store::open(tmp.path()).unwrap();
+    store
+        .append(rec("Customer", "c1", false, &[("region", "ap")]))
+        .unwrap();
+    drop(store);
+    let updated = Store::open(tmp.path()).unwrap();
+    let latest = updated.load("Customer", "c1").unwrap();
+    assert_eq!(latest.gen, 2);
+    assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
+
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(replayed.load("Customer", "c1").unwrap(), latest);
+    assert_eq!(replayed.load("Customer", "c0").unwrap(), hidden);
+}

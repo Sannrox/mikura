@@ -11,7 +11,8 @@ meaning; say it is undefined.
 | **Superblock** | Page 0 of the log. Holds magic `MIKURAV1`, page size, and `committed_pages`. |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |
-| **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN02`). Interned join keys and sum columns plus slim identity. Dirty commits may add `{log}.joins.delta` (`MKJOIN2D`). Checksummed; deletable; rebuilt from the log. [ADR 0004](decisions/0004-slim-join-maps.md). |
+| **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN02`). Interned property pairs plus slim identity; hop/sum indexes omit hidden rows. Dirty commits may add `{log}.joins.delta` (`MKJOIN2D`). Checksummed; deletable; rebuilt from the log. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md). |
+| **Load** | `Store::load(kind, key)` returns the live `ObjectRecord`. Missing identity fails closed. Hidden records are returned and stay out of join maps. |
 | **Object-set** | A request to filter / load / hop / aggregate objects. There is no query language. Today evaluate is hop + count/sum. |
 | **Hop** | Join from parent `key` to child `props[join_property]`. |
 | **Envelope** | A published measurement with fixture size, hardware, hold/miss, and the question asked. A miss is not an engine pick. |
