@@ -6,7 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not include credentials or object-log contents.
+        Do not include credentials, object-log contents, hostnames, home
+        paths, or other private environment details.
         Report exploitable vulnerabilities through the private security link instead.
   - type: textarea
     id: summary
@@ -37,7 +38,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS and `rustc --version`.
+      description: OS and `rustc --version` only. No hostnames, home paths, or absolute paths.
     validations:
       required: true
   - type: textarea
@@ -53,7 +54,7 @@ body:
       options:
         - label: I searched existing issues and pull requests.
           required: true
-        - label: I removed secrets and object-log contents.
+        - label: I removed secrets, object-log contents, hostnames, and home paths.
           required: true
         - label: This is not an exploitable security vulnerability.
           required: true
