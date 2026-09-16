@@ -25,12 +25,12 @@ mikura tag. They must not vendor this tree.
 Fail the project if a projection becomes recovery material, or if identity
 cannot be rebuilt from the log.
 
-Today the crate answers (1), (2), and a slice of (4) for a small
+Today the crate answers (1), (2), (3), and a slice of (4) for a small
 in-process graph: slim identity and generic join maps persist as a sidecar.
-`Store::load` returns the current object after restart. Evaluate is hop +
-count/sum plus optional exact-match on root properties. (3) and (5) remain
-product intent: Action append exists, but records do not store an Action
-id; ACL is an in-process deny list, not a principal.
+`Store::load` returns the current object after restart, including the optional
+Action id. Evaluate is hop + count/sum plus optional exact-match on root
+properties. (5) remains product intent: ACL is an in-process deny list, not
+a principal.
 
 ## Where data is saved
 
@@ -71,7 +71,7 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v5 (done):** exact-match filter on evaluate (question 4) ([#45](https://github.com/Sannrox/mikura/issues/45)); load by primary key ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language.
 
-**v6:** store which Action produced a generation (question 3; [ADR 0006](docs/decisions/0006-action-provenance.md) accepted, [#64](https://github.com/Sannrox/mikura/issues/64)). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
+**v6 (done for question 3):** store which Action produced a generation ([ADR 0006](docs/decisions/0006-action-provenance.md), [#64](https://github.com/Sannrox/mikura/issues/64)). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 
 **v7:** non-loopback bind only after an auth ADR ([#48](https://github.com/Sannrox/mikura/issues/48)). Bearer tokens owned by the control plane. Still one process, one `Store`.
 

@@ -11,7 +11,7 @@ meaning; say it is undefined.
 | **Superblock** | Page 0 of the log. Holds magic `MIKURAV1`, page size, and `committed_pages`. |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |
-| **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN02`). Interned property pairs plus slim identity; hop/sum indexes omit hidden rows. Dirty commits may add `{log}.joins.delta` (`MKJOIN2D`). Checksummed; deletable; rebuilt from the log. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md). |
+| **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN03`). Interned property pairs plus slim identity including optional Action id; hop/sum indexes omit hidden rows. Dirty commits may add `{log}.joins.delta` (`MKJOIN3D`). Checksummed; deletable; rebuilt from the log. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0006](decisions/0006-action-provenance.md). |
 | **Load** | `Store::load(kind, key)` returns the live `ObjectRecord`. Missing identity fails closed. Hidden records are returned and stay out of join maps. |
 | **Object-set** | A request to filter / load / hop / aggregate objects. There is no query language. Evaluate is hop + count/sum plus optional exact-match on visible roots (`EvaluateRequest.filter`). |
 | **Hop** | Join from parent `key` to child `props[join_property]`. Evaluate hops a frontier of identities tagged by originating root, then folds the last hop's count/sum without storing every leaf path. |
@@ -19,7 +19,7 @@ meaning; say it is undefined.
 | **Hold / miss** | Envelope result: the target latency or correctness check passed (hold) or failed (miss). |
 | **Fail closed** | On checksum mismatch, missing committed pages, or ACL denial: return an error. Do not guess. |
 | **Property ACL** | v1: in-process deny list of `(kind, property)` checked on the aggregate property. Not a principal. |
-| **Action** | Governed edit in the product sense. v1 `apply_action` appends a new visible generation. [ADR 0006](decisions/0006-action-provenance.md) stores the clerk-assigned Action id on that generation; the codec is not in `src/` yet. |
+| **Action** | Governed edit in the product sense. `apply_action` appends a new visible generation and stores the clerk-assigned Action id ([ADR 0006](decisions/0006-action-provenance.md)). |
 | **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` returns unsupported until an envelope. |
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |

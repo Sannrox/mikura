@@ -3,7 +3,7 @@
 //! The object log is the store of record. [`Store`] rebuilds identity from
 //! that log and keeps join maps as a checksummed sidecar (rebuilt from the
 //! log if absent or stale). [`Store::load`] returns the live object for a
-//! primary key from that projection. Batch, changelog, merge, and stream ingest live
+//! primary key from that projection, including the optional Action id. Batch, changelog, merge, and stream ingest live
 //! in `mikura-ingest`.
 //! [`LocalCompute`] answers hop / count / sum from those maps, with an
 //! optional exact-match on root properties.

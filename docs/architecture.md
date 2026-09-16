@@ -27,13 +27,13 @@ count/sum.
 | `key` | Primary key within that kind |
 | `props` | String map |
 | `hidden` | Excluded from join indexing |
+| `action_id` | Optional clerk-assigned Action id that produced this generation |
 | `gen` | Generation. `Store::append` sets `1` on insert and `existing+1` on update |
 
 Identity is `(kind, key)`. A later append replaces the live record.
 
-Records do **not** store an Action id, principal, or schema version.
-[ADR 0006](decisions/0006-action-provenance.md) accepts an optional
-clerk-assigned Action id on the log; that codec is not in `src/` yet.
+Records may store an optional Action id. They do not store a principal or
+schema version. [ADR 0006](decisions/0006-action-provenance.md).
 
 ## Object log
 
@@ -77,7 +77,7 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 `src/joins.rs` holds interned `JoinMaps` and sidecar checksum helpers.
 `src/store/` keeps:
 
-- slim identity `(kind, key) → (gen, hidden)` — enough to bump generation
+- slim identity `(kind, key) → (gen, hidden, action_id)` — enough to bump generation and answer provenance
 - `hidden_props` — payloads for hidden identities (not hop-indexed)
 - `joins: JoinMaps` — interned property pairs, packed join-child lists, and hop/sum indexes ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md))
 - `LogWriter` — durable append
@@ -89,8 +89,8 @@ already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
 Hidden rows stay out of hop/sum; their property pairs sit in the identity
 row so load can still return them. A missing identity fails closed. The
 sidecar stamp is log `committed_pages`. A missing or stale sidecar rebuilds
-from the log. Checksum mismatch, truncation, or bad magic (`MKJOIN01`
-included) fails closed; deleting the sidecar recovers from the log.
+from the log. Checksum mismatch, truncation, or bad magic (`MKJOIN01` and
+`MKJOIN02` included) fails closed; deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. Compact when dirty rows exceed a
@@ -159,10 +159,11 @@ returned objects (evaluate returns counts/sums, not object payloads).
 
 ## Action writeback
 
-`Store::apply_action` appends an `ObjectRecord` with `hidden: false` and
-`gen` assigned by `append`. It is writeback of object bytes, not admission
-or attestation. The producing Action id is accepted in
-[ADR 0006](decisions/0006-action-provenance.md) and is not stored yet.
+`Store::apply_action` requires a non-empty clerk-assigned `Action.id` and
+appends an `ObjectRecord` with `hidden: false`, `gen` assigned by `append`,
+and that id. It is writeback of object bytes, not admission or attestation.
+Source ingest may omit `action_id`. Hop/sum indexes ignore the id.
+[ADR 0006](decisions/0006-action-provenance.md).
 
 ## Hosted service
 
@@ -178,8 +179,8 @@ address is refused. No tenants, policy compile, receipts, or principals.
 - Multi-process replication or non-loopback bind (loopback host exists)
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
-- Track which Action produced a generation (accepted in
-  [ADR 0006](decisions/0006-action-provenance.md); not in `src/` yet)
+- Track which Action produced a generation — implemented: optional
+  `action_id` on the log ([ADR 0006](decisions/0006-action-provenance.md))
 - Enforce ACLs per principal or on individual properties of a loaded object
 - Compact or checkpoint the log
 

@@ -25,14 +25,14 @@ window.
 - `mikura-ingest::snapshot_changelog` and `ChangelogIngest::run` diff two
   source snapshots into upserts and hides. Identical snapshots append
   nothing. Changelog output is valid source input to `MergeIngest`.
-- Slim interned join maps (`MKJOIN02`). Restart answers hop/sum from the
+- Slim interned join maps (`MKJOIN03`). Restart answers hop/sum from the
   sidecar without hydrating object payloads. Dirty commits write
   `{log}.joins.delta` instead of rewriting the checkpoint. Old `MKJOIN01`
-  files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md)).
-- Action provenance on the object log
-  ([ADR 0006](docs/decisions/0006-action-provenance.md)): optional
-  clerk-assigned Action id on the generation. Implementation is
-  [#64](https://github.com/Sannrox/mikura/issues/64).
+  and `MKJOIN02` files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md),
+  [ADR 0006](docs/decisions/0006-action-provenance.md)).
+- `ObjectRecord.action_id` is an optional clerk-assigned Action id on the
+  generation. `Store::apply_action` fails closed without one. Source ingest
+  may omit it. Sidecar magic is `MKJOIN03` / `MKJOIN3D`.
 
 ### Changed
 

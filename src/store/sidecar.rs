@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::joins::{
-    read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta, JOIN_DELTA_MAGIC,
-    JOIN_MAGIC,
+    read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta, ACTION_NONE,
+    JOIN_DELTA_MAGIC, JOIN_MAGIC,
 };
 
 use super::Store;
@@ -71,6 +71,14 @@ impl Store {
                 body.extend_from_slice(&prop_id.to_le_bytes());
                 body.extend_from_slice(&value_id.to_le_bytes());
             }
+            let action_intern = match meta.action_id.as_deref() {
+                None | Some("") => ACTION_NONE,
+                Some(action_id) => self
+                    .joins
+                    .intern_existing(action_id)
+                    .ok_or_else(|| "missing intern action".to_string())?,
+            };
+            body.extend_from_slice(&action_intern.to_le_bytes());
         }
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
@@ -110,6 +118,7 @@ impl Store {
                         .ok_or_else(|| "missing dirty prop".to_string())?,
                 )?;
             }
+            write_str(&mut body, meta.action_id.as_deref().unwrap_or(""))?;
         }
         write_checksummed(&Self::join_delta_path(&self.log), &body)
     }
@@ -154,7 +163,26 @@ impl Store {
                 let value_id = read_u32(&mut cur)?;
                 owned.push((prop_id, value_id));
             }
-            identity.insert((kind.clone(), key.clone()), LiveMeta { gen, hidden });
+            let action_intern = read_u32(&mut cur)?;
+            let action_id = if action_intern == ACTION_NONE {
+                None
+            } else {
+                Some(
+                    joins
+                        .intern
+                        .get(action_intern as usize)
+                        .ok_or_else(|| "bad intern action".to_string())?
+                        .clone(),
+                )
+            };
+            identity.insert(
+                (kind.clone(), key.clone()),
+                LiveMeta {
+                    gen,
+                    hidden,
+                    action_id,
+                },
+            );
             if hidden {
                 hidden_props.insert((kind, key), props_from_owned(&joins, &owned)?);
             } else {
@@ -192,9 +220,24 @@ impl Store {
                 let value = read_str(&mut cur)?;
                 props.insert(name, value);
             }
+            let action_id = read_str(&mut cur)?;
+            let action_id = if action_id.is_empty() {
+                None
+            } else {
+                Some(action_id)
+            };
             self.joins.remove(&kind, &key);
-            self.identity
-                .insert((kind.clone(), key.clone()), LiveMeta { gen, hidden });
+            if let Some(action_id) = &action_id {
+                self.joins.intern(action_id);
+            }
+            self.identity.insert(
+                (kind.clone(), key.clone()),
+                LiveMeta {
+                    gen,
+                    hidden,
+                    action_id,
+                },
+            );
             if hidden {
                 for (name, value) in &props {
                     self.joins.intern(name);

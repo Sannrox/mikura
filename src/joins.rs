@@ -134,13 +134,15 @@ impl CountScratch {
     }
 }
 
-pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN02";
-pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN2D";
+pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN03";
+pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN3D";
+pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 #[derive(Clone, Debug)]
 pub(crate) struct LiveMeta {
     pub(crate) gen: u64,
     pub(crate) hidden: bool,
+    pub(crate) action_id: Option<String>,
 }
 
 /// Rebuildable hop/join projection. Hidden records are absent.

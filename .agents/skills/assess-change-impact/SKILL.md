@@ -19,8 +19,8 @@ Build an evidence-backed impact map before implementation or review.
    - `mikura` (log / store / evaluate) versus `mikura-ingest` (batch / changelog / merge / stream);
    - Fail-closed ACL on `(sum_kind, sum_property)` versus guessed aggregates;
    - Independence: this crate must not depend on a control plane;
-   - On-disk `MIKURAV1` / `MKJOIN02` checkpoint + `MKJOIN2D` delta versus
-     in-memory maps. Old `MKJOIN01` fails closed;
+   - On-disk `MIKURAV1` / `MKJOIN03` checkpoint + `MKJOIN3D` delta versus
+     in-memory maps. Old `MKJOIN01` / `MKJOIN02` fail closed;
    - In-process library versus loopback host (`mikura-host`, ADR 0003).
      Non-loopback / authenticated host is not built.
    Complete when each applicable boundary has an owner and expected invariant.

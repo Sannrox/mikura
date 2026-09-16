@@ -7,6 +7,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
         kind: kind.into(),
         key: key.into(),
         hidden,
+        action_id: None,
         props: props
             .iter()
             .map(|(k, v)| ((*k).into(), (*v).into()))
@@ -115,6 +116,7 @@ fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
 
     store
         .apply_action(Action {
+            id: "act-s2".into(),
             kind: "Shipment".into(),
             key: "s2".into(),
             props: HashMap::from([
@@ -335,6 +337,19 @@ fn old_join_sidecar_magic_fails_closed() {
         Ok(_) => panic!("old magic should fail closed"),
     };
     assert!(err.contains("magic") || err.contains("checksum"), "{err}");
+    bytes[..8].copy_from_slice(b"MKJOIN02");
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&bytes[..crc_at]);
+    bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
+    std::fs::write(&sidecar, &bytes).unwrap();
+    let err02 = match Store::open(&log) {
+        Err(err) => err,
+        Ok(_) => panic!("MKJOIN02 should fail closed"),
+    };
+    assert!(
+        err02.contains("magic") || err02.contains("checksum"),
+        "{err02}"
+    );
     std::fs::remove_file(&sidecar).unwrap();
     let recovered = Store::open(&log).unwrap();
     assert!(recovered.joins().is_visible("Customer", "c1"));
@@ -558,5 +573,82 @@ fn hop_diamond_counts_distinct_roots_once() {
     let response = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(response.two_hop_count, 1);
     assert_eq!(response.sum_amount, 13);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn action_id_round_trips_and_empty_id_fails_closed() {
+    let (dir, log) = temp_log("action-id");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    store
+        .apply_action(Action {
+            id: "act-s2".into(),
+            kind: "Shipment".into(),
+            key: "s2".into(),
+            props: HashMap::from([
+                ("order_id".into(), "o1".into()),
+                ("amount".into(), "5".into()),
+            ]),
+        })
+        .unwrap();
+    let live = store.load("Shipment", "s2").unwrap();
+    assert_eq!(live.action_id.as_deref(), Some("act-s2"));
+    assert_eq!(store.load("Customer", "c1").unwrap().action_id, None);
+    let missing = store
+        .apply_action(Action {
+            id: String::new(),
+            kind: "Shipment".into(),
+            key: "s3".into(),
+            props: HashMap::from([("order_id".into(), "o1".into())]),
+        })
+        .unwrap_err();
+    assert!(missing.contains("action id"), "{missing}");
+
+    let hidden_action = rec("Customer", "c0", true, &[("region", "eu")]);
+    let mut hidden_action = hidden_action;
+    hidden_action.action_id = Some("act-hide".into());
+    store.append(hidden_action).unwrap();
+    assert_eq!(
+        store.load("Customer", "c0").unwrap().action_id.as_deref(),
+        Some("act-hide")
+    );
+    assert!(!store.joins().is_visible("Customer", "c0"));
+    drop(store);
+
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(
+        reopened
+            .load("Shipment", "s2")
+            .unwrap()
+            .action_id
+            .as_deref(),
+        Some("act-s2")
+    );
+    assert_eq!(
+        reopened
+            .load("Customer", "c0")
+            .unwrap()
+            .action_id
+            .as_deref(),
+        Some("act-hide")
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let hops = oss.evaluate(&reopened, &fixture_request()).unwrap();
+    assert_eq!(hops.two_hop_count, 1);
+    assert_eq!(hops.sum_amount, 15);
+    drop(reopened);
+
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let replayed = Store::open(&log).unwrap();
+    assert_eq!(
+        replayed
+            .load("Shipment", "s2")
+            .unwrap()
+            .action_id
+            .as_deref(),
+        Some("act-s2")
+    );
+    assert_eq!(replayed.load("Customer", "c1").unwrap().action_id, None);
     let _ = std::fs::remove_dir_all(&dir);
 }
