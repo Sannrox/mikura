@@ -63,13 +63,13 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 **v1 (done):** in-process store, ingest, object-set evaluate, property
 deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md)).
 
-**v2 (done):** persist join maps in `Store` ([#1](https://github.com/Sannrox/mikura/issues/1)); group commit, ingest crate, merge, changelog; slim interned sidecar ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)). After slim maps, 10⁷ query is a **2.6 s miss** vs 500 ms and 10⁶ holds ([#31](https://github.com/Sannrox/mikura/issues/31)). Dual-read holds. Hop scratch, intern-id checkpoint load, and intern-once landed ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)).
+**v2 (done):** persist join maps in `Store` ([#1](https://github.com/Sannrox/mikura/issues/1)); group commit, ingest crate, merge, changelog; slim interned sidecar ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)). After slim maps, 10⁷ query was a **2.6 s miss** ([#31](https://github.com/Sannrox/mikura/issues/31)). After hop scratch, intern-id checkpoint load, and intern-once ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)), 10⁷ query is a **1012 ms miss** vs 500 ms and 10⁶ holds ([#43](https://github.com/Sannrox/mikura/issues/43)). Dual-read holds.
 
 **v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest is still open.
 
-**v4:** remasure hop count+sum at 10⁷ after the landed projection fixes. Hold ≤ 500 ms + dual-read → no compute backend this cycle. Projection miss → one projection Issue. In-process ceiling → Design Discussion only.
+**v4:** remaining in-process hop walk without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute backend only if that remasure still misses and remaining in-process work is classified as a ceiling. A miss is not an engine pick. Load and filter (v5) wait on [#43](https://github.com/Sannrox/mikura/issues/43) having a published number, not on #59.
 
-**v5:** load the current object for a primary key (question 1); exact-match filter on evaluate (question 4). No query language. A payload map must stay deletable and rebuildable.
+**v5:** load the current object for a primary key (question 1); exact-match filter on evaluate (question 4). No query language. A payload map must stay deletable and rebuildable. Unblocked by [#43](https://github.com/Sannrox/mikura/issues/43).
 
 **v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 

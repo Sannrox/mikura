@@ -47,6 +47,11 @@ window.
   10⁷ query is 2.6 s (still a miss vs 500 ms); 10⁶ now holds at 86 ms;
   dual-read holds. Next work is in-process projection, not a compute
   backend.
+- Remeasured hop count+sum after #29/#28/#27 ([#43](https://github.com/Sannrox/mikura/issues/43)):
+  10⁷ query is 1012 ms (still a miss vs 500 ms); 10⁶ holds at 105 ms;
+  `Store::open` at 10⁷ is 15.5 s; dual-read holds. Follow-up is
+  set-oriented hop ([#59](https://github.com/Sannrox/mikura/issues/59)),
+  not a compute backend.
 - Public Issues and PRs must not include hostnames or other private
   environment inventory. Delivery skills list only branch and SHAs on GitHub.
 - Split interned join maps into `src/joins.rs` and ingest merge/changelog/stream
