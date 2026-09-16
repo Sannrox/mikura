@@ -27,6 +27,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/actions.rs` | Action writeback → new generation |
 | `src/compute.rs` | `LocalCompute`; `SparkCompute` fails closed |
 | `crates/mikura-ingest/examples/` | Runnable examples (`quickstart`) |
+| `tests/integration.rs` | Public-API integration suite (`mikura` + `mikura-ingest`) |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs |
 | `scripts/` | `gh-verified-push.sh` for GitHub-signed PR tips |
@@ -94,8 +95,13 @@ from the log.
 Edition is **2021**. `ObjectRecord.gen` is the generation field. Do not bump
 to edition 2024 without renaming `gen`.
 
-Add focused deterministic tests. Temp directories for logs. No network,
-Postgres, or Spark in the default suite.
+Add focused deterministic tests. **Unit / crate tests** sit next to the
+changed module or in `src/crate_tests.rs`. The named **integration** suite
+is `tests/integration.rs` (`cargo test --test integration --locked`); it
+uses only public APIs of `mikura` and `mikura-ingest` and is the
+public/multi-component check. Temp directories for logs. No network,
+Postgres, or Spark in the default suite. Host-process e2e is not this
+suite.
 
 ## Git
 

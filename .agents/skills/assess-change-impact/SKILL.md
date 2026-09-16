@@ -26,7 +26,8 @@ Build an evidence-backed impact map before implementation or review.
    mismatch, public Rust API, and rollback impact where relevant. Complete when
    data-loss and partial-failure paths are accounted for.
 4. Map evidence to risk: unit tests for codec and page logic; crate tests for
-   ingest / evaluate / reopen / ACL; spike NOTES only when measuring envelopes.
+   ingest / evaluate / reopen / ACL; `tests/integration.rs` for the public
+   write → evaluate → reopen path; spike NOTES only when measuring envelopes.
    No network, Postgres, or Spark in the default suite. Complete when every
    material risk has a proposed check or an explicit residual uncertainty.
 5. Determine durable artifacts that must change: `docs/architecture.md`,

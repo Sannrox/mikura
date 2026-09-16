@@ -19,5 +19,8 @@ categories = ["database-implementations"]
 crc32fast = "1"
 serde = { version = "1", features = ["derive"] }
 
+[dev-dependencies]
+mikura-ingest = { path = "crates/mikura-ingest" }
+
 [lib]
 path = "src/lib.rs"

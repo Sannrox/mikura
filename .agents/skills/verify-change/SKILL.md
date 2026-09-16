@@ -75,7 +75,7 @@ that remain.
    | --- | --- |
    | defect or refactor | before/after reproduction, canonical owner and root cause, affected sibling paths, characterization or regression proof |
    | Rust source | focused tests, `cargo fmt --check`, relevant Clippy/build |
-   | public or multi-component behavior | affected crate test plus `cargo test --workspace --locked` |
+   | public or multi-component behavior | named integration suite `cargo test --test integration --locked`, plus `cargo test --workspace --locked` |
    | object log / sidecar | reopen, dual-read (delete sidecar), checksum/truncate fail-closed |
    | ingest | `BatchIngest` / `StreamIngest` commit vs uncommitted tail |
    | ACL | deny on `(sum_kind, sum_property)` returns `AclError::Denied` |

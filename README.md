@@ -80,6 +80,7 @@ returns `AclError::Denied` rather than a guessed value.
 src/                      mikura library (log, store, evaluate)
 crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append)
 crates/mikura-host/       loopback ingest/evaluate host
+tests/integration.rs      public-API integration suite (unit tests stay in-crate)
 docs/                     architecture, glossary, ADRs
 spikes/              historical measurements; not the store
 VISION.md            why this project exists

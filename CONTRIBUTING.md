@@ -45,7 +45,17 @@ when measuring, from that directory, and record results in that spike's
 
 ## Tests
 
-- Add deterministic tests next to the changed module, or in `src/lib.rs`.
+The default suite has two layers. Both stay offline and fail closed.
+
+- **Unit / crate tests** live next to the changed module, in
+  `src/crate_tests.rs`, or in a crate's `src/tests.rs`. They may use
+  crate-private helpers.
+- **Integration** is the named public-API suite in `tests/integration.rs`.
+  Run it with `cargo test --test integration --locked`, or as part of
+  `cargo test --workspace --locked`. It covers write → log → projection →
+  evaluate → reopen through `mikura` and `mikura-ingest` only. It does not
+  spawn `mikura-host` (that is a later e2e suite).
+
 - Use a temp directory for object logs. Clean it up in the test.
 - Do not require a network, PostgreSQL, Spark, or credentials.
 - Mark any future service-dependent test `#[ignore]` and document the
