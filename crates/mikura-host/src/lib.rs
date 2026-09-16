@@ -9,8 +9,8 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 
 use mikura::{
-    Aggregate, EvaluateRequest, EvaluateResponse, Hop, LocalCompute, ObjectRecord, ObjectSet,
-    PropertyAcl, Store,
+    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute, ObjectRecord,
+    ObjectSet, PropertyAcl, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,12 @@ pub struct WireDeny {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct WireFilter {
+    pub property: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct WireEvaluate {
     pub root_kind: String,
     pub hops: Vec<WireHop>,
@@ -35,6 +41,8 @@ pub struct WireEvaluate {
     pub sum_property: String,
     #[serde(default)]
     pub deny: Vec<WireDeny>,
+    #[serde(default)]
+    pub filter: Option<WireFilter>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -185,6 +193,10 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         sum_property: request.sum_property,
         aggregate: Aggregate::CountAndSum,
         acl,
+        filter: request.filter.map(|filter| ExactMatch {
+            property: filter.property,
+            value: filter.value,
+        }),
     };
     ObjectSet::new(LocalCompute)
         .evaluate(store, &request)

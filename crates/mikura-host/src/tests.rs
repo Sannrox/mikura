@@ -46,6 +46,7 @@ fn eval_req() -> WireEvaluate {
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
         deny: Vec::new(),
+        filter: None,
     }
 }
 
@@ -96,6 +97,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 sum_property: "amount".into(),
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
+                filter: None,
             },
         )
         .unwrap();
@@ -188,5 +190,42 @@ fn loopback_tcp_roundtrip() {
     assert_eq!(evaluate.two_hop_count, 1);
     assert_eq!(evaluate.sum_amount, 10);
     handle.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn evaluate_filter_matches_in_process() {
+    let (dir, log) = temp_log("filter");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch {
+        records: vec![
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Customer", "c2", false, &[("region", "eu")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec("Order", "o2", false, &[("customer_id", "c2")]),
+            rec(
+                "Shipment",
+                "s1",
+                false,
+                &[("order_id", "o1"), ("amount", "10")],
+            ),
+            rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o2"), ("amount", "7")],
+            ),
+        ],
+    });
+    let mut request = eval_req();
+    request.filter = Some(WireFilter {
+        property: "region".into(),
+        value: "us".into(),
+    });
+    let hosted = host.handle(HostRequest::Evaluate { request });
+    assert!(hosted.ok, "{hosted:?}");
+    let hosted = hosted.evaluate.unwrap();
+    assert_eq!(hosted.two_hop_count, 1);
+    assert_eq!(hosted.sum_amount, 10);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -5,7 +5,8 @@
 //! log if absent or stale). [`Store::load`] returns the live object for a
 //! primary key from that projection. Batch, changelog, merge, and stream ingest live
 //! in `mikura-ingest`.
-//! [`LocalCompute`] answers hop / count / sum from those maps.
+//! [`LocalCompute`] answers hop / count / sum from those maps, with an
+//! optional exact-match on root properties.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.
 //!
@@ -24,7 +25,7 @@ pub use acl::{AclError, PropertyAcl};
 pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;
-pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Hop, ObjectSet};
+pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet};
 pub use store::{ObjectRecord, Store};
 
 #[cfg(test)]

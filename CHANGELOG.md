@@ -16,7 +16,8 @@ window.
 - Named public-API integration suite (`tests/integration.rs`,
   `cargo test --test integration --locked`) covering batch ingest, hop
   count and sum, Action writeback, ACL deny, stream overflow, reopen,
-  dual-read, sidecar checksum/magic fail-closed, and load by `(kind, key)`.
+  dual-read, sidecar checksum/magic fail-closed, load by `(kind, key)`,
+  and exact-match filter on evaluate.
 - `mikura-ingest::merge_source_and_edits` and `MergeIngest::run` merge a
   source snapshot with admitted edits by `(kind, key)`. Edits replace source
   for the same identity, including `hidden`. The object log after append
@@ -28,10 +29,9 @@ window.
   sidecar without hydrating object payloads. Dirty commits write
   `{log}.joins.delta` instead of rewriting the checkpoint. Old `MKJOIN01`
   files fail closed ([ADR 0004](docs/decisions/0004-slim-join-maps.md)).
-- `Store::load(kind, key)` returns the live `ObjectRecord` after restart
-  from interned sidecar props. Hidden identities stay out of join maps.
-  Missing identity fails closed. The object log remains authority
-  ([ADR 0005](docs/decisions/0005-current-object-load.md)).
+- `EvaluateRequest.filter` is an optional exact-match on a root
+  property. Hop count and sum run on the surviving roots. ACL deny on the
+  filtered or summed property fails closed. Host JSON accepts `filter`.
 
 ### Changed
 

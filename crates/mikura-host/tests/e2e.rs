@@ -167,6 +167,7 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                 sum_property: "amount".into(),
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
+                filter: None,
             },
         )
         .unwrap();
@@ -192,6 +193,31 @@ fn process_wire_matches_in_process_and_survives_exit() {
     let (count, sum) = in_process_evaluate(tmp.path());
     assert_eq!(count, evaluate.two_hop_count);
     assert_eq!(sum, evaluate.sum_amount);
+}
+
+#[test]
+fn process_filter_restricts_roots() {
+    let tmp = TempLog::new("filter");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Customer", "c2", false, &[("region", "eu")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec("Order", "o2", false, &[("customer_id", "c2")]),
+            rec("Shipment", "s1", false, &[("order_id", "o1"), ("amount", "10")]),
+            rec("Shipment", "s2", false, &[("order_id", "o2"), ("amount", "7")]),
+        ],
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let mut body = evaluate_wire();
+    body["request"]["filter"] = serde_json::json!({"property": "region", "value": "us"});
+    let hosted = host.rpc(&body);
+    assert!(hosted.ok, "{hosted:?}");
+    let evaluate = hosted.evaluate.expect("evaluate payload");
+    assert_eq!(evaluate.two_hop_count, 1);
+    assert_eq!(evaluate.sum_amount, 10);
 }
 
 #[test]

@@ -148,6 +148,57 @@ impl JoinMaps {
         })
     }
 
+    fn matching_root_ids(&self, root_kind: &str, property: &str, value: &str) -> HashSet<u32> {
+        let Some(&kind_id) = self.intern_ix.get(root_kind) else {
+            return HashSet::new();
+        };
+        let Some(roots) = self.by_kind.get(&kind_id) else {
+            return HashSet::new();
+        };
+        let (Some(&prop_id), Some(&value_id)) =
+            (self.intern_ix.get(property), self.intern_ix.get(value))
+        else {
+            return HashSet::new();
+        };
+        roots
+            .iter()
+            .copied()
+            .filter(|&key_id| {
+                self.owned.get(&(kind_id, key_id)).is_some_and(|owned| {
+                    owned
+                        .iter()
+                        .any(|(pid, vid)| *pid == prop_id && *vid == value_id)
+                })
+            })
+            .collect()
+    }
+
+    /// Like [`Self::count_and_sum`], but only roots matching `property == value`.
+    pub fn count_and_sum_matching(
+        &self,
+        root_kind: &str,
+        hops: &[(&str, &str)],
+        sum_kind: &str,
+        sum_property: &str,
+        property: &str,
+        value: &str,
+    ) -> (usize, i64) {
+        let roots = self.matching_root_ids(root_kind, property, value);
+        if roots.is_empty() {
+            return (0, 0);
+        }
+        COUNT_SCRATCH.with(|scratch| {
+            scratch.borrow_mut().count_and_sum(
+                self,
+                &roots,
+                hops,
+                root_kind,
+                sum_kind,
+                sum_property,
+            )
+        })
+    }
+
     pub(crate) fn intern(&mut self, value: &str) -> u32 {
         if let Some(&id) = self.intern_ix.get(value) {
             return id;
