@@ -25,10 +25,12 @@ mikura tag. They must not vendor this tree.
 Fail the project if a projection becomes recovery material, or if identity
 cannot be rebuilt from the log.
 
-Today the crate answers (1), (2), and (4) for a small in-process graph:
-identity from the log, generic join maps persisted as a sidecar. (3) and (5)
-are product intent: Action append exists, but records do not store an Action
-id; ACL is an in-process deny list, not a principal.
+Today the crate answers (2) and a slice of (1) and (4) for a small
+in-process graph: slim identity and generic join maps persist as a sidecar.
+After restart, payloads are not loadable. Evaluate is hop + count/sum, not
+filter or load. (3) and (5) remain product intent: Action append exists, but
+records do not store an Action id; ACL is an in-process deny list, not a
+principal.
 
 ## Where data is saved
 
@@ -58,14 +60,20 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 
 **v0 (done):** spikes 001–010. See [`spikes/README.md`](spikes/README.md).
 
-**v1 (this crate):** in-process store, ingest, object-set evaluate, property
+**v1 (done):** in-process store, ingest, object-set evaluate, property
 deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md)).
 
-**v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope **miss** on query (spike 011, [#3](https://github.com/Sannrox/mikura/issues/3)); slim maps landed ([#15](https://github.com/Sannrox/mikura/issues/15)); remasure still **misses** 500 ms at 10⁷ (2.6 s) while 10⁶ now holds ([#31](https://github.com/Sannrox/mikura/issues/31)). Dual-read holds. Next projection work is [#29](https://github.com/Sannrox/mikura/issues/29), not a new engine.
+**v2 (done):** persist join maps in `Store` ([#1](https://github.com/Sannrox/mikura/issues/1)); group commit, ingest crate, merge, changelog; slim interned sidecar ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)). After slim maps, 10⁷ query is a **2.6 s miss** vs 500 ms and 10⁶ holds ([#31](https://github.com/Sannrox/mikura/issues/31)). Dual-read holds. Hop scratch, intern-id checkpoint load, and intern-once landed ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)).
 
-**v3:** bounded `StreamIngest` landed ([#4](https://github.com/Sannrox/mikura/issues/4)); load envelope still open (`Store::open` 40 s at 10⁷; 10⁸ ingest not re-run); loopback host landed ([ADR 0003](docs/decisions/0003-hosted-service.md), [#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). Multi-process / authenticated bind is later.
+**v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest is still open.
 
-**v4:** pluggable compute backend only if in-process hops/aggregates still miss after the remaining projection work.
+**v4:** remasure hop count+sum at 10⁷ after the landed projection fixes. Hold ≤ 500 ms + dual-read → no compute backend this cycle. Projection miss → one projection Issue. In-process ceiling → Design Discussion only.
+
+**v5:** load the current object for a primary key (question 1); exact-match filter on evaluate (question 4). No query language. A payload map must stay deletable and rebuildable.
+
+**v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
+
+**v7:** non-loopback bind only after an auth ADR. Bearer tokens owned by the control plane. Still one process, one `Store`. Split ingest/evaluate only if a single process is operationally insufficient.
 
 See [ROADMAP.md](ROADMAP.md) for the ordered work list.
 
@@ -88,7 +96,7 @@ plane that may later depend on a tagged mikura crate. That cutover lives in
 | | Control plane | mikura |
 | --- | --- | --- |
 | Job | Who, policy, receipts | Object instances |
-| Form | Its own service | Library now; hosted service later |
+| Form | Its own service | Library plus loopback host; public bind later |
 | Authority | Admission and audit | Object log + generations |
 | Query | Its public RPCs | Object-set evaluate over mikura projections |
 | Storage | Its clerk database | This paged log |

@@ -13,7 +13,9 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
 The public surface is three crates: `mikura` (`src/lib.rs`) for the log and
 evaluate, `mikura-ingest` for batch/stream append, and `mikura-host` for
 loopback ingest/evaluate. A control plane maps datasets and admitted edits
-to `ObjectRecord`s; it does not live in this repository.
+to `ObjectRecord`s; it does not live in this repository. The destination
+object-set is filter, load, hop, and aggregate; today evaluate is hop +
+count/sum.
 
 ## Object model
 
