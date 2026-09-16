@@ -374,3 +374,50 @@ fn batch_commit_writes_delta_not_full_sidecar() {
     assert_eq!(response.sum_amount, 15);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn load_current_object_after_reopen() {
+    let (dir, log) = temp_log("load-reopen");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let live_visible = store.load("Customer", "c1").unwrap();
+    let live_hidden = store.load("Customer", "c0").unwrap();
+    assert_eq!(live_visible.gen, 1);
+    assert!(!live_visible.hidden);
+    assert_eq!(
+        live_visible.props.get("region").map(String::as_str),
+        Some("us")
+    );
+    assert_eq!(live_hidden.gen, 1);
+    assert!(live_hidden.hidden);
+    assert_eq!(
+        live_hidden.props.get("region").map(String::as_str),
+        Some("eu")
+    );
+    assert!(!store.joins().is_visible("Customer", "c0"));
+    let missing = store.load("Customer", "missing").unwrap_err();
+    assert!(missing.contains("unknown identity"), "{missing}");
+    drop(store);
+
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(reopened.load("Customer", "c1").unwrap(), live_visible);
+    assert_eq!(reopened.load("Customer", "c0").unwrap(), live_hidden);
+    assert!(!reopened.joins().is_visible("Customer", "c0"));
+    drop(reopened);
+
+    let mut store = Store::open(&log).unwrap();
+    store
+        .append(rec("Customer", "c1", false, &[("region", "ap")]))
+        .unwrap();
+    drop(store);
+    let updated = Store::open(&log).unwrap();
+    let latest = updated.load("Customer", "c1").unwrap();
+    assert_eq!(latest.gen, 2);
+    assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
+
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let replayed = Store::open(&log).unwrap();
+    assert_eq!(replayed.load("Customer", "c1").unwrap(), latest);
+    assert_eq!(replayed.load("Customer", "c0").unwrap(), live_hidden);
+    let _ = std::fs::remove_dir_all(&dir);
+}

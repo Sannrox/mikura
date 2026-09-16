@@ -9,6 +9,7 @@ a new ADR. Allocate the next number and list it here.
 | [0002](0002-join-sidecar.md) | Checksummed generic join sidecar | accepted |
 | [0003](0003-hosted-service.md) | Single-process hosted ingest/evaluate | accepted |
 | [0004](0004-slim-join-maps.md) | Slim interned join maps (`MKJOIN02`) | accepted |
+| [0005](0005-current-object-load.md) | Load the current object from slim identity | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

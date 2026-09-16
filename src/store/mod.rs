@@ -21,6 +21,7 @@ pub struct Store {
     log: PathBuf,
     writer: LogWriter,
     identity: HashMap<(String, String), LiveMeta>,
+    hidden_props: HashMap<(String, String), HashMap<String, String>>,
     joins: JoinMaps,
     dirty: HashSet<(String, String)>,
     has_checkpoint: bool,
@@ -52,6 +53,7 @@ impl Store {
             log: log.to_path_buf(),
             writer: LogWriter::create(log, sync)?,
             identity: HashMap::new(),
+            hidden_props: HashMap::new(),
             joins: JoinMaps::default(),
             dirty: HashSet::new(),
             has_checkpoint: false,
@@ -67,6 +69,7 @@ impl Store {
             log: log.to_path_buf(),
             writer: LogWriter::open(log, sync)?,
             identity: HashMap::new(),
+            hidden_props: HashMap::new(),
             joins: JoinMaps::default(),
             dirty: HashSet::new(),
             has_checkpoint: false,
@@ -87,6 +90,15 @@ impl Store {
                 hidden: record.hidden,
             },
         );
+        if record.hidden {
+            for (name, value) in &record.props {
+                self.joins.intern(name);
+                self.joins.intern(value);
+            }
+            self.hidden_props.insert(id.clone(), record.props.clone());
+        } else {
+            self.hidden_props.remove(&id);
+        }
         self.joins.index(
             &record.kind,
             &record.key,
@@ -94,6 +106,31 @@ impl Store {
             record.props.clone(),
         );
         self.dirty.insert(id);
+    }
+
+    /// Live object for `(kind, key)` after ingest or [`Store::open`].
+    ///
+    /// Missing identity fails closed. Hidden records return the hidden
+    /// payload and stay out of join maps. The object log remains authority;
+    /// interned sidecar props are a deletable projection.
+    pub fn load(&self, kind: &str, key: &str) -> Result<ObjectRecord, String> {
+        let id = (kind.to_string(), key.to_string());
+        let meta = self
+            .identity
+            .get(&id)
+            .ok_or_else(|| format!("unknown identity {kind}/{key}"))?;
+        let props = if meta.hidden {
+            self.hidden_props.get(&id).cloned().unwrap_or_default()
+        } else {
+            self.joins.row_props(kind, key)
+        };
+        Ok(ObjectRecord {
+            gen: meta.gen,
+            kind: kind.to_string(),
+            key: key.to_string(),
+            hidden: meta.hidden,
+            props,
+        })
     }
 
     pub fn append(&mut self, record: ObjectRecord) -> Result<(), String> {
@@ -148,6 +185,7 @@ impl Store {
 
     fn replay_from_log(&mut self) -> Result<(), String> {
         self.identity.clear();
+        self.hidden_props.clear();
         self.joins = JoinMaps::default();
         self.dirty.clear();
         for record in read_records(&self.log)? {

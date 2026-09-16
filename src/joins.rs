@@ -340,4 +340,5 @@ pub(crate) struct Checkpoint {
     pub(crate) pages: u32,
     pub(crate) joins: JoinMaps,
     pub(crate) identity: HashMap<(String, String), LiveMeta>,
+    pub(crate) hidden_props: HashMap<(String, String), HashMap<String, String>>,
 }

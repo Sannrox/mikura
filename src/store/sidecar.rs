@@ -57,7 +57,7 @@ impl Store {
             body.extend_from_slice(&meta.gen.to_le_bytes());
             body.push(u8::from(meta.hidden));
             let owned = if meta.hidden {
-                Vec::new()
+                interned_prop_ids(&self.joins, self.hidden_props.get(&id))?
             } else {
                 self.joins
                     .owned
@@ -93,7 +93,7 @@ impl Store {
             body.extend_from_slice(&meta.gen.to_le_bytes());
             body.push(u8::from(meta.hidden));
             let props = if meta.hidden {
-                HashMap::new()
+                self.hidden_props.get(&id).cloned().unwrap_or_default()
             } else {
                 self.joins.row_props(&id.0, &id.1)
             };
@@ -131,6 +131,7 @@ impl Store {
         }
         let id_n = read_u32(&mut cur)? as usize;
         let mut identity = HashMap::with_capacity(id_n);
+        let mut hidden_props = HashMap::new();
         for _ in 0..id_n {
             let kind_id = read_u32(&mut cur)?;
             let key_id = read_u32(&mut cur)?;
@@ -153,8 +154,10 @@ impl Store {
                 let value_id = read_u32(&mut cur)?;
                 owned.push((prop_id, value_id));
             }
-            identity.insert((kind, key), LiveMeta { gen, hidden });
-            if !hidden {
+            identity.insert((kind.clone(), key.clone()), LiveMeta { gen, hidden });
+            if hidden {
+                hidden_props.insert((kind, key), props_from_owned(&joins, &owned)?);
+            } else {
                 joins.insert_visible_ids(kind_id, key_id, owned)?;
             }
         }
@@ -165,6 +168,7 @@ impl Store {
             pages,
             joins,
             identity,
+            hidden_props,
         })
     }
 
@@ -191,11 +195,17 @@ impl Store {
             self.joins.remove(&kind, &key);
             self.identity
                 .insert((kind.clone(), key.clone()), LiveMeta { gen, hidden });
-            if !hidden {
-                self.joins.insert_visible(&kind, &key, props);
+            if hidden {
+                for (name, value) in &props {
+                    self.joins.intern(name);
+                    self.joins.intern(value);
+                }
+                self.joins.intern(&kind);
+                self.joins.intern(&key);
+                self.hidden_props.insert((kind, key), props);
             } else {
-                let _ = self.joins.intern(&kind);
-                let _ = self.joins.intern(&key);
+                self.hidden_props.remove(&(kind.clone(), key.clone()));
+                self.joins.insert_visible(&kind, &key, props);
             }
         }
         if !cur.is_empty() {
@@ -213,12 +223,14 @@ impl Store {
             if loaded.pages == pages && !delta.exists() {
                 self.joins = loaded.joins;
                 self.identity = loaded.identity;
+                self.hidden_props = loaded.hidden_props;
                 self.has_checkpoint = true;
                 return Ok(());
             }
             if loaded.pages <= pages {
                 self.joins = loaded.joins;
                 self.identity = loaded.identity;
+                self.hidden_props = loaded.hidden_props;
                 self.has_checkpoint = true;
                 if delta.exists() {
                     let delta_pages = self.apply_delta(&delta)?;
@@ -236,4 +248,50 @@ impl Store {
         self.has_checkpoint = false;
         self.persist_projection()
     }
+}
+
+fn interned_prop_ids(
+    joins: &JoinMaps,
+    props: Option<&HashMap<String, String>>,
+) -> Result<Vec<(u32, u32)>, String> {
+    let Some(props) = props else {
+        return Ok(Vec::new());
+    };
+    let mut owned = Vec::with_capacity(props.len());
+    let mut names: Vec<_> = props.keys().cloned().collect();
+    names.sort();
+    for name in names {
+        let prop_id = joins
+            .intern_existing(&name)
+            .ok_or_else(|| "missing intern prop".to_string())?;
+        let value = props
+            .get(&name)
+            .ok_or_else(|| "missing intern value".to_string())?;
+        let value_id = joins
+            .intern_existing(value)
+            .ok_or_else(|| "missing intern value".to_string())?;
+        owned.push((prop_id, value_id));
+    }
+    Ok(owned)
+}
+
+fn props_from_owned(
+    joins: &JoinMaps,
+    owned: &[(u32, u32)],
+) -> Result<HashMap<String, String>, String> {
+    let mut props = HashMap::with_capacity(owned.len());
+    for &(prop_id, value_id) in owned {
+        let prop = joins
+            .intern
+            .get(prop_id as usize)
+            .ok_or_else(|| "bad intern prop".to_string())?
+            .clone();
+        let value = joins
+            .intern
+            .get(value_id as usize)
+            .ok_or_else(|| "bad intern value".to_string())?
+            .clone();
+        props.insert(prop, value);
+    }
+    Ok(props)
 }
