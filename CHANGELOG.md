@@ -33,6 +33,10 @@ window.
 
 ### Changed
 
+- Remeasured hop count+sum after slim maps ([#31](https://github.com/Sannrox/mikura/issues/31)):
+  10⁷ query is 2.6 s (still a miss vs 500 ms); 10⁶ now holds at 86 ms;
+  dual-read holds. Next work is in-process projection, not a compute
+  backend.
 - Public Issues and PRs must not include hostnames or other private
   environment inventory. Delivery skills list only branch and SHAs on GitHub.
 - Split interned join maps into `src/joins.rs` and ingest merge/changelog/stream
