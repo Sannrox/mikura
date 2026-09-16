@@ -27,13 +27,33 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 ## Next (this repository, in order)
 
-1. Remasure hop count+sum at 10⁷ after hop scratch, intern-id checkpoint load, and intern-once ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)). Hold ≤ 500 ms + dual-read → no compute backend this cycle. Projection miss → one projection Issue. In-process ceiling → Design Discussion only.
-2. Load the current object for `(kind, key)` after restart. Projection stays deletable; do not make a payload map recovery material.
-3. Exact-match filter on evaluate. Denied properties stay absent or error. No query language.
-4. Store which Action produced a generation (log-format ADR). Admission stays in the clerk.
-5. Apply the request deny list when loading properties. Principal and policy stay in the clerk.
-6. Non-loopback bind only after an auth ADR. Bearer tokens owned by the control plane. Still one process, one `Store`.
-7. Envelopes at 10⁸, then 10⁹ / 10¹⁰, after load and filter exist (they change the projection). Compute backend only on a published miss in-process cannot fix.
+1. Remasure hop count+sum at 10⁷ after the landed projection fixes ([#43](https://github.com/Sannrox/mikura/issues/43)). Hold ≤ 500 ms + dual-read → no compute backend this cycle.
+2. Load the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44)).
+3. Exact-match filter on evaluate ([#45](https://github.com/Sannrox/mikura/issues/45)).
+4. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
+5. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
+6. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
+7. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
+
+## After Next (this repository)
+
+Object-set completeness beyond hop + count/sum:
+
+1. Incoming hops (VISION question 2, enter) ([#50](https://github.com/Sannrox/mikura/issues/50)).
+2. Aggregates beyond count and sum — research, not a query language ([#51](https://github.com/Sannrox/mikura/issues/51)).
+3. Load and filter on the loopback host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
+
+Scale and the log:
+
+4. Compact or checkpoint the object log — ADR or no-action ([#53](https://github.com/Sannrox/mikura/issues/53)).
+5. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). A miss is not an engine pick.
+
+Hosted form and independence:
+
+6. Split ingest/evaluate processes only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)).
+7. Tag a crate the clerk can depend on. Git tag first; crates.io stays ask-first ([#57](https://github.com/Sannrox/mikura/issues/57)).
+
+Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend.
 
 ## Later (not this repository)
 

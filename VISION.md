@@ -73,7 +73,13 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 
-**v7:** non-loopback bind only after an auth ADR. Bearer tokens owned by the control plane. Still one process, one `Store`. Split ingest/evaluate only if a single process is operationally insufficient.
+**v7:** non-loopback bind only after an auth ADR ([#48](https://github.com/Sannrox/mikura/issues/48)). Bearer tokens owned by the control plane. Still one process, one `Store`.
+
+**v8:** object-set completeness: incoming hops ([#50](https://github.com/Sannrox/mikura/issues/50)); aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51)); load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
+
+**v9:** log compact/checkpoint decision ([#53](https://github.com/Sannrox/mikura/issues/53)); envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend only after a published in-process miss.
+
+**v10:** multi-process host only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)); git tag for a consumer ([#57](https://github.com/Sannrox/mikura/issues/57)). crates.io stays ask-first.
 
 See [ROADMAP.md](ROADMAP.md) for the ordered work list.
 
