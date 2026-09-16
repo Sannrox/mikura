@@ -36,8 +36,8 @@ cargo test --workspace --locked
 cargo run -p mikura-ingest --example quickstart
 ```
 
-`cargo test` is the short loop. There is no local server and no environment
-file.
+`cargo test` is the short loop. Loopback host is `mikura-host`. There is no
+environment file.
 
 Spike crates under `spikes/<nnn>-*/` are separate packages. Run them only
 when measuring, from that directory, and record results in that spike's

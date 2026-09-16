@@ -31,6 +31,13 @@ window.
 - `mikura-ingest::StreamIngest` requires a bound. `push` appends uncommitted
   (live maps update) and fails closed when the bound is hit. `flush` commits.
 
+### Removed
+
+- `Store::visible_of_kind` and `Store::replace_kind` (unused public helpers).
+- `StreamIngest::flush_into` (alias of `flush`).
+- Unused `serde_json` dependency on the `mikura` crate (`serde` stays for
+  `ObjectRecord` wire types used by `mikura-host`).
+
 ## [0.1.0] - 2026-09-15
 
 ### Added

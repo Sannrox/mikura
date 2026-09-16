@@ -1,6 +1,6 @@
 ---
 name: verify-change
-description: Verify a sekai-chisei Rust, protocol, documentation, configuration, or workflow change with proportionate deterministic checks. Use after implementation, before review, or when a contributor needs an exact evidence report without overstating unrun tests.
+description: Verify a mikura Rust, documentation, configuration, or workflow change with proportionate deterministic checks. Use after implementation, before review, or when a contributor needs an exact evidence report without overstating unrun tests.
 ---
 
 # Verify Change
@@ -75,17 +75,14 @@ that remain.
    | --- | --- |
    | defect or refactor | before/after reproduction, canonical owner and root cause, affected sibling paths, characterization or regression proof |
    | Rust source | focused tests, `cargo fmt --check`, relevant Clippy/build |
-   | public or multi-component behavior | affected integration test plus normal suite |
-   | gateway | deterministic `scripts/chisei_gateway_smoke.sh` |
-   | protocol | generated build, service/client/example coverage, compatibility review |
-   | persistence | fresh and upgrade behavior; SQLite/PostgreSQL alignment where implemented |
-   | configuration | parsing/default tests, `.env.example`, configuration docs |
-   | docs/templates/Skills | syntax, links or commands where practical; Skill validator for Skills |
+   | public or multi-component behavior | affected crate test plus `cargo test --workspace --locked` |
+   | object log / sidecar | reopen, dual-read (delete sidecar), checksum/truncate fail-closed |
+   | ingest | `BatchIngest` / `StreamIngest` commit vs uncommitted tail |
+   | ACL | deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
+   | docs/templates/Skills | syntax, links, and commands against AGENTS.md / CI |
 
-   Unit or mocked tests do not establish live provider, gateway transport,
-   persistence-upgrade, packaging, UI, or soak behavior. For those claims,
-   use the real supported boundary with isolated state, ports, and credentials;
-   record unavailable prerequisites as skipped checks with residual risk.
+   Unit tests do not establish spike envelopes. Run spikes only when measuring,
+   from that directory, and record results in `NOTES.md`.
 5. Immediately before accepting results, repeat the revision and worktree
    guards from step 1. `HEAD` and status output establish provenance but are
    not a content fingerprint: edits inside an already-dirty file can leave
@@ -101,17 +98,15 @@ that remain.
 
    ```bash
    cargo fmt --check
-   cargo test --locked
-   cargo clippy --all-targets -- -D warnings
+   cargo test --workspace --locked
+   cargo clippy --workspace --all-targets --locked -- -D warnings
    ```
 
-   Run `cargo build --locked` when packaging, feature selection, or binaries
-   changed independently of tests. Complete when every applicable local gate
-   has a result.
-7. Keep service-dependent tests ignored unless prerequisites and credentials
-   are intentionally available. Never print secrets or persist live provider
-   payloads. Complete when skipped checks name both the reason and residual
-   risk.
+   Run `cargo run -p mikura-ingest --example quickstart` when examples or the
+   public API changed. Complete when every applicable local gate has a result.
+7. Keep service-dependent tests ignored. Loopback host is `mikura-host`. There
+   is no `.env` or live provider. Never print secrets or persist object logs.
+   Complete when skipped checks name both the reason and residual risk.
 8. Review failures against the changed scope. Report pre-existing failures with
    evidence; do not relabel a failure as pre-existing without comparison.
 

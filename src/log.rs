@@ -7,6 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::codec::{read_str, take, write_str};
 use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
@@ -181,15 +182,7 @@ pub fn read_records(path: &Path) -> Result<Vec<ObjectRecord>, String> {
         return Err("missing superblock".into());
     }
     let superblock = &bytes[..PAGE];
-    verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
-    if &superblock[CRC_LEN..CRC_LEN + 8] != MAGIC {
-        return Err("bad magic".into());
-    }
-    let committed = u32::from_le_bytes(
-        superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
+    let committed = parse_superblock(superblock)? as usize;
     let needed = PAGE * (1 + committed);
     if bytes.len() < needed {
         return Err("committed pages missing".into());
@@ -207,7 +200,11 @@ fn read_committed(file: &mut File) -> Result<u32, String> {
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     let mut superblock = vec![0u8; PAGE];
     std::io::Read::read_exact(file, &mut superblock).map_err(|e| e.to_string())?;
-    verify_page(&superblock).map_err(|e| format!("superblock: {e}"))?;
+    parse_superblock(&superblock)
+}
+
+fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
+    verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
     if &superblock[CRC_LEN..CRC_LEN + 8] != MAGIC {
         return Err("bad magic".into());
     }
@@ -262,13 +259,6 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
-fn write_str(body: &mut Vec<u8>, value: &str) -> Result<(), String> {
-    let len = u16::try_from(value.len()).map_err(|_| "string too long".to_string())?;
-    body.extend_from_slice(&len.to_le_bytes());
-    body.extend_from_slice(value.as_bytes());
-    Ok(())
-}
-
 fn decode_data_page(page: &[u8], records: &mut Vec<ObjectRecord>) -> Result<(), String> {
     let used = u16::from_le_bytes(page[CRC_LEN..PAGE_HDR].try_into().unwrap()) as usize;
     if PAGE_HDR + used > PAGE {
@@ -313,25 +303,6 @@ fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
         hidden,
         props,
     })
-}
-
-fn take<'a, const N: usize>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
-    if cur.len() < N {
-        return Err("short body".into());
-    }
-    let (head, rest) = cur.split_at(N);
-    *cur = rest;
-    Ok(head)
-}
-
-fn read_str(cur: &mut &[u8]) -> Result<String, String> {
-    let len = u16::from_le_bytes(take::<2>(cur)?.try_into().unwrap()) as usize;
-    if cur.len() < len {
-        return Err("short string".into());
-    }
-    let (head, rest) = cur.split_at(len);
-    *cur = rest;
-    String::from_utf8(head.to_vec()).map_err(|_| "not utf8".into())
 }
 
 #[cfg(test)]

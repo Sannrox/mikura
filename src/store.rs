@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::actions::Action;
+use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::log::{read_records, LogWriter, SyncPolicy};
 
 const JOIN_MAGIC: &[u8; 8] = b"MKJOIN02";
@@ -251,44 +252,10 @@ fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
     Ok(body.to_vec())
 }
 
-fn write_str(body: &mut Vec<u8>, value: &str) -> Result<(), String> {
-    let len = u16::try_from(value.len()).map_err(|_| "string too long".to_string())?;
-    body.extend_from_slice(&len.to_le_bytes());
-    body.extend_from_slice(value.as_bytes());
-    Ok(())
-}
-
-fn read_u32(cur: &mut &[u8]) -> Result<u32, String> {
-    Ok(u32::from_le_bytes(take::<4>(cur)?.try_into().unwrap()))
-}
-
-fn read_u64(cur: &mut &[u8]) -> Result<u64, String> {
-    Ok(u64::from_le_bytes(take::<8>(cur)?.try_into().unwrap()))
-}
-
-fn read_str(cur: &mut &[u8]) -> Result<String, String> {
-    let len = u16::from_le_bytes(take::<2>(cur)?.try_into().unwrap()) as usize;
-    if cur.len() < len {
-        return Err("short string".into());
-    }
-    let (head, rest) = cur.split_at(len);
-    *cur = rest;
-    String::from_utf8(head.to_vec()).map_err(|_| "not utf8".into())
-}
-
 struct Checkpoint {
     pages: u32,
     joins: JoinMaps,
     identity: HashMap<(String, String), LiveMeta>,
-}
-
-fn take<'a, const N: usize>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
-    if cur.len() < N {
-        return Err("short body".into());
-    }
-    let (head, rest) = cur.split_at(N);
-    *cur = rest;
-    Ok(head)
 }
 
 pub struct Store {
@@ -415,34 +382,6 @@ impl Store {
 
     pub fn joins(&self) -> &JoinMaps {
         &self.joins
-    }
-
-    pub fn visible_of_kind(&self, kind: &str) -> Vec<&ObjectRecord> {
-        self.objects
-            .values()
-            .filter(|record| record.kind == kind && !record.hidden)
-            .collect()
-    }
-
-    pub fn replace_kind(&mut self, kind: &str, records: Vec<ObjectRecord>) -> Result<(), String> {
-        let mut keep: HashMap<(String, String), ObjectRecord> = HashMap::new();
-        for record in read_records(&self.log)? {
-            if record.kind != kind {
-                keep.insert((record.kind.clone(), record.key.clone()), record);
-            }
-        }
-        self.writer = LogWriter::create(&self.log, SyncPolicy::Group(32))?;
-        let _ = std::fs::remove_file(Self::join_map_path(&self.log));
-        let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
-        self.identity.clear();
-        self.objects.clear();
-        self.joins = JoinMaps::default();
-        self.dirty.clear();
-        self.has_checkpoint = false;
-        for record in keep.into_values().chain(records) {
-            self.append_uncommitted(record)?;
-        }
-        self.commit()
     }
 
     fn persist_projection(&mut self) -> Result<(), String> {

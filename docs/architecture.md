@@ -10,10 +10,10 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
           Action append               └── hop / count / sum
 ```
 
-The public surface is two crates: `mikura` (`src/lib.rs`) for the log and
-evaluate, and `mikura-ingest` for batch/stream append. A control plane maps
-datasets and admitted edits to `ObjectRecord`s; it does not live in this
-repository. There is no server process in v1.
+The public surface is three crates: `mikura` (`src/lib.rs`) for the log and
+evaluate, `mikura-ingest` for batch/stream append, and `mikura-host` for
+loopback ingest/evaluate. A control plane maps datasets and admitted edits
+to `ObjectRecord`s; it does not live in this repository.
 
 ## Object model
 
@@ -24,7 +24,7 @@ repository. There is no server process in v1.
 | `kind` | Type name (`Customer`, `Order`, …) |
 | `key` | Primary key within that kind |
 | `props` | String map |
-| `hidden` | Excluded from `visible_of_kind` and from join indexing |
+| `hidden` | Excluded from join indexing |
 | `gen` | Generation. `Store::append` sets `1` on insert and `existing+1` on update |
 
 Identity is `(kind, key)`. A later append replaces the live record.
@@ -90,9 +90,6 @@ quarter of identity.
 Hidden records are absent from hop/sum. `LocalCompute` answers from these
 maps, not from a hot object map.
 
-`replace_kind` rewrites the whole log (creates a new writer at the same
-path). It is a test/rebuild helper, not a production compaction API.
-
 ## Ingest
 
 `mikura-ingest::BatchIngest::run` buffers records with `Store::append_uncommitted`
@@ -115,8 +112,8 @@ input to `MergeIngest`. The list is not authority.
 `mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
 records. `push` calls `Store::append_uncommitted` (live maps update
 immediately). A push that would exceed the bound returns an error and does
-not append. `flush` / `flush_into` calls `Store::commit`. A crash before
-flush drops the uncommitted tail; rebuild reads only committed pages.
+not append. `flush` calls `Store::commit`. A crash before flush drops the
+uncommitted tail; rebuild reads only committed pages.
 
 ## Evaluate
 
@@ -164,7 +161,7 @@ No tenants, policy compile, receipts, or principals.
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Track which Action produced a generation
 - Enforce ACLs per principal or on individual properties of a loaded object
-- Compact or checkpoint the log except via `replace_kind`
+- Compact or checkpoint the log
 
 Those gaps are intentional at this stage, not undocumented bugs. See
 [ROADMAP.md](../ROADMAP.md).

@@ -1,8 +1,8 @@
 # Skills
 
-Copied from sekai-chisei `.agents/skills/`. Procedure is unchanged.
+Copied from sekai-chisei `.agents/skills/`, then adapted.
 
-Apply them as described in [AGENTS.md](../../AGENTS.md): mikura paths,
-VISION, ROADMAP, and `docs/architecture.md` replace control-plane surfaces.
-The hosted repo is `Sannrox/mikura`. crates.io stays unpublished
-(`publish = false`) until explicitly authorized.
+`verify-change` and `assess-change-impact` are mikura-specific. Other skills
+keep the same procedure; apply them as described in
+[AGENTS.md](../../AGENTS.md). The hosted repo is `Sannrox/mikura`. crates.io
+stays unpublished (`publish = false`) until explicitly authorized.

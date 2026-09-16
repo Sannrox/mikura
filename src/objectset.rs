@@ -25,6 +25,8 @@ pub struct EvaluateRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvaluateResponse {
+    /// Distinct root keys in surviving hop paths. The name is historical;
+    /// hop count is `EvaluateRequest.hops.len()`, which may be zero.
     pub two_hop_count: usize,
     pub sum_amount: i64,
 }

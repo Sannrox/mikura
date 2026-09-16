@@ -48,11 +48,11 @@ per-page sync was ~175×.
 ## Consequences
 
 - Restart is “verify committed pages, decode records, rebuild live maps.”
-- Compaction / checkpoints are not specified; `Store::replace_kind` rewrites
-  the file and is not a general compaction API.
-- `Store::append` currently flushes after every record, so the group-commit
-  policy on the writer is not yet used as a multi-record ingest batch.
-  Changing that is implementation work, not a format change.
+- Compaction / checkpoints are not specified and are not implemented.
+- `Store::append` of one record is a complete commit (flush writer, persist
+  join maps). Multi-record ingest uses `Store::append_uncommitted` then one
+  `Store::commit` (`mikura-ingest::BatchIngest`). That is implementation
+  work on top of this format, not a format change.
 
 ## Validation
 
