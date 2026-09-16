@@ -27,8 +27,13 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 ## Next (this repository, in order)
 
-1. More in-process projection work: hop scratch/bitset ([#29](https://github.com/Sannrox/mikura/issues/29)), intern-id checkpoint load ([#28](https://github.com/Sannrox/mikura/issues/28)), intern alloc ([#27](https://github.com/Sannrox/mikura/issues/27)). Then remasure 10⁷.
-2. Compute backend only if hops/aggregates still miss after that projection work.
+1. Remasure hop count+sum at 10⁷ after hop scratch, intern-id checkpoint load, and intern-once ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)). Hold ≤ 500 ms + dual-read → no compute backend this cycle. Projection miss → one projection Issue. In-process ceiling → Design Discussion only.
+2. Load the current object for `(kind, key)` after restart. Projection stays deletable; do not make a payload map recovery material.
+3. Exact-match filter on evaluate. Denied properties stay absent or error. No query language.
+4. Store which Action produced a generation (log-format ADR). Admission stays in the clerk.
+5. Apply the request deny list when loading properties. Principal and policy stay in the clerk.
+6. Non-loopback bind only after an auth ADR. Bearer tokens owned by the control plane. Still one process, one `Store`.
+7. Envelopes at 10⁸, then 10⁹ / 10¹⁰, after load and filter exist (they change the projection). Compute backend only on a published miss in-process cannot fix.
 
 ## Later (not this repository)
 
