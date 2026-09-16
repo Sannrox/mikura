@@ -72,7 +72,8 @@ let response = ObjectSet::new(LocalCompute).evaluate(
 ```
 
 Hidden objects are excluded from evaluate. A denied aggregate property
-returns `AclError::Denied` rather than a guessed value.
+returns `AclError::Denied` rather than a guessed value. `Store::load`
+takes the same deny list and omits those keys from the returned object.
 
 ## Layout
 

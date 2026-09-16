@@ -30,12 +30,12 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v4 hop fold | Last-hop fold + packed join children; 10⁷ query **878 ms miss** vs 500 ms; 10⁶ **33 ms hold**; dual-read holds ([#59](https://github.com/Sannrox/mikura/issues/59), spike 011 addendum) |
 | v6 provenance ADR | Optional clerk-assigned Action id on the object log ([#46](https://github.com/Sannrox/mikura/issues/46), [ADR 0006](docs/decisions/0006-action-provenance.md)). |
 | v6 action id | `ObjectRecord.action_id` on the log and `MKJOIN03` sidecar ([#64](https://github.com/Sannrox/mikura/issues/64)) |
+| v6 load ACL | `Store::load` omits denied properties; evaluate deny stays fail-closed ([#47](https://github.com/Sannrox/mikura/issues/47)) |
 
 ## Next (this repository, in order)
 
-1. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
-2. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
-3. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
+1. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
+2. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
 
 ## After Next (this repository)
 

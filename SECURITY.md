@@ -28,6 +28,7 @@ These behaviors are implemented and fail closed:
 - checksum mismatch on a committed log page
 - missing pages inside the committed range
 - property ACL denial on the requested aggregate property
+- load omits denied properties rather than inventing values
 
 These are **not** a security boundary yet:
 

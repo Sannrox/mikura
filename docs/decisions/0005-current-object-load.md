@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0004](0004-slim-join-maps.md)
+- Related: [#44](https://github.com/Sannrox/mikura/issues/44), [#47](https://github.com/Sannrox/mikura/issues/47), [ADR 0004](0004-slim-join-maps.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -18,19 +18,18 @@ deletable. Changing `MIKURAV1` is out of scope.
 
 ## Decision
 
-`Store::load(kind, key)` returns the live `ObjectRecord`.
+`Store::load(kind, key, acl)` returns the live `ObjectRecord`.
 
-Visible rows already store interned property pairs in `MKJOIN02`. Load
+Visible rows already store interned property pairs in `MKJOIN03`. Load
 reconstructs props from that list plus slim identity. Hidden rows stay out of
 hop/sum indexes. Their property pairs are written in the same identity-row
 slot so a hidden object can still be loaded by primary key. Empty props are
 a valid hidden payload.
 
-No new sidecar magic. `MKJOIN01` still fails closed. Deleting `{log}.joins`
+Denied properties are omitted from the returned map. Evaluate of a denied
+aggregate still returns `AclError::Denied`. Missing identity fails closed.
+The log is not scanned for every identity on each load. Deleting `{log}.joins`
 rebuilds identity, hop maps, and loadable payloads from the log.
-
-ACL redaction of loaded properties is a follow-up. Missing identity fails
-closed. The log is not scanned for every identity on each load.
 
 ## Alternatives considered
 
@@ -52,4 +51,5 @@ map until the sidecar is deleted and rebuilt. Hop/sum behavior is unchanged.
 
 Crate and integration tests: ingest, reopen, load; update then latest `gen`
 only; hidden load returns the hidden record and stays out of join maps;
-dual-read after deleting the sidecar; checksum/bad-magic still fail closed.
+denied properties are absent after load and after reopen; dual-read after
+deleting the sidecar; checksum/bad-magic still fail closed.
