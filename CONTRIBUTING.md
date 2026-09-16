@@ -45,7 +45,7 @@ when measuring, from that directory, and record results in that spike's
 
 ## Tests
 
-The default suite has two layers. Both stay offline and fail closed.
+The default suite has three layers. All stay offline and fail closed.
 
 - **Unit / crate tests** live next to the changed module, in
   `src/crate_tests.rs`, or in a crate's `src/tests.rs`. They may use
@@ -54,7 +54,12 @@ The default suite has two layers. Both stay offline and fail closed.
   Run it with `cargo test --test integration --locked`, or as part of
   `cargo test --workspace --locked`. It covers write → log → projection →
   evaluate → reopen through `mikura` and `mikura-ingest` only. It does not
-  spawn `mikura-host` (that is a later e2e suite).
+  spawn `mikura-host`.
+- **e2e** is the named host-process suite in
+  `crates/mikura-host/tests/e2e.rs`. Run it with
+  `cargo test -p mikura-host --test e2e --locked`, or as part of
+  `cargo test --workspace --locked`. It starts a `mikura-host` process on
+  loopback and drives JSON-line ingest/evaluate over the wire.
 
 - Use a temp directory for object logs. Clean it up in the test.
 - Do not require a network, PostgreSQL, Spark, or credentials.

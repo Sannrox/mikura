@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- `mikura-host` process binary and named e2e suite
+  (`cargo test -p mikura-host --test e2e --locked`) that spawn the process
+  on loopback, drive JSON-line ingest/evaluate, and fail closed on ACL
+  deny, stream overflow, and non-loopback bind.
 - Named public-API integration suite (`tests/integration.rs`,
   `cargo test --test integration --locked`) covering batch ingest, hop
   count and sum, Action writeback, ACL deny, stream overflow, reopen,

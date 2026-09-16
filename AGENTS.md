@@ -21,7 +21,8 @@ tracked. Do not treat that directory as gitignored.
 | `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
 | `src/store.rs` | Identity, projection install, append/commit |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
-| `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`. Depends on `mikura` and `mikura-ingest` |
+| `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`, plus `mikura-host` binary |
+| `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |
 | `src/objectset.rs` | Evaluate request/response |
 | `src/acl.rs` | Property deny-list (fail closed) |
 | `src/actions.rs` | Action writeback → new generation |
@@ -100,8 +101,9 @@ changed module or in `src/crate_tests.rs`. The named **integration** suite
 is `tests/integration.rs` (`cargo test --test integration --locked`); it
 uses only public APIs of `mikura` and `mikura-ingest` and is the
 public/multi-component check. Temp directories for logs. No network,
-Postgres, or Spark in the default suite. Host-process e2e is not this
-suite.
+Postgres, or Spark in the default suite. Host-process **e2e** is
+`crates/mikura-host/tests/e2e.rs`
+(`cargo test -p mikura-host --test e2e --locked`).
 
 ## Git
 

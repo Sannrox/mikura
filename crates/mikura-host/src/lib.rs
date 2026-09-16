@@ -139,6 +139,14 @@ impl Host {
         stream.write_all(b"\n").map_err(|err| err.to_string())?;
         Ok(())
     }
+
+    /// Accept connections until the listener closes or an I/O error occurs.
+    pub fn serve(&mut self, listener: TcpListener) -> Result<(), String> {
+        for incoming in listener.incoming() {
+            self.serve_one(incoming.map_err(|err| err.to_string())?)?;
+        }
+        Ok(())
+    }
 }
 
 fn ok() -> HostResponse {
