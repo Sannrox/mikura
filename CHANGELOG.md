@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- Named public-API integration suite (`tests/integration.rs`,
+  `cargo test --test integration --locked`) covering batch ingest, hop
+  count and sum, Action writeback, ACL deny, stream overflow, reopen,
+  dual-read, and sidecar checksum/magic fail-closed.
 - `mikura-ingest::merge_source_and_edits` and `MergeIngest::run` merge a
   source snapshot with admitted edits by `(kind, key)`. Edits replace source
   for the same identity, including `hidden`. The object log after append
