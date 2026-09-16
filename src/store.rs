@@ -110,6 +110,11 @@ impl Store {
         self.commit()
     }
 
+    /// Reserve intern capacity before a batch of new property or value tokens.
+    pub fn reserve_intern(&mut self, additional: usize) {
+        self.joins.reserve(additional);
+    }
+
     /// Buffer a record on the writer and update live maps. Durability requires
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.

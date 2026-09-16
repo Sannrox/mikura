@@ -33,6 +33,9 @@ window.
 
 ### Changed
 
+- `JoinMaps::intern` builds one owned string on a miss and shares it with
+  the intern table. Batch and stream ingest reserve intern capacity from
+  the incoming record set.
 - `Store::open` fills join indexes from intern ids in the checkpoint; it
   no longer de-interns properties to `HashMap<String, String>` and
   re-interns them.

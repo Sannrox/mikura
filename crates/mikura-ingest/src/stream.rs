@@ -34,6 +34,7 @@ impl StreamIngest {
                 self.bound
             ));
         }
+        store.reserve_intern(2 + record.props.len().saturating_mul(2));
         store.append_uncommitted(record)?;
         self.uncommitted += 1;
         Ok(())
