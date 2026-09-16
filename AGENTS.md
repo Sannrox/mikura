@@ -156,3 +156,6 @@ immediately after the correction.
 - Pick Spark/search/warehouse from a spike miss.
 - Clone vendor API names or protobufs.
 - Overwrite uncommitted work in another checkout.
+- Put hostnames, FQDNs, home paths, absolute worktree paths, LAN or employer
+  network names, or other private environment inventory on public Issues,
+  Pull Requests, comments, or commit messages.

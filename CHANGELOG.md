@@ -25,6 +25,8 @@ window.
 
 ### Changed
 
+- Public Issues and PRs must not include hostnames or other private
+  environment inventory. Delivery skills list only branch and SHAs on GitHub.
 - Split interned join maps into `src/joins.rs` and ingest merge/changelog/stream
   into `crates/mikura-ingest/src/{merge,changelog,stream}.rs`. Public APIs
   unchanged.
