@@ -153,9 +153,15 @@ impl JoinMaps {
             return id;
         }
         let id = u32::try_from(self.intern.len()).expect("too many interned strings");
-        self.intern.push(value.to_string());
-        self.intern_ix.insert(value.to_string(), id);
+        let owned = value.to_string();
+        self.intern.push(owned.clone());
+        self.intern_ix.insert(owned, id);
         id
+    }
+
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.intern.reserve(additional);
+        self.intern_ix.reserve(additional);
     }
 
     pub(crate) fn intern_existing(&self, value: &str) -> Option<u32> {

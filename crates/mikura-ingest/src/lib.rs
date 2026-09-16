@@ -19,6 +19,11 @@ pub struct BatchIngest;
 
 impl BatchIngest {
     pub fn run(store: &mut Store, records: Vec<ObjectRecord>) -> Result<(), String> {
+        let tokens = records
+            .iter()
+            .map(|record| 2 + record.props.len().saturating_mul(2))
+            .sum();
+        store.reserve_intern(tokens);
         for record in records {
             store.append_uncommitted(record)?;
         }
