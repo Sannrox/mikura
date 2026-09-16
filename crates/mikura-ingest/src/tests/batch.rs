@@ -15,6 +15,7 @@ fn batch_ingest_evaluate_rebuild_matches_live() {
 
     store
         .apply_action(Action {
+            id: "act-s2".into(),
             kind: "Shipment".into(),
             key: "s2".into(),
             props: HashMap::from([

@@ -46,6 +46,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
         kind: kind.into(),
         key: key.into(),
         hidden,
+        action_id: None,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))
@@ -140,6 +141,7 @@ fn action_writeback_is_a_new_generation() {
 
     store
         .apply_action(Action {
+            id: "act-s2".into(),
             kind: "Shipment".into(),
             key: "s2".into(),
             props: HashMap::from([
@@ -236,6 +238,7 @@ fn reopen_matches_live_hop_count_and_sum() {
     BatchIngest::run(&mut store, fixture()).unwrap();
     store
         .apply_action(Action {
+            id: "act-s2".into(),
             kind: "Shipment".into(),
             key: "s2".into(),
             props: HashMap::from([

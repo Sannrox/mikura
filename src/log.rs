@@ -256,6 +256,7 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, &key)?;
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
+    write_str(&mut body, record.action_id.as_deref().unwrap_or(""))?;
     Ok(body)
 }
 
@@ -293,14 +294,25 @@ fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
         let v = read_str(&mut cur)?;
         props.insert(k, v);
     }
-    if !cur.is_empty() {
-        return Err("trailing body bytes".into());
-    }
+    let action_id = if cur.is_empty() {
+        None
+    } else {
+        let id = read_str(&mut cur)?;
+        if !cur.is_empty() {
+            return Err("trailing body bytes".into());
+        }
+        if id.is_empty() {
+            None
+        } else {
+            Some(id)
+        }
+    };
     Ok(ObjectRecord {
         gen,
         kind,
         key,
         hidden,
+        action_id,
         props,
     })
 }
@@ -322,6 +334,7 @@ mod tests {
                 kind: "Customer".into(),
                 key: "c1".into(),
                 hidden: false,
+                action_id: None,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();
@@ -340,6 +353,20 @@ mod tests {
     }
 
     #[test]
+    fn historical_record_without_action_id_is_none() {
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u64.to_le_bytes());
+        body.push(0);
+        write_str(&mut body, "Customer").unwrap();
+        write_str(&mut body, "c1").unwrap();
+        body.extend_from_slice(&0u16.to_le_bytes());
+        let record = decode_body(&body).unwrap();
+        assert_eq!(record.action_id, None);
+        assert_eq!(record.kind, "Customer");
+        assert_eq!(record.key, "c1");
+    }
+
+    #[test]
     fn missing_committed_page_fails_closed() {
         let dir = std::env::temp_dir().join("mikura-log-missing");
         let _ = std::fs::remove_dir_all(&dir);
@@ -352,6 +379,7 @@ mod tests {
                 kind: "Customer".into(),
                 key: "c1".into(),
                 hidden: false,
+                action_id: None,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();

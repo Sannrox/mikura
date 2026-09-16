@@ -14,6 +14,8 @@ pub struct ObjectRecord {
     pub kind: String,
     pub key: String,
     pub hidden: bool,
+    #[serde(default)]
+    pub action_id: Option<String>,
     pub props: HashMap<String, String>,
 }
 
@@ -83,11 +85,15 @@ impl Store {
         self.joins.remove(&record.kind, &record.key);
         self.joins.intern(&record.kind);
         self.joins.intern(&record.key);
+        if let Some(action_id) = &record.action_id {
+            self.joins.intern(action_id);
+        }
         self.identity.insert(
             id.clone(),
             LiveMeta {
                 gen: record.gen,
                 hidden: record.hidden,
+                action_id: record.action_id.clone(),
             },
         );
         if record.hidden {
@@ -129,6 +135,7 @@ impl Store {
             kind: kind.to_string(),
             key: key.to_string(),
             hidden: meta.hidden,
+            action_id: meta.action_id.clone(),
             props,
         })
     }
@@ -170,11 +177,15 @@ impl Store {
     }
 
     pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
+        if action.id.is_empty() {
+            return Err("action id required".into());
+        }
         self.append(ObjectRecord {
             gen: 0,
             kind: action.kind,
             key: action.key,
             hidden: false,
+            action_id: Some(action.id),
             props: action.props,
         })
     }

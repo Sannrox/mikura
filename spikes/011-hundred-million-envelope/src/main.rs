@@ -39,6 +39,7 @@ fn rec(kind: &str, key: String, hidden: bool, props: Vec<(&str, String)>) -> Obj
         kind: kind.into(),
         key,
         hidden,
+        action_id: None,
         props: props.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     }
 }
