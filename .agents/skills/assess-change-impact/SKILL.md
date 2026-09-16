@@ -14,17 +14,21 @@ Build an evidence-backed impact map before implementation or review.
    callers or implementors. Complete when the claimed outcome and actual change
    surface are both known.
 2. Trace applicable boundaries:
-   - Object log (store of record) versus rebuildable projections (`{log}.joins`);
+   - Object log (store of record) versus rebuildable projections
+     (`{log}.joins` checkpoint, `{log}.joins.delta` dirty-set);
    - `mikura` (log / store / evaluate) versus `mikura-ingest` (batch / stream);
    - Fail-closed ACL on `(sum_kind, sum_property)` versus guessed aggregates;
    - Independence: this crate must not depend on a control plane;
-   - On-disk `MIKURAV1` / `MKJOIN01` format versus in-memory maps;
-   - In-process library versus hosted service (not built; ADR 0003).
+   - On-disk `MIKURAV1` / `MKJOIN02` checkpoint + `MKJOIN2D` delta versus
+     in-memory maps. Old `MKJOIN01` fails closed;
+   - In-process library versus loopback host (`mikura-host`, ADR 0003).
    Complete when each applicable boundary has an owner and expected invariant.
 3. Identify persistence and compatibility obligations. Include fresh logs,
-   reopen after crash (committed pages only), sidecar absence versus checksum
-   mismatch, public Rust API, and rollback impact where relevant. Complete when
-   data-loss and partial-failure paths are accounted for.
+   reopen after crash (committed pages only), sidecar absence or stale
+   pages-stamp (rebuild from the log) versus checksum mismatch, truncation,
+   or bad magic (fail closed; deleting the sidecar recovers), public Rust
+   API, and rollback impact where relevant. Complete when data-loss and
+   partial-failure paths are accounted for.
 4. Map evidence to risk: unit tests for codec and page logic; crate tests for
    ingest / evaluate / reopen / ACL; `tests/integration.rs` for the public
    write → evaluate → reopen path; spike NOTES only when measuring envelopes.
