@@ -56,6 +56,7 @@ pub(crate) fn fixture_request() -> EvaluateRequest {
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 
@@ -75,6 +76,7 @@ pub(crate) fn shipment_request() -> EvaluateRequest {
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 

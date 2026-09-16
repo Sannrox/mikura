@@ -7,10 +7,17 @@ pub enum Aggregate {
     CountAndSum,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hop {
     pub far_kind: String,
     pub join_property: String,
+}
+
+/// Exact equality on a root property. No phrase, prefix, or query language.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExactMatch {
+    pub property: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +28,8 @@ pub struct EvaluateRequest {
     pub sum_property: String,
     pub aggregate: Aggregate,
     pub acl: PropertyAcl,
+    /// When set, only visible roots whose `props[property] == value` survive.
+    pub filter: Option<ExactMatch>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -130,13 +130,16 @@ uncommitted tail; rebuild reads only committed pages.
 `LocalCompute` (generic kinds, from `JoinMaps`):
 
 1. Start from visible keys of `root_kind`.
-2. For each `Hop`, join `parent.key` to child `join_property` among
+2. If `request.filter` is set, keep only roots whose interned
+   `props[property] == value`. Empty match is count 0, sum 0.
+3. For each `Hop`, join `parent.key` to child `join_property` among
    visible children of `far_kind`.
-3. Count distinct root keys in surviving paths (`EvaluateResponse.two_hop_count`
+4. Count distinct root keys in surviving paths (`EvaluateResponse.two_hop_count`
    — the field name is historical; hop count is `request.hops.len()`).
-4. Sum `sum_property` on leaves whose kind is `sum_kind`.
+5. Sum `sum_property` on leaves whose kind is `sum_kind`.
 
-Before that, it checks `request.acl` on `(sum_kind, sum_property)` only.
+Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
+a filter is present, on `(root_kind, filter.property)`.
 
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 
@@ -159,8 +162,8 @@ or attestation.
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `evaluate`. The request ACL
-deny list fails closed. `Host::bind` accepts loopback only; a non-loopback
+`ingest_stream_push`, `ingest_stream_flush`, `evaluate`. Evaluate accepts an
+optional exact-match `filter`. The request ACL deny list fails closed. `Host::bind` accepts loopback only; a non-loopback
 address is refused. No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do

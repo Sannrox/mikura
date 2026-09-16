@@ -28,9 +28,9 @@ cannot be rebuilt from the log.
 Today the crate answers (1), (2), and a slice of (4) for a small
 in-process graph: slim identity and generic join maps persist as a sidecar.
 `Store::load` returns the current object after restart. Evaluate is hop +
-count/sum, not filter. (3) and (5) remain product intent: Action append
-exists, but records do not store an Action id; ACL is an in-process deny
-list, not a principal.
+count/sum plus optional exact-match on root properties. (3) and (5) remain
+product intent: Action append exists, but records do not store an Action
+id; ACL is an in-process deny list, not a principal.
 
 ## Where data is saved
 
@@ -69,7 +69,7 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v4:** remaining in-process hop walk without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute backend only if that remasure still misses and remaining in-process work is classified as a ceiling. A miss is not an engine pick.
 
-**v5:** exact-match filter on evaluate (question 4). Load by primary key landed ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language. A payload map must stay deletable and rebuildable.
+**v5 (done):** exact-match filter on evaluate (question 4) ([#45](https://github.com/Sannrox/mikura/issues/45)); load by primary key ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language.
 
 **v6:** store which Action produced a generation (question 3; log-format ADR). Apply the request deny list when loading properties (question 5). Principal and policy stay in the clerk.
 

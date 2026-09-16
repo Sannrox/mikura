@@ -4,8 +4,8 @@
 //! `cargo test --workspace --locked`. These tests do not spawn `mikura-host`.
 
 use mikura::{
-    AclError, Action, Aggregate, ComputeError, EvaluateRequest, Hop, LocalCompute, ObjectRecord,
-    ObjectSet, PropertyAcl, Store,
+    AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
+    ObjectRecord, ObjectSet, PropertyAcl, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -93,6 +93,7 @@ fn shipment_request() -> EvaluateRequest {
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 
@@ -107,6 +108,7 @@ fn asset_request() -> EvaluateRequest {
         sum_property: "mass".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 
@@ -356,4 +358,48 @@ fn load_current_object_after_restart() {
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(replayed.load("Customer", "c1").unwrap(), latest);
     assert_eq!(replayed.load("Customer", "c0").unwrap(), hidden);
+}
+
+#[test]
+fn exact_match_filter_on_evaluate() {
+    let tmp = TempLog::new("filter");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Customer", "c2", false, &[("region", "eu")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec("Order", "o2", false, &[("customer_id", "c2")]),
+            rec(
+                "Shipment",
+                "s1",
+                false,
+                &[("order_id", "o1"), ("amount", "10")],
+            ),
+            rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o2"), ("amount", "7")],
+            ),
+        ],
+    )
+    .unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let mut us = shipment_request();
+    us.filter = Some(ExactMatch {
+        property: "region".into(),
+        value: "us".into(),
+    });
+    let response = oss.evaluate(&store, &us).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 10);
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(oss.evaluate(&reopened, &us).unwrap(), response);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(oss.evaluate(&replayed, &us).unwrap(), response);
 }

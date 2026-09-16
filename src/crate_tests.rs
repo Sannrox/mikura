@@ -31,6 +31,7 @@ fn fixture_request() -> EvaluateRequest {
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn asset_request() -> EvaluateRequest {
         sum_property: "mass".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
     }
 }
 
@@ -419,5 +421,81 @@ fn load_current_object_after_reopen() {
     let replayed = Store::open(&log).unwrap();
     assert_eq!(replayed.load("Customer", "c1").unwrap(), latest);
     assert_eq!(replayed.load("Customer", "c0").unwrap(), live_hidden);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn exact_match_filter_restricts_roots() {
+    let (dir, log) = temp_log("filter-roots");
+    let mut store = Store::create(&log).unwrap();
+    append_all(
+        &mut store,
+        vec![
+            rec("Customer", "c0", true, &[("region", "eu")]),
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Customer", "c2", false, &[("region", "eu")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec("Order", "o2", false, &[("customer_id", "c2")]),
+            rec(
+                "Shipment",
+                "s1",
+                false,
+                &[("order_id", "o1"), ("amount", "10")],
+            ),
+            rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o2"), ("amount", "7")],
+            ),
+        ],
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let unfiltered = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!(unfiltered.two_hop_count, 2);
+    assert_eq!(unfiltered.sum_amount, 17);
+
+    let mut us = fixture_request();
+    us.filter = Some(ExactMatch {
+        property: "region".into(),
+        value: "us".into(),
+    });
+    let us_resp = oss.evaluate(&store, &us).unwrap();
+    assert_eq!(us_resp.two_hop_count, 1);
+    assert_eq!(us_resp.sum_amount, 10);
+
+    let mut eu = fixture_request();
+    eu.filter = Some(ExactMatch {
+        property: "region".into(),
+        value: "eu".into(),
+    });
+    let eu_resp = oss.evaluate(&store, &eu).unwrap();
+    assert_eq!(eu_resp.two_hop_count, 1);
+    assert_eq!(eu_resp.sum_amount, 7);
+    assert!(!store.joins().is_visible("Customer", "c0"));
+
+    let mut miss = fixture_request();
+    miss.filter = Some(ExactMatch {
+        property: "region".into(),
+        value: "ap".into(),
+    });
+    let empty = oss.evaluate(&store, &miss).unwrap();
+    assert_eq!(empty.two_hop_count, 0);
+    assert_eq!(empty.sum_amount, 0);
+
+    let mut denied = us.clone();
+    denied.acl = PropertyAcl::deny_property("Customer", "region");
+    assert!(matches!(
+        oss.evaluate(&store, &denied),
+        Err(ComputeError::Acl(AclError::Denied { .. }))
+    ));
+
+    drop(store);
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(oss.evaluate(&reopened, &us).unwrap(), us_resp);
+    assert!(!reopened.joins().is_visible("Customer", "c0"));
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let replayed = Store::open(&log).unwrap();
+    assert_eq!(oss.evaluate(&replayed, &us).unwrap(), us_resp);
     let _ = std::fs::remove_dir_all(&dir);
 }
