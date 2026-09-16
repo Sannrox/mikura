@@ -22,3 +22,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.
+
+Do not extend spike `src/main.rs` copies. `NOTES.md` is the durable verdict.
+New measurements belong in a new spike directory or against the product
+`Store`, not another paste of `Scale` / `two_hop_count` / `region`.

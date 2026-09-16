@@ -8,6 +8,7 @@
 *.sqlite-*
 *.mikura
 *.mikura.joins
+*.joins.delta
 *.joins.tmp
 *.swp
 .env

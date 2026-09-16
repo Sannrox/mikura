@@ -85,11 +85,13 @@ answers, and do not infer facts that the ontology does not contain.
 
 ## Product vocabulary (this repository)
 
-This repository ships a versioned portable pack at
-`crates/sekai-ontology/ontologies/sekai-chisei-product-v1.json`. It is
-contributor and agent vocabulary for sekai-chisei. It is not a built-in
-server ontology, not part of `init` or `directory init`, and not a customer
-domain.
+mikura has **no** product vocabulary pack and no `crates/sekai-ontology/`
+tree. Do not import `sekai-chisei-product-v1.json` from this repo. Do not
+use the object log or a control-plane database as a portable ontology.
+State absence rather than answering sekai-chisei vocabulary from memory.
+
+The pack procedure below applies only when that JSON file actually exists
+in the tree you are reading.
 
 When the pack is present, do not answer from memory for these questions:
 
