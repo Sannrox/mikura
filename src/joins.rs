@@ -162,6 +162,49 @@ impl JoinMaps {
         self.intern_ix.get(value).copied()
     }
 
+    pub(crate) fn insert_visible_ids(
+        &mut self,
+        kind_id: u32,
+        key_id: u32,
+        owned: Vec<(u32, u32)>,
+    ) -> Result<(), String> {
+        for &(prop_id, value_id) in &owned {
+            if self.intern.get(prop_id as usize).is_none() {
+                return Err("bad intern prop".into());
+            }
+            if self.intern.get(value_id as usize).is_none() {
+                return Err("bad intern value".into());
+            }
+        }
+        if self.intern.get(kind_id as usize).is_none() {
+            return Err("bad intern kind".into());
+        }
+        if self.intern.get(key_id as usize).is_none() {
+            return Err("bad intern key".into());
+        }
+        self.by_kind.entry(kind_id).or_default().insert(key_id);
+        for &(prop_id, value_id) in &owned {
+            let value = self
+                .intern
+                .get(value_id as usize)
+                .ok_or_else(|| "bad intern value".to_string())?;
+            self.by_prop
+                .entry((kind_id, prop_id))
+                .or_default()
+                .entry(value_id)
+                .or_default()
+                .insert(key_id);
+            if let Ok(amount) = value.parse::<i64>() {
+                self.amounts
+                    .entry((kind_id, prop_id))
+                    .or_default()
+                    .insert(key_id, amount);
+            }
+        }
+        self.owned.insert((kind_id, key_id), owned);
+        Ok(())
+    }
+
     pub(crate) fn insert_visible(&mut self, kind: &str, key: &str, props: HashMap<String, String>) {
         self.remove(kind, key);
         let kind_id = self.intern(kind);

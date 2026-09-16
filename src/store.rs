@@ -293,26 +293,9 @@ impl Store {
                 let value_id = read_u32(&mut cur)?;
                 owned.push((prop_id, value_id));
             }
-            identity.insert((kind.clone(), key.clone()), LiveMeta { gen, hidden });
+            identity.insert((kind, key), LiveMeta { gen, hidden });
             if !hidden {
-                let mut props = HashMap::new();
-                for (prop_id, value_id) in owned {
-                    let prop = joins
-                        .intern
-                        .get(prop_id as usize)
-                        .ok_or_else(|| "bad intern prop".to_string())?
-                        .clone();
-                    let value = joins
-                        .intern
-                        .get(value_id as usize)
-                        .ok_or_else(|| "bad intern value".to_string())?
-                        .clone();
-                    props.insert(prop, value);
-                }
-                joins.insert_visible(&kind, &key, props);
-            } else {
-                let _ = joins.intern(kind.as_str());
-                let _ = joins.intern(key.as_str());
+                joins.insert_visible_ids(kind_id, key_id, owned)?;
             }
         }
         if !cur.is_empty() {
