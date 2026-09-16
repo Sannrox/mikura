@@ -79,8 +79,9 @@ returns `AclError::Denied` rather than a guessed value.
 ```
 src/                      mikura library (log, store, evaluate)
 crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append)
-crates/mikura-host/       loopback ingest/evaluate host
+crates/mikura-host/       loopback ingest/evaluate host and process binary
 tests/integration.rs      public-API integration suite (unit tests stay in-crate)
+crates/mikura-host/tests/e2e.rs  host-process e2e suite
 docs/                     architecture, glossary, ADRs
 spikes/              historical measurements; not the store
 VISION.md            why this project exists

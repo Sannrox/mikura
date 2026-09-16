@@ -150,10 +150,11 @@ or attestation.
 ## Hosted service
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
-Line-delimited JSON RPCs: `ingest_batch`, `ingest_stream_push`,
-`ingest_stream_flush`, `evaluate`. The request ACL deny list fails closed.
-`Host::bind` accepts loopback only; a non-loopback address is refused.
-No tenants, policy compile, receipts, or principals.
+The crate ships a `mikura-host` binary that binds loopback and serves one
+JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
+`ingest_stream_push`, `ingest_stream_flush`, `evaluate`. The request ACL
+deny list fails closed. `Host::bind` accepts loopback only; a non-loopback
+address is refused. No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do
 
