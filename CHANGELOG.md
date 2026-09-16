@@ -33,8 +33,13 @@ window.
 - `ObjectRecord.action_id` is an optional clerk-assigned Action id on the
   generation. `Store::apply_action` fails closed without one. Source ingest
   may omit it. Sidecar magic is `MKJOIN03` / `MKJOIN3D`.
+- `Store::load(kind, key, acl)` omits denied properties. Evaluate of a denied
+  aggregate still returns `AclError::Denied`.
 
 ### Changed
+
+- `Store::load` takes `&PropertyAcl`. Denied keys are absent from the returned
+  object; remaining values stay the stored ones.
 
 - `Store` persist/load lives in `src/store/sidecar.rs`. Public APIs other than
   the removed helper below are unchanged.

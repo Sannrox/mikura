@@ -335,8 +335,12 @@ fn load_current_object_after_restart() {
     let tmp = TempLog::new("load");
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
-    let live = store.load("Customer", "c1").unwrap();
-    let hidden = store.load("Customer", "c0").unwrap();
+    let live = store
+        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .unwrap();
+    let hidden = store
+        .load("Customer", "c0", &PropertyAcl::allow_all())
+        .unwrap();
     assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
     assert!(hidden.hidden);
     assert_eq!(hidden.props.get("region").map(String::as_str), Some("eu"));
@@ -344,8 +348,18 @@ fn load_current_object_after_restart() {
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    assert_eq!(reopened.load("Customer", "c1").unwrap(), live);
-    assert_eq!(reopened.load("Customer", "c0").unwrap(), hidden);
+    assert_eq!(
+        reopened
+            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .unwrap(),
+        live
+    );
+    assert_eq!(
+        reopened
+            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .unwrap(),
+        hidden
+    );
 
     let mut store = Store::open(tmp.path()).unwrap();
     store
@@ -353,14 +367,72 @@ fn load_current_object_after_restart() {
         .unwrap();
     drop(store);
     let updated = Store::open(tmp.path()).unwrap();
-    let latest = updated.load("Customer", "c1").unwrap();
+    let latest = updated
+        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .unwrap();
     assert_eq!(latest.gen, 2);
     assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
 
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    assert_eq!(replayed.load("Customer", "c1").unwrap(), latest);
-    assert_eq!(replayed.load("Customer", "c0").unwrap(), hidden);
+    assert_eq!(
+        replayed
+            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .unwrap(),
+        latest
+    );
+    assert_eq!(
+        replayed
+            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .unwrap(),
+        hidden
+    );
+}
+
+#[test]
+fn load_omits_denied_properties() {
+    let tmp = TempLog::new("load-acl");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let allow = PropertyAcl::allow_all();
+    let live = store.load("Shipment", "s1", &allow).unwrap();
+    assert_eq!(live.props.get("amount").map(String::as_str), Some("10"));
+    assert_eq!(live.props.get("order_id").map(String::as_str), Some("o1"));
+
+    let deny_amount = PropertyAcl::deny_property("Shipment", "amount");
+    let redacted = store.load("Shipment", "s1", &deny_amount).unwrap();
+    assert!(!redacted.props.contains_key("amount"));
+    assert_eq!(
+        redacted.props.get("order_id").map(String::as_str),
+        Some("o1")
+    );
+    assert!(!redacted.props.contains_key("fabricated"));
+    assert!(!store.joins().is_visible("Customer", "c0"));
+
+    let mut denied = shipment_request();
+    denied.acl = PropertyAcl::deny_property("Shipment", "amount");
+    let err = ObjectSet::new(LocalCompute)
+        .evaluate(&store, &denied)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        ComputeError::Acl(AclError::Denied {
+            ref kind,
+            ref property
+        }) if kind == "Shipment" && property == "amount"
+    ));
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert!(!reopened
+        .load("Shipment", "s1", &deny_amount)
+        .unwrap()
+        .props
+        .contains_key("amount"));
+    assert_eq!(
+        reopened.load("Shipment", "s1", &allow).unwrap().props,
+        live.props
+    );
 }
 
 #[test]

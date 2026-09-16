@@ -83,14 +83,15 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
-It does not keep a hot payload map. `Store::load(kind, key)` reconstructs
+It does not keep a hot payload map. `Store::load(kind, key, acl)` reconstructs
 the live `ObjectRecord` from slim identity plus interned property pairs
 already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
-Hidden rows stay out of hop/sum; their property pairs sit in the identity
-row so load can still return them. A missing identity fails closed. The
-sidecar stamp is log `committed_pages`. A missing or stale sidecar rebuilds
-from the log. Checksum mismatch, truncation, or bad magic (`MKJOIN01` and
-`MKJOIN02` included) fails closed; deleting the sidecar recovers from the log.
+Denied properties are omitted from the returned map. Hidden rows stay out
+of hop/sum; their property pairs sit in the identity row so load can still
+return them. A missing identity fails closed. The sidecar stamp is log
+`committed_pages`. A missing or stale sidecar rebuilds from the log.
+Checksum mismatch, truncation, or bad magic (`MKJOIN01` and `MKJOIN02`
+included) fails closed; deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. Compact when dirty rows exceed a
@@ -154,8 +155,10 @@ a filter is present, on `(root_kind, filter.property)`.
 `PropertyAcl` is a deny set of `(kind, property)`. `allow_all()` is empty.
 `deny_property` inserts one pair. `check` errors with `AclError::Denied`.
 
-There is no allow-list, no principal, and no per-property redaction of
-returned objects (evaluate returns counts/sums, not object payloads).
+Load omits denied properties from the returned object; it does not invent
+substitutes. Evaluate of a denied `(sum_kind, sum_property)` still fails
+closed. There is no allow-list and no principal. Policy stays in the clerk;
+this crate applies the request deny list.
 
 ## Action writeback
 

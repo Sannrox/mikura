@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::acl::PropertyAcl;
 use crate::actions::Action;
 use crate::joins::{JoinMaps, LiveMeta};
 use crate::log::{read_records, LogWriter, SyncPolicy};
@@ -117,9 +118,10 @@ impl Store {
     /// Live object for `(kind, key)` after ingest or [`Store::open`].
     ///
     /// Missing identity fails closed. Hidden records return the hidden
-    /// payload and stay out of join maps. The object log remains authority;
+    /// payload and stay out of join maps. Denied properties are omitted;
+    /// remaining keys keep stored values. The object log remains authority;
     /// interned sidecar props are a deletable projection.
-    pub fn load(&self, kind: &str, key: &str) -> Result<ObjectRecord, String> {
+    pub fn load(&self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<ObjectRecord, String> {
         let id = (kind.to_string(), key.to_string());
         let meta = self
             .identity
@@ -136,7 +138,7 @@ impl Store {
             key: key.to_string(),
             hidden: meta.hidden,
             action_id: meta.action_id.clone(),
-            props,
+            props: acl.omit_denied(kind, props),
         })
     }
 

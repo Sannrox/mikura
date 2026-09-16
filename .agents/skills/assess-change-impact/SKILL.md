@@ -17,7 +17,8 @@ Build an evidence-backed impact map before implementation or review.
    - Object log (store of record) versus rebuildable projections
      (`{log}.joins` checkpoint, `{log}.joins.delta` dirty-set);
    - `mikura` (log / store / evaluate) versus `mikura-ingest` (batch / changelog / merge / stream);
-   - Fail-closed ACL on `(sum_kind, sum_property)` versus guessed aggregates;
+   - Fail-closed ACL: load omits denied properties; evaluate of a denied
+     `(sum_kind, sum_property)` returns `AclError::Denied`;
    - Independence: this crate must not depend on a control plane;
    - On-disk `MIKURAV1` / `MKJOIN03` checkpoint + `MKJOIN3D` delta versus
      in-memory maps. Old `MKJOIN01` / `MKJOIN02` fail closed;

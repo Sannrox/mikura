@@ -79,7 +79,7 @@ that remain.
    | host process / e2e | named e2e suite `cargo test -p mikura-host --test e2e --locked` (spawned process, not same-thread `serve_one`) |
    | object log / sidecar | reopen, dual-read (delete sidecar), checksum/truncate fail-closed |
    | ingest | `BatchIngest` / `StreamIngest` commit vs uncommitted tail |
-   | ACL | deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
+   | ACL | load omits denied properties; deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
    | docs/templates/Skills | syntax, links, and commands against AGENTS.md / CI |
 
    Unit tests do not establish spike envelopes. Run spikes only when measuring,
