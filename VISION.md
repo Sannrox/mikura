@@ -63,7 +63,7 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope **miss** on query (spike 011, [#3](https://github.com/Sannrox/mikura/issues/3)); slim maps landed ([#15](https://github.com/Sannrox/mikura/issues/15)); remasure still **misses** 500 ms at 10⁷ (2.6 s) while 10⁶ now holds ([#31](https://github.com/Sannrox/mikura/issues/31)). Dual-read holds. Next projection work is [#29](https://github.com/Sannrox/mikura/issues/29), not a new engine.
 
-**v3:** bounded `StreamIngest` landed ([#4](https://github.com/Sannrox/mikura/issues/4)); load envelope still open (`Store::open` 40 s at 10⁷; 10⁸ ingest not re-run); loopback host landed ([ADR 0003](docs/decisions/0003-hosted-service.md), [#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)).
+**v3:** bounded `StreamIngest` landed ([#4](https://github.com/Sannrox/mikura/issues/4)); load envelope still open (`Store::open` 40 s at 10⁷; 10⁸ ingest not re-run); loopback host landed ([ADR 0003](docs/decisions/0003-hosted-service.md), [#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). Multi-process / authenticated bind is later.
 
 **v4:** pluggable compute backend only if in-process hops/aggregates still miss after the remaining projection work.
 

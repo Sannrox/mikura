@@ -102,10 +102,7 @@ fn append_all(store: &mut Store, records: Vec<ObjectRecord>) {
 
 #[test]
 fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
-    let dir = std::env::temp_dir().join("mikura-v1-lib-test");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("objects.mikura");
+    let (dir, log) = temp_log("v1-lib");
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, fixture());
 
@@ -163,7 +160,6 @@ fn persist_reopen_hop_count_and_sum_match_live_evaluate() {
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
-    assert_eq!(reopened.hot_payloads(), 0);
     let from_maps = oss.evaluate(&reopened, &fixture_request()).unwrap();
     assert_eq!(from_maps.two_hop_count, live.two_hop_count);
     assert_eq!(from_maps.sum_amount, live.sum_amount);
@@ -315,7 +311,6 @@ fn single_record_append_is_durable_across_reopen() {
     drop(store);
     let reopened = Store::open(&log).unwrap();
     assert!(reopened.joins().is_visible("Customer", "c1"));
-    assert_eq!(reopened.hot_payloads(), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -373,7 +368,6 @@ fn batch_commit_writes_delta_not_full_sidecar() {
     );
     drop(store);
     let reopened = Store::open(&log).unwrap();
-    assert_eq!(reopened.hot_payloads(), 0);
     let oss = ObjectSet::new(LocalCompute);
     let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
     assert_eq!(response.two_hop_count, 1);

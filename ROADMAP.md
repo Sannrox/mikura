@@ -45,7 +45,7 @@ Depend on mikura by git tag or crates.io. Do not vendor this tree.
 
 - No Spark, search engine, or warehouse as the object store of record.
 - No merging this git repository into another product.
-- No vendoring `crates/mikura` into another product.
+- No vendoring this crate into another product.
 - A miss is a note, not an engine pick.
 - Do not claim a projection is durable until it has a restart path and a
   dual-read against the log.

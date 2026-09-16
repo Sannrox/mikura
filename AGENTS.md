@@ -2,7 +2,7 @@
 
 mikura is a Rust 2021 crate for an object database: ingest, object log,
 object-set evaluate, property ACLs, Action writeback. v1 is an in-process
-library. Hosted service is later.
+library plus a loopback host. Multi-process / authenticated hosting is later.
 
 **Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.** How the
 code works: [docs/architecture.md](docs/architecture.md). Human contributor
@@ -19,7 +19,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
 | `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
-| `src/store.rs` | Identity, projection install, append/commit |
+| `src/store/` | Identity, sidecar persist/load, append/commit |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
 | `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`, plus `mikura-host` binary |
 | `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |
@@ -70,7 +70,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 
 | Skill | Use in mikura |
 | --- | --- |
-| `verify-change` | After implementation. Gates: fmt-check, `cargo test --locked`, clippy `-D warnings`, `cargo run --example quickstart` when examples or the public API changed. |
+| `verify-change` | After implementation. Gates: fmt-check, `cargo test --locked`, clippy `-D warnings`, `cargo run -p mikura-ingest --example quickstart` when examples or the public API changed. |
 | `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
 | `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |

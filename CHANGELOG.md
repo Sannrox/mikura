@@ -33,6 +33,8 @@ window.
 
 ### Changed
 
+- `Store` persist/load lives in `src/store/sidecar.rs`. Public APIs other than
+  the removed helper below are unchanged.
 - `JoinMaps::intern` builds one owned string on a miss and shares it with
   the intern table. Batch and stream ingest reserve intern capacity from
   the incoming record set.
@@ -58,6 +60,7 @@ window.
 
 ### Removed
 
+- `Store::hot_payloads` (always zero after ADR 0004; payloads are never hydrated).
 - `Store::visible_of_kind` and `Store::replace_kind` (unused public helpers).
 - `StreamIngest::flush_into` (alias of `flush`).
 - Unused `serde_json` dependency on the `mikura` crate (`serde` stays for
