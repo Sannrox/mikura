@@ -82,7 +82,7 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Keep the change one coherent outcome.
 - Use a short imperative subject (`feat: persist join maps in Store`).
 - Describe behavior, tests run, and any log-format or API impact.
-- Do not commit `target/`, `*.mikura`, `*.mikura.joins`, SQLite files, or secrets.
+- Do not commit `target/`, `*.mikura`, `*.mikura.joins`, `*.joins.delta`, `*.joins.tmp`, SQLite files, or secrets.
 - Do not put hostnames, home paths, or other private environment details in
   public pull request or issue text.
 

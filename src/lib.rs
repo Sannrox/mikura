@@ -2,7 +2,8 @@
 //!
 //! The object log is the store of record. [`Store`] rebuilds identity from
 //! that log and keeps join maps as a checksummed sidecar (rebuilt from the
-//! log if absent or stale). Batch and stream ingest live in `mikura-ingest`.
+//! log if absent or stale). Batch, changelog, merge, and stream ingest live
+//! in `mikura-ingest`.
 //! [`LocalCompute`] answers hop / count / sum from those maps.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.

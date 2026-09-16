@@ -49,6 +49,12 @@ insufficient. Do not pick Spark from the envelope miss.
 Follow-up implementation: [#18](https://github.com/Sannrox/mikura/issues/18),
 blocked on #15. This ADR is the recommendation; it does not add a server.
 
+## Implementation
+
+#15 and #18 landed. `mikura-host` is a loopback process. Wire ops are
+`ingest_batch`, `ingest_stream_push`, `ingest_stream_flush`, and `evaluate`
+(the `IngestStream` sketch split into push and flush).
+
 ## Alternatives considered
 
 | Option | Why not now |
