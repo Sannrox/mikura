@@ -44,5 +44,6 @@ files or copy them into issues.
 ## Safe defaults
 
 - Keep development logs under a temp directory or gitignored `data/`.
-- Do not expose a mikura process on a non-loopback address until hosted gRPC
-  and on-the-wire ACL exist ([ROADMAP.md](ROADMAP.md)).
+- Do not expose a mikura process on a non-loopback address until a
+  clerk-owned bearer is configured ([ADR 0007](docs/decisions/0007-host-bearer.md)).
+  Loopback remains the safe default.

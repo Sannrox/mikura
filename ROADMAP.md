@@ -31,10 +31,11 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v6 provenance ADR | Optional clerk-assigned Action id on the object log ([#46](https://github.com/Sannrox/mikura/issues/46), [ADR 0006](docs/decisions/0006-action-provenance.md)). |
 | v6 action id | `ObjectRecord.action_id` on the log and `MKJOIN03` sidecar ([#64](https://github.com/Sannrox/mikura/issues/64)) |
 | v6 load ACL | `Store::load` omits denied properties; evaluate deny stays fail-closed ([#47](https://github.com/Sannrox/mikura/issues/47)) |
+| v7 auth ADR | Clerk-owned bearer required for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48), [ADR 0007](docs/decisions/0007-host-bearer.md)) |
 
 ## Next (this repository, in order)
 
-1. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.
+1. Require that bearer on non-loopback `Host::bind` (follow-up from [ADR 0007](docs/decisions/0007-host-bearer.md)).
 2. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
 
 ## After Next (this repository)

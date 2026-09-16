@@ -175,16 +175,17 @@ The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `evaluate`. Evaluate accepts an
 optional exact-match `filter`. The request ACL deny list fails closed. `Host::bind` accepts loopback only; a non-loopback
-address is refused. No tenants, policy compile, receipts, or principals.
+address is refused until a clerk-owned bearer is implemented
+([ADR 0007](decisions/0007-host-bearer.md)). No tenants, policy compile,
+receipts, or principals.
 
 ## What v1 does not do
 
-- Multi-process replication or non-loopback bind (loopback host exists)
+- Multi-process replication or authenticated non-loopback bind (loopback
+  host exists; [ADR 0007](decisions/0007-host-bearer.md) is the bind rule)
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
-- Track which Action produced a generation — implemented: optional
-  `action_id` on the log ([ADR 0006](decisions/0006-action-provenance.md))
-- Enforce ACLs per principal or on individual properties of a loaded object
+- Principals, tenants, or policy compile in this crate
 - Compact or checkpoint the log
 
 Those gaps are intentional at this stage, not undocumented bugs. See
