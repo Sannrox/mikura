@@ -62,8 +62,81 @@ fn temp_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 #[test]
 fn non_loopback_bind_is_refused() {
     let addr: SocketAddr = "8.8.8.8:9".parse().unwrap();
-    let err = Host::bind(addr).unwrap_err();
+    let err = Host::bind(addr, None).unwrap_err();
     assert!(err.contains("non-loopback"), "{err}");
+    let empty = Host::bind(addr, Some("")).unwrap_err();
+    assert!(empty.contains("non-loopback"), "{empty}");
+}
+
+#[test]
+fn non_loopback_bind_with_bearer_listens() {
+    let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();
+    assert!(listener.local_addr().is_ok());
+}
+
+#[test]
+fn bearer_line_rejects_missing_or_wrong_token() {
+    let (dir, log) = temp_log("bearer-line");
+    let mut host = Host::open(&log, 4).unwrap();
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    host.require_bearer("secret").unwrap();
+    let denied = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "Customer",
+                "hops": [
+                    {"far_kind": "Order", "join_property": "customer_id"},
+                    {"far_kind": "Shipment", "join_property": "order_id"}
+                ],
+                "sum_kind": "Shipment",
+                "sum_property": "amount"
+            }
+        })
+        .to_string(),
+    );
+    assert!(!denied.ok);
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("bearer"),
+        "{denied:?}"
+    );
+    assert!(denied.evaluate.is_none());
+    let wrong = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "token": "nope",
+            "request": {
+                "root_kind": "Customer",
+                "hops": [
+                    {"far_kind": "Order", "join_property": "customer_id"},
+                    {"far_kind": "Shipment", "join_property": "order_id"}
+                ],
+                "sum_kind": "Shipment",
+                "sum_property": "amount"
+            }
+        })
+        .to_string(),
+    );
+    assert!(!wrong.ok);
+    let ok = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "token": "secret",
+            "request": {
+                "root_kind": "Customer",
+                "hops": [
+                    {"far_kind": "Order", "join_property": "customer_id"},
+                    {"far_kind": "Shipment", "join_property": "order_id"}
+                ],
+                "sum_kind": "Shipment",
+                "sum_property": "amount"
+            }
+        })
+        .to_string(),
+    );
+    assert!(ok.ok, "{ok:?}");
+    assert_eq!(ok.evaluate.unwrap().sum_amount, 10);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -159,7 +232,7 @@ fn evaluate_acl_fails_closed() {
 #[test]
 fn loopback_tcp_roundtrip() {
     let (dir, log) = temp_log("tcp");
-    let listener = Host::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = std::thread::spawn(move || {
         let mut host = Host::open(&log, 4).unwrap();

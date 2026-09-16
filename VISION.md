@@ -76,10 +76,11 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 Apply the request deny list when loading properties ([#47](https://github.com/Sannrox/mikura/issues/47)).
 Principal and policy stay in the clerk.
 
-**v7 (ADR done):** non-loopback bind only with a clerk-owned bearer
-([ADR 0007](docs/decisions/0007-host-bearer.md), [#48](https://github.com/Sannrox/mikura/issues/48)).
+**v7 (done):** non-loopback bind only with a clerk-owned bearer
+([ADR 0007](docs/decisions/0007-host-bearer.md), [#48](https://github.com/Sannrox/mikura/issues/48),
+[#69](https://github.com/Sannrox/mikura/issues/69)).
 Tokens are equality-checked process secrets, not principals. Still one
-process, one `Store`. Implementation of the bind is a follow-up Issue.
+process, one `Store`.
 
 **v8:** object-set completeness: incoming hops ([#50](https://github.com/Sannrox/mikura/issues/50)); aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51)); load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 

@@ -1,9 +1,9 @@
-//! Single-process loopback host over [`mikura::Store`].
+//! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `Evaluate`). Non-loopback bind is refused until an
-//! authentication story exists. This crate does not know tenants, policy,
-//! receipts, or principals.
+//! `IngestStreamFlush`, `Evaluate`). Loopback bind is unauthenticated.
+//! Non-loopback bind requires a clerk-owned bearer (ADR 0007).
+//! This crate does not know tenants, policy, receipts, or principals.
 
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
@@ -72,6 +72,7 @@ pub struct EvaluateWire {
 pub struct Host {
     store: Store,
     stream: StreamIngest,
+    bearer: Option<String>,
 }
 
 impl Host {
@@ -84,13 +85,29 @@ impl Host {
         Ok(Self {
             store,
             stream: StreamIngest::new(stream_bound)?,
+            bearer: None,
         })
     }
 
-    /// Bind a TCP listener. Non-loopback addresses are refused.
-    pub fn bind(addr: SocketAddr) -> Result<TcpListener, String> {
+    /// Require a matching token on every JSON-line RPC.
+    pub fn require_bearer(&mut self, bearer: impl Into<String>) -> Result<(), String> {
+        let bearer = bearer.into();
+        if bearer.is_empty() {
+            return Err("clerk bearer must be non-empty".into());
+        }
+        self.bearer = Some(bearer);
+        Ok(())
+    }
+
+    /// Bind a TCP listener. Non-loopback addresses need a non-empty bearer.
+    pub fn bind(addr: SocketAddr, bearer: Option<&str>) -> Result<TcpListener, String> {
         if !addr.ip().is_loopback() {
-            return Err("non-loopback bind refused until auth exists".into());
+            match bearer {
+                Some(secret) if !secret.is_empty() => {}
+                _ => {
+                    return Err("non-loopback bind refused without a clerk bearer".into());
+                }
+            }
         }
         TcpListener::bind(addr).map_err(|err| err.to_string())
     }
@@ -128,7 +145,21 @@ impl Host {
     }
 
     pub fn handle_line(&mut self, line: &str) -> HostResponse {
-        match serde_json::from_str::<HostRequest>(line) {
+        let mut value: serde_json::Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(error) => return fail(error.to_string()),
+        };
+        let token = value
+            .get("token")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        if let Some(object) = value.as_object_mut() {
+            object.remove("token");
+        }
+        if let Err(error) = self.check_token(token.as_deref()) {
+            return fail(error);
+        }
+        match serde_json::from_value::<HostRequest>(value) {
             Ok(request) => self.handle(request),
             Err(error) => fail(error.to_string()),
         }
@@ -170,6 +201,31 @@ fn fail(error: impl ToString) -> HostResponse {
         ok: false,
         error: Some(error.to_string()),
         evaluate: None,
+    }
+}
+
+fn tokens_equal(expected: &str, presented: &str) -> bool {
+    let expected = expected.as_bytes();
+    let presented = presented.as_bytes();
+    if expected.len() != presented.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (left, right) in expected.iter().zip(presented.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
+impl Host {
+    fn check_token(&self, presented: Option<&str>) -> Result<(), String> {
+        let Some(expected) = self.bearer.as_deref() else {
+            return Ok(());
+        };
+        match presented {
+            Some(got) if tokens_equal(expected, got) => Ok(()),
+            _ => Err("bearer required".into()),
+        }
     }
 }
 

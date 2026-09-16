@@ -174,15 +174,14 @@ Source ingest may omit `action_id`. Hop/sum indexes ignore the id.
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `evaluate`. Evaluate accepts an
-optional exact-match `filter`. The request ACL deny list fails closed. `Host::bind` accepts loopback only; a non-loopback
-address is refused until a clerk-owned bearer is implemented
-([ADR 0007](decisions/0007-host-bearer.md)). No tenants, policy compile,
-receipts, or principals.
+optional exact-match `filter`. The request ACL deny list fails closed.
+Loopback bind is unauthenticated. Non-loopback bind requires `--bearer` and
+a matching `token` on every line ([ADR 0007](decisions/0007-host-bearer.md)).
+No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do
 
-- Multi-process replication or authenticated non-loopback bind (loopback
-  host exists; [ADR 0007](decisions/0007-host-bearer.md) is the bind rule)
+- Multi-process replication
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Principals, tenants, or policy compile in this crate

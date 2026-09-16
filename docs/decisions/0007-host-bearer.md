@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -41,7 +41,7 @@ does not compile policy from the token. Records do not store a principal.
 TLS, OAuth, JWKS, and cookies are out of this crate. An operator who needs
 transport encryption puts a proxy in front. Do not add tenants.
 
-This ADR does not change `Host::bind`. Implementation is a follow-up Issue.
+This ADR does not change `Host::bind`. Implementation: [#69](https://github.com/Sannrox/mikura/issues/69).
 
 ## Alternatives considered
 

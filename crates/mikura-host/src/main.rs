@@ -1,4 +1,4 @@
-//! Loopback ingest/evaluate process. Non-loopback bind is refused.
+//! Loopback ingest/evaluate process. Non-loopback bind needs a clerk bearer.
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -11,6 +11,7 @@ struct Args {
     log: PathBuf,
     bind: SocketAddr,
     stream_bound: usize,
+    bearer: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -25,7 +26,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
-    let listener = Host::bind(args.bind)?;
+    let listener = Host::bind(args.bind, args.bearer.as_deref())?;
     let bound = listener
         .local_addr()
         .map_err(|err| format!("listener address: {err}"))?;
@@ -34,6 +35,9 @@ fn run() -> Result<(), String> {
         .flush()
         .map_err(|err| format!("flush listen address: {err}"))?;
     let mut host = Host::open(&args.log, args.stream_bound)?;
+    if !args.bind.ip().is_loopback() {
+        host.require_bearer(args.bearer.as_deref().unwrap_or(""))?;
+    }
     host.serve(listener)
 }
 
@@ -43,6 +47,7 @@ fn parse_args() -> Result<Args, String> {
         .parse()
         .expect("default loopback bind is valid");
     let mut stream_bound = 8;
+    let mut bearer = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -61,9 +66,13 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|err| format!("invalid --stream-bound {value}: {err}"))?;
             }
+            "--bearer" => {
+                bearer = Some(required_value("--bearer", args.next())?);
+            }
             "--help" | "-h" => {
                 return Err(
-                    "usage: mikura-host --log PATH [--bind ADDR] [--stream-bound N]".into(),
+                    "usage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--bearer TOKEN]"
+                        .into(),
                 );
             }
             other => return Err(format!("unknown argument: {other}")),
@@ -74,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
         log,
         bind,
         stream_bound,
+        bearer,
     })
 }
 

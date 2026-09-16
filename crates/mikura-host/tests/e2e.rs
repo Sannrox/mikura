@@ -46,15 +46,24 @@ struct HostProcess {
 
 impl HostProcess {
     fn spawn(log: &Path, bind: &str, stream_bound: usize) -> Self {
+        Self::spawn_with(log, bind, stream_bound, None)
+    }
+
+    fn spawn_with(log: &Path, bind: &str, stream_bound: usize, bearer: Option<&str>) -> Self {
+        let mut args = vec![
+            "--log".to_string(),
+            log.to_str().expect("utf-8 log path").to_string(),
+            "--bind".to_string(),
+            bind.to_string(),
+            "--stream-bound".to_string(),
+            stream_bound.to_string(),
+        ];
+        if let Some(token) = bearer {
+            args.push("--bearer".into());
+            args.push(token.into());
+        }
         let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
-            .args([
-                "--log",
-                log.to_str().expect("utf-8 log path"),
-                "--bind",
-                bind,
-                "--stream-bound",
-                &stream_bound.to_string(),
-            ])
+            .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -80,7 +89,11 @@ impl HostProcess {
     }
 
     fn rpc(&self, body: &serde_json::Value) -> HostResponse {
-        let mut client = TcpStream::connect(self.addr).expect("connect host");
+        let mut addr = self.addr;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        let mut client = TcpStream::connect(addr).expect("connect host");
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -311,4 +324,56 @@ fn process_refuses_non_loopback_bind() {
         stderr.contains("non-loopback"),
         "expected refuse, got {stderr}"
     );
+}
+
+#[test]
+fn process_non_loopback_bearer_accepts_matching_token() {
+    let tmp = TempLog::new("bearer");
+    let host = HostProcess::spawn_with(tmp.path(), "0.0.0.0:0", 8, Some("secret"));
+    let denied = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(!denied.ok);
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("bearer"),
+        "{denied:?}"
+    );
+    assert!(denied.evaluate.is_none());
+    let wrong = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "token": "nope",
+        "records": fixture(),
+    }));
+    assert!(!wrong.ok);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "token": "secret",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let hosted = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "token": "secret",
+        "request": {
+            "root_kind": "Customer",
+            "hops": [
+                {"far_kind": "Order", "join_property": "customer_id"},
+                {"far_kind": "Shipment", "join_property": "order_id"}
+            ],
+            "sum_kind": "Shipment",
+            "sum_property": "amount"
+        }
+    }));
+    assert!(hosted.ok, "{hosted:?}");
+    let evaluate = hosted.evaluate.expect("evaluate payload");
+    assert_eq!(evaluate.two_hop_count, 1);
+    assert_eq!(evaluate.sum_amount, 10);
+    drop(host);
+    let store = Store::open(tmp.path()).unwrap();
+    let live = store
+        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(!live.props.contains_key("token"));
+    assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
 }
