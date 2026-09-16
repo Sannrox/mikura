@@ -499,3 +499,64 @@ fn exact_match_filter_restricts_roots() {
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), us_resp);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn hop_fan_out_sums_every_leaf_path() {
+    let (dir, log) = temp_log("hop-fan-out");
+    let mut store = Store::create(&log).unwrap();
+    append_all(
+        &mut store,
+        vec![
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec(
+                "Shipment",
+                "s1",
+                false,
+                &[("order_id", "o1"), ("amount", "10")],
+            ),
+            rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o1"), ("amount", "7")],
+            ),
+        ],
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let response = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 17);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn hop_diamond_counts_distinct_roots_once() {
+    let (dir, log) = temp_log("hop-diamond");
+    let mut store = Store::create(&log).unwrap();
+    append_all(
+        &mut store,
+        vec![
+            rec("Customer", "c1", false, &[("region", "us")]),
+            rec("Order", "o1", false, &[("customer_id", "c1")]),
+            rec("Order", "o2", false, &[("customer_id", "c1")]),
+            rec(
+                "Shipment",
+                "s1",
+                false,
+                &[("order_id", "o1"), ("amount", "10")],
+            ),
+            rec(
+                "Shipment",
+                "s2",
+                false,
+                &[("order_id", "o2"), ("amount", "3")],
+            ),
+        ],
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let response = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 13);
+    let _ = std::fs::remove_dir_all(&dir);
+}

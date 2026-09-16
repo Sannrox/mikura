@@ -14,7 +14,7 @@ meaning; say it is undefined.
 | **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN02`). Interned property pairs plus slim identity; hop/sum indexes omit hidden rows. Dirty commits may add `{log}.joins.delta` (`MKJOIN2D`). Checksummed; deletable; rebuilt from the log. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md). |
 | **Load** | `Store::load(kind, key)` returns the live `ObjectRecord`. Missing identity fails closed. Hidden records are returned and stay out of join maps. |
 | **Object-set** | A request to filter / load / hop / aggregate objects. There is no query language. Evaluate is hop + count/sum plus optional exact-match on visible roots (`EvaluateRequest.filter`). |
-| **Hop** | Join from parent `key` to child `props[join_property]`. |
+| **Hop** | Join from parent `key` to child `props[join_property]`. Evaluate hops a frontier of identities tagged by originating root, then folds the last hop's count/sum without storing every leaf path. |
 | **Envelope** | A published measurement with fixture size, hardware, hold/miss, and the question asked. A miss is not an engine pick. |
 | **Hold / miss** | Envelope result: the target latency or correctness check passed (hold) or failed (miss). |
 | **Fail closed** | On checksum mismatch, missing committed pages, or ACL denial: return an error. Do not guess. |

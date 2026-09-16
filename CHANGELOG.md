@@ -43,8 +43,12 @@ window.
 - `Store::open` fills join indexes from intern ids in the checkpoint; it
   no longer de-interns properties to `HashMap<String, String>` and
   re-interns them.
-- `JoinMaps::count_and_sum` reuses thread-local path buffers and a dense
-  root bitset instead of allocating a `Vec` per hop and a final `HashSet`.
+- `JoinMaps::count_and_sum` hops a `(root, identity)` frontier and folds
+  the last hop's leaf sum in place. Join children are packed identity
+  lists. Count stays distinct surviving roots.
+- Remeasured hop count+sum after the last-hop fold ([#59](https://github.com/Sannrox/mikura/issues/59)):
+  10⁷ query is 878 ms (still a miss vs 500 ms); 10⁶ holds at 33 ms;
+  dual-read holds. Compute stays closed.
 - Remeasured hop count+sum after slim maps ([#31](https://github.com/Sannrox/mikura/issues/31)):
   10⁷ query is 2.6 s (still a miss vs 500 ms); 10⁶ now holds at 86 ms;
   dual-read holds. Next work is in-process projection, not a compute

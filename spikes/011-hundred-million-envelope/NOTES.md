@@ -170,3 +170,43 @@ cluster-backend Design Discussion from a 2× miss.
 
 Follow-up: [#59](https://github.com/Sannrox/mikura/issues/59). Spark stays
 unsupported.
+
+## Addendum (2026-09-16): remasure after set-oriented last-hop fold
+
+Measured after `JoinMaps::count_and_sum` folded the last hop in place and
+packed join children as `Vec` (does not materialize a `(root, leaf)` tuple
+per path). Same harness, fixture, and machine class as the original run:
+Apple M2 Pro, 32 GiB, Darwin arm64 (macOS 26.5.2). `rustc` 1.96.1.
+No hostnames.
+
+```text
+cargo test
+cargo run --release -- --objects 10000
+cargo run --release -- --objects 1000000
+cargo run --release -- --objects 10000000
+```
+
+| | ingest | RSS | log | sidecar | **query** | `Store::open` | replay | two-hop | sum | dual-read |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 10⁴ | 90 ms | 17 MiB | 0.55 MiB | 0.41 MiB | **0 ms** | 5 ms | 21 ms | 99 | 226_861 | hold |
+| 10⁶ | 8.4 s | 1.3 GiB | 57 MiB | 43 MiB | **33 ms** | 731 ms | 3.6 s | 9_900 | 22_686_100 | hold |
+| **10⁷** | 125 s | 5.1 GiB | 593 MiB | 438 MiB | **878 ms** | 11.6 s | 52 s | 99_000 | 226_861_000 | hold |
+
+10⁸ ingest was not re-run (stretch). 10⁷ ingest finished; that is enough
+to publish the query result.
+
+## Verdict: PROJECTION MISS
+
+- **Query** still holds ≤ 500 ms at 10⁶ (33 ms; was 105 ms). At 10⁷ it is
+  **878 ms** — faster than 1012 ms, still ~1.8× the envelope.
+- **`Store::open`** at 10⁷ is 11.6 s (was 15.5 s). Restart is still a load
+  miss versus an interactive budget.
+- **Dual-read holds** at 10⁴, 10⁶, and 10⁷.
+- **RAM** at 10⁷ is 5.1 GiB on 32 GiB. Fit holds.
+
+What this is not: a compute-backend decision, a log-format change, or an
+engine pick. The last hop still hashes each leaf amount. That is remaining
+in-process projection work if another envelope is published. Do not open
+a cluster-backend Design Discussion from a 1.8× miss.
+
+Spark stays unsupported.
