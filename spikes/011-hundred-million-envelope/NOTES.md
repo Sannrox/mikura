@@ -85,3 +85,46 @@ cargo run --release -- --objects 10000000
 ```
 
 Until that run, the published 10⁷ query result remains a **miss**.
+
+## Addendum (2026-09-16): remasure after slim maps
+
+Measured commit `62cb9d42ec6f08665fa792982c8a3998a28d418e` (slim maps as
+shipped; #29 / #28 / #27 not landed). Same harness, fixture, and machine
+class as the original run: Apple M2 Pro, 32 GiB, Darwin arm64 (macOS
+26.5.2). `rustc` 1.96.1. No hostnames.
+
+```text
+cargo test
+cargo run --release -- --objects 10000
+cargo run --release -- --objects 1000000
+cargo run --release -- --objects 10000000
+```
+
+| | ingest | RSS | log | sidecar | **query** | `Store::open` | replay | two-hop | sum | dual-read |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 10⁴ | 88 ms | 14 MiB | 0.55 MiB | 0.41 MiB | **0 ms** | 13 ms | 21 ms | 99 | 226_861 | hold |
+| 10⁶ | 9.5 s | 817 MiB | 57 MiB | 43 MiB | **86 ms** | 1.7 s | 3.2 s | 9_900 | 22_686_100 | hold |
+| **10⁷** | 145 s | 3.3 GiB | 593 MiB | 436 MiB | **2.6 s** | 40 s | 69 s | 99_000 | 226_861_000 | hold |
+
+10⁸ ingest was not re-run (stretch). 10⁷ ingest finished; that is enough
+to publish the query result.
+
+## Verdict: PROJECTION MISS
+
+- **Query** now holds ≤ 500 ms at 10⁶ (86 ms; was 725 ms). At 10⁷ it is
+  2.6 s — about 4× faster than 10.1 s, still ~5× the envelope.
+- **`Store::open`** at 10⁷ is 40 s (was 38 s). Restart is still a load
+  miss.
+- **Dual-read holds** at 10⁴, 10⁶, and 10⁷.
+- **RAM** at 10⁷ is 3.3 GiB on 32 GiB (was 4.5 GiB). Fit holds.
+
+What this is not: a compute-backend decision, a log-format change, or an
+engine pick. In-process still has projection work that can move the
+query and open numbers (#29 hop scratch/bitset, #28 intern-id checkpoint
+load, #27 intern alloc). Do not open a cluster-backend Design Discussion
+from this miss.
+
+Follow-up: [#29](https://github.com/Sannrox/mikura/issues/29) first (the
+2.6 s query walks), then [#28](https://github.com/Sannrox/mikura/issues/28)
+(`Store::open`), then [#27](https://github.com/Sannrox/mikura/issues/27).
+Remeasure 10⁷ after those land. Spark stays unsupported.

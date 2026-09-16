@@ -18,7 +18,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 | [008-hop-projection](008-hop-projection/NOTES.md) | Live hop index; 10⁷ two-hop **0 ms hold**; scan oracle 4.0 s; dual-read hold | VALIDATED |
 | [009-persist-hop](009-persist-hop/NOTES.md) | Hop sidecar load **7 ms** at 10⁷ vs 8 s JSONL rebuild / 23 s Live replay | VALIDATED |
 | [010-persist-joins](010-persist-joins/NOTES.md) | Join maps + amounts; 10⁷ load **1.0 s** vs 13 s replay; count+sum dual-read hold | VALIDATED |
-| [011-hundred-million-envelope](011-hundred-million-envelope/NOTES.md) | Product join maps at 10⁷ query **10.1 s miss** vs 500 ms; dual-read hold; 10⁸ ingest did not finish | MISS |
+| [011-hundred-million-envelope](011-hundred-million-envelope/NOTES.md) | Product join maps at 10⁷ query **10.1 s miss**; after slim maps **2.6 s miss** vs 500 ms (10⁶ now **86 ms hold**); dual-read hold; 10⁸ ingest not re-run | MISS |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.

@@ -23,11 +23,12 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 ingest changelog | Snapshot changelog into upserts and hides in `mikura-ingest` ([#11](https://github.com/Sannrox/mikura/issues/11)) |
 | v2 slim joins | Interned `MKJOIN02` sidecar; restart without hot payloads; dirty-set delta ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)) |
 | v3 loopback host | Single-process ingest/evaluate on loopback ([#18](https://github.com/Sannrox/mikura/issues/18), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
+| v2 slim remasure | After `MKJOIN02`, 10⁷ query **2.6 s miss** vs 500 ms; 10⁶ now **86 ms hold**; dual-read holds ([#31](https://github.com/Sannrox/mikura/issues/31), spike 011 addendum) |
 
 ## Next (this repository, in order)
 
-1. Compute backend only if in-process hops/aggregates still miss after the
-   slimmer projection.
+1. More in-process projection work: hop scratch/bitset ([#29](https://github.com/Sannrox/mikura/issues/29)), intern-id checkpoint load ([#28](https://github.com/Sannrox/mikura/issues/28)), intern alloc ([#27](https://github.com/Sannrox/mikura/issues/27)). Then remasure 10⁷.
+2. Compute backend only if hops/aggregates still miss after that projection work.
 
 ## Later (not this repository)
 
