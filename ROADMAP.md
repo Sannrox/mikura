@@ -24,12 +24,13 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v2 slim joins | Interned `MKJOIN02` sidecar; restart without hot payloads; dirty-set delta ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)) |
 | v3 loopback host | Single-process ingest/evaluate on loopback ([#18](https://github.com/Sannrox/mikura/issues/18), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 | v2 slim remasure | After `MKJOIN02`, 10⁷ query **2.6 s miss** vs 500 ms; 10⁶ now **86 ms hold**; dual-read holds ([#31](https://github.com/Sannrox/mikura/issues/31), spike 011 addendum) |
+| v2 projection remasure | After #29/#28/#27, 10⁷ query **1012 ms miss** vs 500 ms; 10⁶ **105 ms hold**; `Store::open` 15.5 s; dual-read holds ([#43](https://github.com/Sannrox/mikura/issues/43), spike 011 addendum) |
 
 ## Next (this repository, in order)
 
-1. Remasure hop count+sum at 10⁷ after the landed projection fixes ([#43](https://github.com/Sannrox/mikura/issues/43)). Hold ≤ 500 ms + dual-read → no compute backend this cycle.
-2. Load the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44)).
-3. Exact-match filter on evaluate ([#45](https://github.com/Sannrox/mikura/issues/45)).
+1. Load the current object after restart ([#44](https://github.com/Sannrox/mikura/issues/44)).
+2. Exact-match filter on evaluate ([#45](https://github.com/Sannrox/mikura/issues/45)).
+3. Hop count and sum without materializing every path ([#59](https://github.com/Sannrox/mikura/issues/59)), then remasure 10⁷. Compute stays closed until that remasure. Does not block load or filter.
 4. Action provenance ADR ([#46](https://github.com/Sannrox/mikura/issues/46)); then one implementation Issue if the ADR says so.
 5. Apply the request deny list when loading ([#47](https://github.com/Sannrox/mikura/issues/47)).
 6. Auth story for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48)); then one implementation Issue if the ADR says so.

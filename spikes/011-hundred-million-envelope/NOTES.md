@@ -128,3 +128,45 @@ Follow-up: [#29](https://github.com/Sannrox/mikura/issues/29) first (the
 2.6 s query walks), then [#28](https://github.com/Sannrox/mikura/issues/28)
 (`Store::open`), then [#27](https://github.com/Sannrox/mikura/issues/27).
 Remeasure 10⁷ after those land. Spark stays unsupported.
+
+## Addendum (2026-09-16): remasure after projection fixes
+
+Measured commit `a327221288010bc49111dd5db3c6d0e104c119af` after #29 /
+#28 / #27 landed. Same harness, fixture, and machine class as the original
+run: Apple M2 Pro, 32 GiB, Darwin arm64 (macOS 26.5.2). `rustc` 1.96.1.
+No hostnames.
+
+```text
+cargo test
+cargo run --release -- --objects 10000
+cargo run --release -- --objects 1000000
+cargo run --release -- --objects 10000000
+```
+
+| | ingest | RSS | log | sidecar | **query** | `Store::open` | replay | two-hop | sum | dual-read |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 10⁴ | 83 ms | 16 MiB | 0.55 MiB | 0.41 MiB | **0 ms** | 4 ms | 23 ms | 99 | 226_861 | hold |
+| 10⁶ | 9.9 s | 1.3 GiB | 57 MiB | 43 MiB | **105 ms** | 1.1 s | 4.3 s | 9_900 | 22_686_100 | hold |
+| **10⁷** | 147 s | 3.8 GiB | 593 MiB | 436 MiB | **1012 ms** | 15.5 s | 73 s | 99_000 | 226_861_000 | hold |
+
+10⁸ ingest was not re-run (stretch). 10⁷ ingest finished; that is enough
+to publish the query result.
+
+## Verdict: PROJECTION MISS
+
+- **Query** still holds ≤ 500 ms at 10⁶ (105 ms). At 10⁷ it is **1012 ms**
+  — about 2.6× faster than 2.6 s, still ~2× the envelope.
+- **`Store::open`** at 10⁷ is 15.5 s (was 40 s). Intern-id checkpoint load
+  moved restart; it is still a load miss versus an interactive budget.
+- **Dual-read holds** at 10⁴, 10⁶, and 10⁷.
+- **RAM** at 10⁷ is 3.8 GiB on 32 GiB. Fit holds.
+
+What this is not: a compute-backend decision, a log-format change, or an
+engine pick. The walk still materializes every surviving `(root, child)`
+path. An object-set hop is a set of identities: start from visible roots,
+hop to the linked set, and fold the leaf aggregate without storing every
+path. That is remaining in-process projection work. Do not open a
+cluster-backend Design Discussion from a 2× miss.
+
+Follow-up: [#59](https://github.com/Sannrox/mikura/issues/59). Spark stays
+unsupported.
