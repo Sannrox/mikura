@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-15
 - Owners: mikura maintainers
-- Related: [#5](https://github.com/Sannrox/mikura/issues/5), [#3](https://github.com/Sannrox/mikura/issues/3), [#4](https://github.com/Sannrox/mikura/issues/4), [#15](https://github.com/Sannrox/mikura/issues/15), [#18](https://github.com/Sannrox/mikura/issues/18)
+- Related: [#5](https://github.com/Sannrox/mikura/issues/5), [#3](https://github.com/Sannrox/mikura/issues/3), [#4](https://github.com/Sannrox/mikura/issues/4), [#15](https://github.com/Sannrox/mikura/issues/15), [#18](https://github.com/Sannrox/mikura/issues/18), [#48](https://github.com/Sannrox/mikura/issues/48), [ADR 0007](0007-host-bearer.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -37,8 +37,8 @@ Options considered:
 - In-process: log, join maps, `LocalCompute`, identity. No clerk: no
   tenants, policy compile, receipts, or principals in this crate.
 - **Bind: loopback only** until an authentication story exists. Non-loopback
-  bind is out of scope here; a later ADR may add bearer tokens owned by a
-  control plane. Do not ship an unauthenticated public bind.
+  bind is out of scope here; [ADR 0007](0007-host-bearer.md) records the
+  clerk-owned bearer rule. Do not ship an unauthenticated public bind.
 - Log format `MIKURAV1` stays the store of record. Projections remain
   deletable and rebuildable.
 

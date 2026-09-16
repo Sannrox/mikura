@@ -35,6 +35,9 @@ window.
   may omit it. Sidecar magic is `MKJOIN03` / `MKJOIN3D`.
 - `Store::load(kind, key, acl)` omits denied properties. Evaluate of a denied
   aggregate still returns `AclError::Denied`.
+- [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
+  clerk-owned bearer checked for equality. Loopback stays unauthenticated.
+  Not implemented on `Host::bind` yet.
 
 ### Changed
 

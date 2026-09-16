@@ -76,7 +76,10 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 Apply the request deny list when loading properties ([#47](https://github.com/Sannrox/mikura/issues/47)).
 Principal and policy stay in the clerk.
 
-**v7:** non-loopback bind only after an auth ADR ([#48](https://github.com/Sannrox/mikura/issues/48)). Bearer tokens owned by the control plane. Still one process, one `Store`.
+**v7 (ADR done):** non-loopback bind only with a clerk-owned bearer
+([ADR 0007](docs/decisions/0007-host-bearer.md), [#48](https://github.com/Sannrox/mikura/issues/48)).
+Tokens are equality-checked process secrets, not principals. Still one
+process, one `Store`. Implementation of the bind is a follow-up Issue.
 
 **v8:** object-set completeness: incoming hops ([#50](https://github.com/Sannrox/mikura/issues/50)); aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51)); load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
@@ -105,7 +108,7 @@ plane that may later depend on a tagged mikura crate. That cutover lives in
 | | Control plane | mikura |
 | --- | --- | --- |
 | Job | Who, policy, receipts | Object instances |
-| Form | Its own service | Library plus loopback host; public bind later |
+| Form | Its own service | Library plus loopback host; non-loopback only with a clerk bearer |
 | Authority | Admission and audit | Object log + generations |
 | Query | Its public RPCs | Object-set evaluate over mikura projections |
 | Storage | Its clerk database | This paged log |
