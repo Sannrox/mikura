@@ -18,7 +18,8 @@ tracked. Do not treat that directory as gitignored.
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
-| `src/store.rs` | Identity, generic join sidecar, rebuild from log |
+| `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
+| `src/store.rs` | Identity, projection install, append/commit |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
 | `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`. Depends on `mikura` and `mikura-ingest` |
 | `src/objectset.rs` | Evaluate request/response |
@@ -28,6 +29,8 @@ tracked. Do not treat that directory as gitignored.
 | `crates/mikura-ingest/examples/` | Runnable examples (`quickstart`) |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs |
+| `scripts/` | `gh-verified-push.sh` for GitHub-signed PR tips |
+| `.github/` | CI, issue templates, pull request template |
 | `.agents/skills/` | Copied from sekai-chisei; apply as below |
 
 Runtime object logs belong under gitignored `data/` or a temp dir.
@@ -145,7 +148,8 @@ immediately after the correction.
 
 **Never**
 
-- Commit secrets, object logs (`*.mikura`), SQLite files, or `target/`.
+- Commit secrets, object logs (`*.mikura`), join sidecars (`*.mikura.joins`,
+  `*.joins.delta`, `*.joins.tmp`), SQLite files, or `target/`.
 - Vendor mikura into another product or depend on a control plane from this
   crate.
 - Use SQL as mikura's store of record.

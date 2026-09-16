@@ -1,16 +1,14 @@
-use crc32fast::Hasher as Crc;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::actions::Action;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
+use crate::joins::{
+    read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta, JOIN_DELTA_MAGIC,
+    JOIN_MAGIC,
+};
 use crate::log::{read_records, LogWriter, SyncPolicy};
-
-const JOIN_MAGIC: &[u8; 8] = b"MKJOIN02";
-const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN2D";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {
@@ -19,243 +17,6 @@ pub struct ObjectRecord {
     pub key: String,
     pub hidden: bool,
     pub props: HashMap<String, String>,
-}
-
-#[derive(Clone, Debug)]
-struct LiveMeta {
-    gen: u64,
-    hidden: bool,
-}
-
-/// Rebuildable hop/join projection. Hidden records are absent.
-/// Strings are interned once; hop/sum walks `u32` ids. Sidecar stores interned
-/// join keys and sum columns, not a second full-string object map.
-#[derive(Clone, Debug, Default)]
-pub struct JoinMaps {
-    intern: Vec<String>,
-    intern_ix: HashMap<String, u32>,
-    by_kind: HashMap<u32, HashSet<u32>>,
-    by_prop: HashMap<(u32, u32), HashMap<u32, HashSet<u32>>>,
-    amounts: HashMap<(u32, u32), HashMap<u32, i64>>,
-    owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
-}
-
-impl JoinMaps {
-    pub fn is_visible(&self, kind: &str, key: &str) -> bool {
-        let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
-        else {
-            return false;
-        };
-        self.by_kind
-            .get(&kind_id)
-            .is_some_and(|keys| keys.contains(&key_id))
-    }
-
-    pub fn prop(&self, kind: &str, key: &str, property: &str) -> Option<&str> {
-        let kind_id = *self.intern_ix.get(kind)?;
-        let key_id = *self.intern_ix.get(key)?;
-        let prop_id = *self.intern_ix.get(property)?;
-        let owned = self.owned.get(&(kind_id, key_id))?;
-        for (pid, value_id) in owned {
-            if *pid == prop_id {
-                return self.intern.get(*value_id as usize).map(String::as_str);
-            }
-        }
-        None
-    }
-
-    /// Distinct root keys in surviving hop paths, and the sum of `sum_property`
-    /// on leaves whose kind is `sum_kind`.
-    pub fn count_and_sum(
-        &self,
-        root_kind: &str,
-        hops: &[(&str, &str)],
-        sum_kind: &str,
-        sum_property: &str,
-    ) -> (usize, i64) {
-        let Some(&root_kind_id) = self.intern_ix.get(root_kind) else {
-            return (0, 0);
-        };
-        let Some(roots) = self.by_kind.get(&root_kind_id) else {
-            return (0, 0);
-        };
-        let mut paths: Vec<(u32, u32)> = roots.iter().map(|&key| (key, key)).collect();
-        for (far_kind, join_property) in hops {
-            let mut next = Vec::new();
-            if let (Some(&far_id), Some(&prop_id)) = (
-                self.intern_ix.get(*far_kind),
-                self.intern_ix.get(*join_property),
-            ) {
-                if let Some(index) = self.by_prop.get(&(far_id, prop_id)) {
-                    for (root, parent) in &paths {
-                        if let Some(children) = index.get(parent) {
-                            for child in children {
-                                next.push((*root, *child));
-                            }
-                        }
-                    }
-                }
-            }
-            paths = next;
-        }
-        let leaf_kind = hops.last().map(|(kind, _)| *kind).unwrap_or(root_kind);
-        let mut reachable = HashSet::new();
-        let mut total = 0i64;
-        let amounts = match (
-            self.intern_ix.get(sum_kind),
-            self.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => self.amounts.get(&(kind_id, prop_id)),
-            _ => None,
-        };
-        for (root, leaf) in &paths {
-            reachable.insert(*root);
-            if leaf_kind == sum_kind {
-                if let Some(amount) = amounts.and_then(|map| map.get(leaf)) {
-                    total += *amount;
-                }
-            }
-        }
-        (reachable.len(), total)
-    }
-
-    fn intern(&mut self, value: &str) -> u32 {
-        if let Some(&id) = self.intern_ix.get(value) {
-            return id;
-        }
-        let id = u32::try_from(self.intern.len()).expect("too many interned strings");
-        self.intern.push(value.to_string());
-        self.intern_ix.insert(value.to_string(), id);
-        id
-    }
-
-    fn intern_existing(&self, value: &str) -> Option<u32> {
-        self.intern_ix.get(value).copied()
-    }
-
-    fn insert_visible(&mut self, kind: &str, key: &str, props: HashMap<String, String>) {
-        self.remove(kind, key);
-        let kind_id = self.intern(kind);
-        let key_id = self.intern(key);
-        self.by_kind.entry(kind_id).or_default().insert(key_id);
-        let mut owned = Vec::with_capacity(props.len());
-        for (prop, value) in &props {
-            let prop_id = self.intern(prop);
-            let value_id = self.intern(value);
-            self.by_prop
-                .entry((kind_id, prop_id))
-                .or_default()
-                .entry(value_id)
-                .or_default()
-                .insert(key_id);
-            if let Ok(amount) = value.parse::<i64>() {
-                self.amounts
-                    .entry((kind_id, prop_id))
-                    .or_default()
-                    .insert(key_id, amount);
-            }
-            owned.push((prop_id, value_id));
-        }
-        self.owned.insert((kind_id, key_id), owned);
-    }
-
-    fn index(&mut self, record: &ObjectRecord) {
-        if record.hidden {
-            return;
-        }
-        self.insert_visible(&record.kind, &record.key, record.props.clone());
-    }
-
-    fn remove(&mut self, kind: &str, key: &str) {
-        let Some(kind_id) = self.intern_existing(kind) else {
-            return;
-        };
-        let Some(key_id) = self.intern_existing(key) else {
-            return;
-        };
-        let Some(owned) = self.owned.remove(&(kind_id, key_id)) else {
-            return;
-        };
-        if let Some(keys) = self.by_kind.get_mut(&kind_id) {
-            keys.remove(&key_id);
-            if keys.is_empty() {
-                self.by_kind.remove(&kind_id);
-            }
-        }
-        for (prop_id, value_id) in owned {
-            if let Some(by_val) = self.by_prop.get_mut(&(kind_id, prop_id)) {
-                if let Some(keys) = by_val.get_mut(&value_id) {
-                    keys.remove(&key_id);
-                    if keys.is_empty() {
-                        by_val.remove(&value_id);
-                    }
-                }
-                if by_val.is_empty() {
-                    self.by_prop.remove(&(kind_id, prop_id));
-                }
-            }
-            if let Some(amounts) = self.amounts.get_mut(&(kind_id, prop_id)) {
-                amounts.remove(&key_id);
-                if amounts.is_empty() {
-                    self.amounts.remove(&(kind_id, prop_id));
-                }
-            }
-        }
-    }
-
-    fn row_props(&self, kind: &str, key: &str) -> HashMap<String, String> {
-        let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
-        else {
-            return HashMap::new();
-        };
-        let Some(owned) = self.owned.get(&(kind_id, key_id)) else {
-            return HashMap::new();
-        };
-        let mut props = HashMap::new();
-        for (prop_id, value_id) in owned {
-            if let (Some(prop), Some(value)) = (
-                self.intern.get(*prop_id as usize),
-                self.intern.get(*value_id as usize),
-            ) {
-                props.insert(prop.clone(), value.clone());
-            }
-        }
-        props
-    }
-}
-
-fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    let mut hasher = Crc::new();
-    hasher.update(body);
-    let crc = hasher.finalize();
-    let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
-    file.write_all(body).map_err(|e| e.to_string())?;
-    file.write_all(&crc.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    file.sync_data().map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
-}
-
-fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    if bytes.len() < 12 {
-        return Err("join sidecar too short".into());
-    }
-    let (body, crc_bytes) = bytes.split_at(bytes.len() - 4);
-    let expected = u32::from_le_bytes(crc_bytes.try_into().unwrap());
-    let mut hasher = Crc::new();
-    hasher.update(body);
-    if hasher.finalize() != expected {
-        return Err("join checksum mismatch".into());
-    }
-    Ok(body.to_vec())
-}
-
-struct Checkpoint {
-    pages: u32,
-    joins: JoinMaps,
-    identity: HashMap<(String, String), LiveMeta>,
 }
 
 pub struct Store {
@@ -335,7 +96,12 @@ impl Store {
                 hidden: record.hidden,
             },
         );
-        self.joins.index(&record);
+        self.joins.index(
+            &record.kind,
+            &record.key,
+            record.hidden,
+            record.props.clone(),
+        );
         self.dirty.insert(id);
     }
 
@@ -611,7 +377,12 @@ impl Store {
                     hidden: record.hidden,
                 },
             );
-            self.joins.index(&record);
+            self.joins.index(
+                &record.kind,
+                &record.key,
+                record.hidden,
+                record.props.clone(),
+            );
         }
         Ok(())
     }

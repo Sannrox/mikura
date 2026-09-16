@@ -70,6 +70,7 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
 ## Store
 
+`src/joins.rs` holds interned `JoinMaps` and sidecar checksum helpers.
 `src/store.rs` keeps:
 
 - slim identity `(kind, key) → (gen, hidden)` — enough to bump generation

@@ -25,6 +25,9 @@ window.
 
 ### Changed
 
+- Split interned join maps into `src/joins.rs` and ingest merge/changelog/stream
+  into `crates/mikura-ingest/src/{merge,changelog,stream}.rs`. Public APIs
+  unchanged.
 - `BatchIngest` and `StreamIngest` moved to the `mikura-ingest` workspace crate.
   `mikura` is log/store/evaluate only. Callers use `mikura_ingest::BatchIngest`.
   Log format (`MIKURAV1`) is unchanged.
