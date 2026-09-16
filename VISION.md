@@ -63,7 +63,7 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v2:** persist join maps in `Store` (done, [#1](https://github.com/Sannrox/mikura/issues/1)); 10⁸ envelope **miss** on query (spike 011, [#3](https://github.com/Sannrox/mikura/issues/3)); dual-read holds at 10⁷. Next projection work is [#15](https://github.com/Sannrox/mikura/issues/15), not a new engine.
 
-**v3:** streaming ingest under load (done, [#4](https://github.com/Sannrox/mikura/issues/4)); hosted service shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); implement on the wire after [#15](https://github.com/Sannrox/mikura/issues/15) ([#18](https://github.com/Sannrox/mikura/issues/18)).
+**v3:** bounded `StreamIngest` landed ([#4](https://github.com/Sannrox/mikura/issues/4)); load envelope still open (spike 011 ingest at 10⁸ did not finish); hosted service shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); implement on the wire after [#15](https://github.com/Sannrox/mikura/issues/15) ([#18](https://github.com/Sannrox/mikura/issues/18)).
 
 **v4:** pluggable compute backend if in-process hops/aggregates miss.
 

@@ -17,6 +17,7 @@ tracked. Do not treat that directory as gitignored.
 | --- | --- |
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
+| `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
 | `src/store.rs` | Identity, generic join sidecar, rebuild from log |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
 | `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`. Depends on `mikura` and `mikura-ingest` |
@@ -45,8 +46,8 @@ cargo run -p mikura-ingest --example quickstart
 `spikes/<nnn>-*/`; run them only when measuring, from that directory, and
 write results in `NOTES.md`.
 
-There is no local server, no `.env`, and no control-plane configuration in
-this repo.
+Loopback host is `mikura-host`. There is no `.env` and no control-plane
+configuration in this repo.
 
 ## Independence
 
@@ -58,9 +59,9 @@ this repo.
 
 ## Skills
 
-Copied from sekai-chisei. Procedure is the same; substitute mikura paths,
-VISION/ROADMAP/architecture, and this file. Ignore gateway, proto, provider,
-and dual-SQL rows: they do not exist here.
+Copied from sekai-chisei, then adapted. `verify-change` and
+`assess-change-impact` use mikura paths and gates. Other skills keep the
+same procedure; substitute VISION/ROADMAP/architecture and this file.
 
 | Skill | Use in mikura |
 | --- | --- |

@@ -47,9 +47,9 @@ Persist join maps next to the log as `{log}.joins`.
 ## Consequences
 
 Restart can answer the same hop count and sum the live store answered, from
-the sidecar. Dual-read (delete sidecar, reopen) must still match. Operators
-can delete `{log}.joins` to force a rebuild. A bit-flip fails open until the
-sidecar is removed.
+the sidecar. Dual-read (delete sidecar, reopen) must still match. A bit-flip,
+truncation, or bad magic fails closed (`Store::open` returns an error).
+Operators delete `{log}.joins` to recover by rebuilding from the log.
 
 ## Validation
 

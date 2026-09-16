@@ -22,7 +22,7 @@ and for contributing to the kernel. Not a production hosted store.
 | Object-set hop / count / sum from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Cluster compute |
 | Property deny-list (fail closed) | |
 
-Spikes 001–010 are throwaway evidence under [`spikes/`](spikes/README.md).
+Spikes 001–011 are throwaway evidence under [`spikes/`](spikes/README.md).
 
 ## Quickstart
 

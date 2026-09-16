@@ -173,10 +173,6 @@ impl StreamIngest {
         self.uncommitted = 0;
         Ok(())
     }
-
-    pub fn flush_into(&mut self, store: &mut Store) -> Result<(), String> {
-        self.flush(store)
-    }
 }
 
 #[cfg(test)]
@@ -300,7 +296,7 @@ mod tests {
         let oss = ObjectSet::new(LocalCompute);
         let live = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(live.sum_amount, 17);
-        stream.flush_into(&mut store).unwrap();
+        stream.flush(&mut store).unwrap();
         let streamed = oss.evaluate(&store, &fixture_request()).unwrap();
         assert_eq!(streamed.sum_amount, 17);
         let _ = std::fs::remove_dir_all(&dir);

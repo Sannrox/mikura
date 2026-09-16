@@ -1,8 +1,9 @@
-//! In-process object database: ingest → object log → object-set evaluate.
+//! In-process object database: object log, store, object-set evaluate.
 //!
-//! The log is the store of record ([`Store`]). Join maps persist as a
-//! checksummed sidecar and rebuild from the log if absent. [`LocalCompute`]
-//! answers hop / count / sum from those maps.
+//! The object log is the store of record. [`Store`] rebuilds identity from
+//! that log and keeps join maps as a checksummed sidecar (rebuilt from the
+//! log if absent or stale). Batch and stream ingest live in `mikura-ingest`.
+//! [`LocalCompute`] answers hop / count / sum from those maps.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.
 //!
@@ -10,6 +11,7 @@
 
 mod acl;
 mod actions;
+mod codec;
 mod compute;
 mod log;
 mod objectset;
