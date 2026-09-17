@@ -6,10 +6,10 @@ use crate::BatchIngest;
 /// Diff two source snapshots into records to append.
 ///
 /// Identity is `(kind, key)`. Within each snapshot the last record for an
-/// identity wins. New keys emit the current row; changed `props` or `hidden`
-/// emit the current row; keys that disappear emit a hide of the last visible
-/// payload. Identical snapshots emit nothing. The list is not authority;
-/// only the object log after append is.
+/// identity wins. New keys emit the current row; changed `props`, `hidden`,
+/// or `action_id` emit the current row; keys that disappear emit a hide of
+/// the last visible payload. Identical snapshots emit nothing. The list is
+/// not authority; only the object log after append is.
 pub fn snapshot_changelog(
     previous: Vec<ObjectRecord>,
     current: Vec<ObjectRecord>,

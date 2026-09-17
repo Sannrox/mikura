@@ -1,16 +1,17 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `Evaluate`, `Load`). Loopback bind is unauthenticated.
+//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is unauthenticated.
 //! Non-loopback bind requires a clerk-owned bearer (ADR 0007).
 //! This crate does not know tenants, policy, receipts, or principals.
 
+use std::collections::HashMap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 
 use mikura::{
-    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute, ObjectRecord,
-    ObjectSet, PropertyAcl, Store,
+    Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
+    ObjectRecord, ObjectSet, PropertyAcl, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,13 @@ pub enum HostRequest {
         record: ObjectRecord,
     },
     IngestStreamFlush,
+    ApplyAction {
+        id: String,
+        kind: String,
+        key: String,
+        #[serde(default)]
+        props: HashMap<String, String>,
+    },
     Evaluate {
         request: WireEvaluate,
     },
@@ -143,6 +151,20 @@ impl Host {
                 }
             }
             HostRequest::IngestStreamFlush => match self.stream.flush(&mut self.store) {
+                Ok(()) => ok(),
+                Err(error) => fail(error),
+            },
+            HostRequest::ApplyAction {
+                id,
+                kind,
+                key,
+                props,
+            } => match self.store.apply_action(Action {
+                id,
+                kind,
+                key,
+                props,
+            }) {
                 Ok(()) => ok(),
                 Err(error) => fail(error),
             },

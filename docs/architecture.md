@@ -117,7 +117,7 @@ that merged list through `BatchIngest`. The merge list is not authority; rebuild
 reads only the committed log.
 
 `mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
-changed `props`/`hidden` emit the current row; keys that disappear emit a hide
+changed `props`/`hidden`/`action_id` emit the current row; keys that disappear emit a hide
 of the last visible payload. Identical snapshots emit nothing.
 `ChangelogIngest::run` appends only that diff. Changelog output is valid source
 input to `MergeIngest`. The list is not authority.
@@ -175,15 +175,17 @@ this crate applies the request deny list.
 `Store::apply_action` requires a non-empty clerk-assigned `Action.id` and
 appends an `ObjectRecord` with `hidden: false`, `gen` assigned by `append`,
 and that id. It is writeback of object bytes, not admission or attestation.
-Source ingest may omit `action_id`. Hop/sum indexes ignore the id.
-[ADR 0006](decisions/0006-action-provenance.md).
+Source ingest may omit `action_id`; an empty string fails closed. Hop/sum
+indexes ignore the id. [ADR 0006](decisions/0006-action-provenance.md).
+Host JSON exposes the same writeback as `apply_action`. Ingest stays the
+source-snapshot path and does not become governed writeback.
 
 ## Hosted service
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `evaluate`, `load`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `evaluate`, `load`. Evaluate accepts an
 optional exact-match `filter`. `load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. The request ACL deny
 list fails closed on evaluate.

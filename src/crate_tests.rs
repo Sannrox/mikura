@@ -777,6 +777,10 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
         })
         .unwrap_err();
     assert!(missing.contains("action id"), "{missing}");
+    let mut empty_field = rec("Shipment", "s3", false, &[("order_id", "o1")]);
+    empty_field.action_id = Some(String::new());
+    let empty = store.append(empty_field).unwrap_err();
+    assert!(empty.contains("empty action id"), "{empty}");
 
     let hidden_action = rec("Customer", "c0", true, &[("region", "eu")]);
     let mut hidden_action = hidden_action;

@@ -25,7 +25,7 @@ meaning; say it is undefined.
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |
 | **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate merges by identity and appends. |
 | **Edit overlay** | One-cycle merge of source records and admitted edits by `(kind, key)`. Edits replace source, including `hidden`. Only the log after append is authority. |
-| **Snapshot changelog** | Diff of two source snapshots by `(kind, key)` into upserts and hides. Empty diff appends nothing. Output is source input to merge. |
+| **Snapshot changelog** | Diff of two source snapshots by `(kind, key)` into upserts and hides. A changed Action id is a payload change. Empty diff appends nothing. Output is source input to merge. |
 | **Stream bound** | Max outstanding uncommitted records on `StreamIngest`. Excess `push` fails closed. |
-| **mikura-host** | Single-process host. JSON RPCs over `Store` (`ingest_batch`, stream push/flush, `evaluate`, `load`). Loopback bind is unauthenticated. Non-loopback bind requires a clerk-owned bearer on every RPC ([ADR 0007](decisions/0007-host-bearer.md)). |
+| **mikura-host** | Single-process host. JSON RPCs over `Store` (`ingest_batch`, stream push/flush, `apply_action`, `evaluate`, `load`). Loopback bind is unauthenticated. Non-loopback bind requires a clerk-owned bearer on every RPC ([ADR 0007](decisions/0007-host-bearer.md)). |
 | **Spike** | Throwaway harness under `spikes/`. A spike may use JSONL or SQLite as a *vehicle*. That vehicle is not mikura’s store of record. |

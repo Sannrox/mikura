@@ -14,5 +14,5 @@ pub(crate) fn fold_snapshot(records: Vec<ObjectRecord>) -> HashMap<(String, Stri
 }
 
 pub(crate) fn source_payload_eq(left: &ObjectRecord, right: &ObjectRecord) -> bool {
-    left.hidden == right.hidden && left.props == right.props
+    left.hidden == right.hidden && left.action_id == right.action_id && left.props == right.props
 }
