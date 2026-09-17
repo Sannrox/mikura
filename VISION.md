@@ -85,8 +85,9 @@ process, one `Store`.
 
 **v8 (incoming hop done):** hop either from parent key to pointing children or
 follow a join property to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)).
-Aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51));
-load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
+Count+sum stays the evaluate aggregate; extra aggregates wait for a named
+consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51)).
+Load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
 **v9:** log compact/checkpoint decision ([#53](https://github.com/Sannrox/mikura/issues/53)); envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend only after a published in-process miss.
 
@@ -102,7 +103,8 @@ property ACL; Action writeback; rebuildable projections; envelopes.
 **Out until an ADR:** control-plane policy, budgets, or LLM routing; ontology
 CLI databases; cloning a vendor API; using Spark, search, or a warehouse as
 the object store of record; merging this git repository into another product;
-vendoring mikura as a nested crate copy.
+vendoring mikura as a nested crate copy; group-by or extra aggregates until a
+consumer names one with a fixture.
 
 ## First consumer (optional)
 

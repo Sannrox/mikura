@@ -150,6 +150,12 @@ uncommitted tail; rebuild reads only committed pages.
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
 a filter is present, on `(root_kind, filter.property)`.
 
+`Aggregate` is only `CountAndSum`. Numeric columns already live in the
+interned `amounts` map (values that parse as `i64`). Min/max could walk that
+map without a sidecar layout change; they stay out until a consumer names
+one with a fixture. Group-by would be a new evaluate response (buckets, not
+two scalars) and stays out with query languages.
+
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 
 ## ACL

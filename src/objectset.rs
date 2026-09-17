@@ -4,6 +4,7 @@ use crate::store::Store;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Aggregate {
+    /// Distinct reachable roots plus sum of a numeric leaf property.
     CountAndSum,
 }
 

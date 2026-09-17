@@ -42,6 +42,11 @@ window.
 
 ### Changed
 
+- Aggregates stay count+sum ([#51](https://github.com/Sannrox/mikura/issues/51)).
+  No consumer in this repository named another aggregate. Min/max would fit
+  the existing numeric map; group-by would be a new evaluate shape. Neither
+  ships until a fixture exists. Not a query language.
+
 - Remeasured hop count+sum after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)):
   10⁷ query is 1298 ms (still a miss vs 500 ms); 10⁸ ingest did not
   finish (29 M records in 10.7 h, no OOM). Dual-read holds at 10⁷.
