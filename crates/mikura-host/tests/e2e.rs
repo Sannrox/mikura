@@ -171,10 +171,12 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                     Hop {
                         far_kind: "Order".into(),
                         join_property: "customer_id".into(),
+                        incoming: false,
                     },
                     Hop {
                         far_kind: "Shipment".into(),
                         join_property: "order_id".into(),
+                        incoming: false,
                     },
                 ],
                 sum_kind: "Shipment".into(),

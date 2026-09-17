@@ -28,9 +28,10 @@ cannot be rebuilt from the log.
 Today the crate answers (1), (2), (3), a slice of (4), and (5) for a small
 in-process graph: slim identity and generic join maps persist as a sidecar.
 `Store::load` returns the current object after restart, including the optional
-Action id, and omits properties on the request deny list. Evaluate is hop +
-count/sum plus optional exact-match on root properties. The deny list is
-not a principal; policy stays in the clerk.
+Action id, and omits properties on the request deny list. Evaluate hops
+either from a parent key to pointing children or by following a join
+property, then count/sum, plus optional exact-match on root properties.
+The deny list is not a principal; policy stays in the clerk.
 
 ## Where data is saved
 
@@ -82,7 +83,10 @@ Principal and policy stay in the clerk.
 Tokens are equality-checked process secrets, not principals. Still one
 process, one `Store`.
 
-**v8:** object-set completeness: incoming hops ([#50](https://github.com/Sannrox/mikura/issues/50)); aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51)); load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
+**v8 (incoming hop done):** hop either from parent key to pointing children or
+follow a join property to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)).
+Aggregates beyond count/sum ([#51](https://github.com/Sannrox/mikura/issues/51));
+load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
 **v9:** log compact/checkpoint decision ([#53](https://github.com/Sannrox/mikura/issues/53)); envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend only after a published in-process miss.
 

@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 pub struct WireHop {
     pub far_kind: String,
     pub join_property: String,
+    #[serde(default)]
+    pub incoming: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -243,6 +245,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             .map(|hop| Hop {
                 far_kind: hop.far_kind,
                 join_property: hop.join_property,
+                incoming: hop.incoming,
             })
             .collect(),
         sum_kind: request.sum_kind,

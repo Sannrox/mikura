@@ -6,8 +6,8 @@
 //! primary key from that projection, including the optional Action id, and
 //! omits properties on the request deny list. Batch, changelog, merge, and
 //! stream ingest live in `mikura-ingest`.
-//! [`LocalCompute`] answers hop / count / sum from those maps, with an
-//! optional exact-match on root properties.
+//! [`LocalCompute`] answers hop / count / sum from those maps, in either
+//! join direction, with an optional exact-match on root properties.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.
 //!

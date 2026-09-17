@@ -11,6 +11,9 @@ pub enum Aggregate {
 pub struct Hop {
     pub far_kind: String,
     pub join_property: String,
+    /// When true, follow `props[join_property]` on the frontier to `far_kind`.
+    /// When false, find `far_kind` rows whose `join_property` equals the frontier key.
+    pub incoming: bool,
 }
 
 /// Exact equality on a root property. No phrase, prefix, or query language.

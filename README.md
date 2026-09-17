@@ -60,8 +60,8 @@ let response = ObjectSet::new(LocalCompute).evaluate(
     &EvaluateRequest {
         root_kind: "Customer".into(),
         hops: vec![
-            Hop { far_kind: "Order".into(), join_property: "customer_id".into() },
-            Hop { far_kind: "Shipment".into(), join_property: "order_id".into() },
+            Hop { far_kind: "Order".into(), join_property: "customer_id".into(), incoming: false },
+            Hop { far_kind: "Shipment".into(), join_property: "order_id".into(), incoming: false },
         ],
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
@@ -74,6 +74,8 @@ let response = ObjectSet::new(LocalCompute).evaluate(
 Hidden objects are excluded from evaluate. A denied aggregate property
 returns `AclError::Denied` rather than a guessed value. `Store::load`
 takes the same deny list and omits those keys from the returned object.
+Default hops find `far_kind` rows that point at the frontier key;
+`Hop.incoming` follows `props[join_property]` to `far_kind`.
 
 ## Layout
 

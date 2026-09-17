@@ -3,10 +3,16 @@ use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse};
 use crate::store::Store;
 
 fn evaluate_local(store: &Store, request: &EvaluateRequest) -> EvaluateResponse {
-    let hops: Vec<(&str, &str)> = request
+    let hops: Vec<(&str, &str, bool)> = request
         .hops
         .iter()
-        .map(|hop| (hop.far_kind.as_str(), hop.join_property.as_str()))
+        .map(|hop| {
+            (
+                hop.far_kind.as_str(),
+                hop.join_property.as_str(),
+                hop.incoming,
+            )
+        })
         .collect();
     let (two_hop_count, sum_amount) = match &request.filter {
         None => store.joins().count_and_sum(
