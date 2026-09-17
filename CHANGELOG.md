@@ -44,6 +44,10 @@ window.
 
 ### Fixed
 
+- Live identity and the join checkpoint keep Action ids as intern `u32`
+  until `Store::load`. The object log still stores the clerk string so
+  dual-read can rebuild after the sidecar is deleted
+  ([#75](https://github.com/Sannrox/mikura/issues/75)).
 - Exact-match evaluate filter looks up `by_prop` instead of scanning
   every root's owned pairs
   ([#73](https://github.com/Sannrox/mikura/issues/73)).

@@ -803,6 +803,27 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
         .load("Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(live.action_id.as_deref(), Some("act-s2"));
+    for i in 0..8 {
+        store
+            .apply_action(Action {
+                id: format!("act-s2-{i}"),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .action_id
+            .as_deref(),
+        Some("act-s2-7")
+    );
     assert_eq!(
         store
             .load("Customer", "c1", &PropertyAcl::allow_all())
@@ -846,7 +867,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
             .unwrap()
             .action_id
             .as_deref(),
-        Some("act-s2")
+        Some("act-s2-7")
     );
     assert_eq!(
         reopened
@@ -870,7 +891,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
             .unwrap()
             .action_id
             .as_deref(),
-        Some("act-s2")
+        Some("act-s2-7")
     );
     assert_eq!(
         replayed

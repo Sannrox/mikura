@@ -88,6 +88,9 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 It does not keep a hot payload map. `Store::load(kind, key, acl)` reconstructs
 the live `ObjectRecord` from slim identity plus interned property pairs
 already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
+Live identity stores the optional Action id as an intern `u32` and
+resolves the string on load. The object log still writes the
+length-prefixed id so a deleted sidecar can rebuild from the log.
 The request deny list is resolved once to intern ids; load materializes
 only allowed owned pairs. An empty deny skips that walk. Denied
 properties are omitted from the returned map. Hidden rows stay out

@@ -251,7 +251,7 @@ pub(crate) const ACTION_NONE: u32 = u32::MAX;
 pub(crate) struct LiveMeta {
     pub(crate) gen: u64,
     pub(crate) hidden: bool,
-    pub(crate) action_id: Option<String>,
+    pub(crate) action_id: Option<u32>,
 }
 
 /// Rebuildable hop/join projection. Hidden records are absent.
@@ -373,6 +373,10 @@ impl JoinMaps {
 
     pub(crate) fn intern_existing(&self, value: &str) -> Option<u32> {
         self.intern_ix.get(value).copied()
+    }
+
+    pub(crate) fn intern_get(&self, id: u32) -> Option<&str> {
+        self.intern.get(id as usize).map(String::as_str)
     }
 
     pub(crate) fn insert_visible_ids(
