@@ -47,6 +47,11 @@ window.
   No consumer in this repository named another aggregate. Min/max would fit
   the existing numeric map; group-by would be a new evaluate shape. Neither
   ships until a fixture exists. Not a query language.
+- No log compact or checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53)).
+  At 10⁷ the log is 613 MiB and `Store::open` is 18.9 s; 10⁸ ingest did not
+  finish. The committed range plus a deletable sidecar stay enough. In-place
+  truncate is rejected. Revisit when an envelope misses on disk or open time
+  because of log growth.
 
 - Remeasured hop count+sum after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)):
   10⁷ query is 1298 ms (still a miss vs 500 ms); 10⁸ ingest did not

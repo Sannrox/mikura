@@ -195,7 +195,8 @@ No tenants, policy compile, receipts, or principals.
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Principals, tenants, or policy compile in this crate
-- Compact or checkpoint the log
+- Compact or checkpoint the log (researched no-action until a later envelope
+  misses on disk or `Store::open` because of log growth; [#53](https://github.com/Sannrox/mikura/issues/53))
 
 Those gaps are intentional at this stage, not undocumented bugs. See
 [ROADMAP.md](../ROADMAP.md).
