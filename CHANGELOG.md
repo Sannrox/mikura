@@ -41,6 +41,10 @@ window.
 
 ### Changed
 
+- Remeasured hop count+sum after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)):
+  10⁷ query is 1298 ms (still a miss vs 500 ms); 10⁸ ingest did not
+  finish (29 M records in 10.7 h, no OOM). Dual-read holds at 10⁷.
+  Compute stays closed.
 - `Store::load` takes `&PropertyAcl`. Denied keys are absent from the returned
   object; remaining values stay the stored ones.
 

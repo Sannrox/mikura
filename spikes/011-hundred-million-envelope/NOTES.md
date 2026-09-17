@@ -210,3 +210,52 @@ in-process projection work if another envelope is published. Do not open
 a cluster-backend Design Discussion from a 1.8× miss.
 
 Spark stays unsupported.
+
+## Addendum (2026-09-17): 10⁸ after load, filter, and Action id
+
+Measured commit `2dc2d385930e3d88e1ab10a1656528e7b0ed30e5` after load
+([#44](https://github.com/Sannrox/mikura/issues/44)), exact-match filter
+([#45](https://github.com/Sannrox/mikura/issues/45)), last-hop fold
+([#59](https://github.com/Sannrox/mikura/issues/59)), Action id
+([#64](https://github.com/Sannrox/mikura/issues/64)), and load ACL
+([#47](https://github.com/Sannrox/mikura/issues/47)). Same harness,
+fixture, and machine class: Apple M2 Pro, 32 GiB, Darwin arm64.
+`rustc` 1.96.1. No hostnames.
+
+Query budget (stated before the run): hop count+sum **≤ 500 ms**. Dual-read
+must hold. Fit in 32 GiB must hold.
+
+```text
+cargo run --release -- --objects 10000000
+cargo run --release -- --objects 100000000
+```
+
+| | ingest | RSS | log | sidecar | **query** | `Store::open` | replay | two-hop | sum | dual-read |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| **10⁷** | 281 s | 2.7 GiB | 613 MiB | 476 MiB | **1298 ms** | 18.9 s | 53 s | 99_000 | 226_861_000 | hold |
+| **10⁸** | did not finish | ~0.5–5 GiB at 29 M | — | — | — | — | — | — | — | — |
+
+10⁸ ingest (`--objects 100000000`) printed 29 million-record chunks over
+10.7 hours. RSS stayed 0.5–5 GiB (no OOM). The process was stopped; finishing
+at that rate would have been more than a day of ingest, then open/query/
+replay. Load and filter do not add a distinct miss: they are not on the
+hop count+sum path. The hop query at 10⁷ is still the published miss.
+
+## Verdict: INGEST AND QUERY MISS
+
+- **Query** still holds ≤ 500 ms at 10⁶ (prior addendum 33 ms). At 10⁷ it is
+  **1298 ms** vs 500 ms (still a miss; prior fold was 878 ms on the same
+  machine class).
+- **10⁸ ingest** did not complete. The blocker is time, not an observed OOM.
+- **`Store::open`** at 10⁷ is 18.9 s. Restart is still a load miss.
+- **Dual-read holds** at 10⁷.
+- **RAM** at 10⁷ is 2.7 GiB on 32 GiB. Fit holds at 10⁷. 10⁸ did not blow
+  the machine at 29 M objects.
+
+What this is not: a compute-backend decision, a log-format change, or an
+engine pick. Do not open a cluster-backend Design Discussion from an ingest
+that did not finish. Do not start 10⁹ or 10¹⁰ until 10⁸ ingest completes.
+
+Follow-up: no-action on a new engine. Next object-set work is incoming hops
+([#50](https://github.com/Sannrox/mikura/issues/50)), not another envelope.
+Spark stays unsupported.

@@ -33,14 +33,9 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v6 load ACL | `Store::load` omits denied properties; evaluate deny stays fail-closed ([#47](https://github.com/Sannrox/mikura/issues/47)) |
 | v7 auth ADR | Clerk-owned bearer required for non-loopback bind ([#48](https://github.com/Sannrox/mikura/issues/48), [ADR 0007](docs/decisions/0007-host-bearer.md)) |
 | v7 host bearer | `Host::bind` requires `--bearer` off loopback; matching `token` on each RPC ([#69](https://github.com/Sannrox/mikura/issues/69)) |
+| v8 10⁸ remasure | After load/filter, 10⁷ query **1298 ms miss** vs 500 ms; 10⁸ ingest **did not finish** at 29 M / 10.7 h; dual-read holds at 10⁷ ([#49](https://github.com/Sannrox/mikura/issues/49), spike 011 addendum) |
 
 ## Next (this repository, in order)
-
-1. 10⁸ envelope after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)).
-
-## After Next (this repository)
-
-Object-set completeness beyond hop + count/sum:
 
 1. Incoming hops (VISION question 2, enter) ([#50](https://github.com/Sannrox/mikura/issues/50)).
 2. Aggregates beyond count and sum — research, not a query language ([#51](https://github.com/Sannrox/mikura/issues/51)).
@@ -49,7 +44,7 @@ Object-set completeness beyond hop + count/sum:
 Scale and the log:
 
 4. Compact or checkpoint the object log — ADR or no-action ([#53](https://github.com/Sannrox/mikura/issues/53)).
-5. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). A miss is not an engine pick.
+5. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
 
 Hosted form and independence:
 
