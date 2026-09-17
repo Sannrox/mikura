@@ -1,0 +1,214 @@
+# Roadmap proposal: an application-led object database
+
+Status: draft for discussion, 2026-09-17. The selected direction is an
+object database driven by one real application. The application, budgets,
+and detailed semantics remain to be chosen. This proposal does not accept
+a new storage format or supersede an ADR.
+
+## Destination
+
+Make mikura a reliable application database for typed, linked objects:
+ingest source data, query object sets, apply admitted edits, and preserve
+the result through refreshes and recovery. Keep caller identity, policy authoring,
+type-catalog administration, and application building in consumers.
+
+Indexing, durable object state, object-set queries, and admitted edits stay
+separate. That is a boundary, not a required service topology. See
+[VISION.md](../../VISION.md) and [architecture.md](../architecture.md).
+
+The existing authoritative log and rebuildable projections remain the
+foundation. Start with one process and a trusted application backend. Add
+distribution only when a measured capacity or availability requirement
+justifies it.
+
+## Starting point
+
+These are current implementation facts, not a claim that the first
+application is complete.
+
+| Surface | Present implementation | Gap for the first application |
+| --- | --- | --- |
+| Object model | `(kind, key)`, string properties, generation, hidden flag, optional Action id in [Store](../../src/store/mod.rs) | Typed values, null/missing semantics, supplied schema validation, explicit deletion contract |
+| Links | Property-based joins in both directions in [Hop](../../src/objectset.rs) | Named relation definitions, cardinality and dangling-link behavior; explicit edges if the workflow requires them |
+| Queries | Load one object; one exact root filter; hop count/sum in [objectset.rs](../../src/objectset.rs) | Return matching objects, pagination, sorting, composed predicates, typed comparisons |
+| Edits | One-object replacement in `apply_action`; [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Persistent property edits, refresh conflict rules, retry safety, stale-write rejection |
+| Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs) | Explicit trusted-caller boundary and complete enforcement across supported operations |
+| Recovery and scale | CRC log, sidecar rebuild, integration and host-process tests | Restore drills, capacity limits, operational visibility, representative workload budgets |
+
+The [existing roadmap](../../ROADMAP.md) records a 10⁷ query miss and an
+unfinished 10⁸ ingest. The only open GitHub issues inspected on 2026-09-17
+were the blocked [10⁹](https://github.com/Sannrox/mikura/issues/54) and
+[10¹⁰](https://github.com/Sannrox/mikura/issues/55) envelopes. Those are
+long-horizon research, not the next application milestone.
+
+## First application contract
+
+Choose an actual consumer and one complete workflow before fixing the
+feature list. Until then, use this provisional fixture to make the plan
+reviewable: customers, orders, and shipments; list delayed orders; follow
+their shipments; correct a shipment status; refresh the source; reopen the
+store; verify the correction and permitted query results.
+
+This fixture is a proposal, not a claim about the selected application's
+needs. The consumer owns its UI and policy decisions; mikura owns the tested
+storage and query contract.
+
+Record:
+
+- Object/link types, required value types, three representative queries,
+  and one edit workflow.
+- Source refresh/delete behavior, edit precedence, retry behavior, and
+  required read-after-write visibility.
+- Trusted backend and access rules, including which operations need object
+  visibility filtering in addition to property restrictions.
+- Initial and expected object counts, link fanout, property sizes, update
+  rate, concurrent clients, and budgets for p95 reads, edit visibility,
+  ingest, memory, disk, reopen, and restore.
+
+Choose numerical budgets from the consumer's requirements before measuring.
+Calendar estimates wait for this scope and contributor capacity.
+
+## Delivery sequence
+
+Each milestone produces a usable increment and public-API integration plus
+host-process blackbox evidence. A milestone is complete only when its exit
+checks pass.
+
+| Milestone | Deliverable | Exit check |
+| --- | --- | --- |
+| M0 — application contract | Named consumer, fixture, expected answers, budgets, and a thin client exercising the existing host | Baseline report separates supported behavior from each missing capability; no invented performance claim |
+| M1 — typed objects and links | Minimal required scalar types; explicit null/absent rules; supplied schema descriptors; relation direction/cardinality; deletion visibility | Invalid values fail deterministically; objects and required links survive restart and projection deletion; old-data compatibility follows an accepted ADR |
+| M2 — application queries | Load batches; list matching objects; deterministic sort and bounded cursor pages; composed filters and typed ranges; required traversal; existing count/sum | The application's queries return the fixture's expected objects/results; duplicate and null semantics are explicit; pagination has documented behavior under writes; permission checks apply to every used property/link |
+| M3 — refresh-safe edits | Durable source state plus property edit overlay; explicit create/delete/recreate behavior; conditional writes; idempotent retry; durable ingest progress and visible commit position | Edit → source refresh → retry → crash/reopen → projection rebuild preserves the defined result; stale writes fail; acknowledged writes satisfy the documented durability/visibility contract |
+| M4 — hosted pilot | Supported client/protocol, bounded requests and work queues, deadlines, health/metrics, backup/restore, graceful shutdown, upgrade procedure, trusted-gateway deployment | Real consumer completes its workflow; denied operations fail closed; overload and disconnect tests pass; restore and upgrade drills meet M0 budgets |
+| M5 — expand from evidence | Further query operators, datasources, types and link models, schema migration tools, change subscriptions or exports, and measured capacity improvements | Every addition has a consumer fixture; architecture changes follow a documented capacity or availability need |
+
+M1 feeds M2 and M3. M2 and M3 can be developed independently once their
+shared type, visibility, and commit contracts are settled; both feed M4.
+Operational measurement starts at M0, and access enforcement accompanies
+each new operation. M4 integrates and hardens them rather than introducing
+security at the end.
+
+The first usable product is the M4 pilot for one workflow. M5 capabilities
+are not prerequisites for that pilot.
+
+## Semantics to decide before implementing
+
+### Data and schema
+
+Start with the types the fixture needs, likely strings, booleans, integers,
+and timestamps. Decide decimal representation if money is involved. Keep
+arrays, structured values, geospatial, media, and vectors demand-driven.
+
+The external catalog authors schema definitions; mikura validates supplied
+descriptors and stores enough version/type information to recover its data
+without a live catalog. This is a proposed interface boundary that needs a
+design decision. Typed encoding and any added record metadata require the
+on-disk format ADR and approval specified by [AGENTS.md](../../AGENTS.md).
+
+Do not silently reinterpret old string data. Specify conversion, validation,
+upgrade, and rollback behavior. Define whether hidden records are internal
+tombstones: today's `load` returns them, while evaluate excludes them.
+
+Start with required property-backed links. Add explicit edge records and
+many-to-many editing when the consumer needs them, with a defined identity,
+duplicate, deletion, and dangling-reference contract.
+
+### Source data and edits
+
+Proposed first rule: an edit overrides only the properties it changes;
+unedited properties continue to follow the source. Preserve source state,
+edits, deletions, and any metadata needed to reproduce that merge in the
+authoritative log. A projection must never be the sole copy of edit state.
+
+This addresses a real difference from today's per-cycle whole-record merge.
+Choose and test an explicit contract for edited-property precedence and
+distinct delete versus recreate behavior.
+
+Define patch versus replace, clearing an override versus setting null, source
+deletion versus user deletion, and whether recreation starts a new lifetime.
+Begin with one source per type unless the fixture needs more. Multi-source
+precedence and latest-timestamp resolution can follow later.
+
+Conditional edits should compare an expected generation, with a conflict
+returned on mismatch. An opaque Action id alone is not a retry contract:
+specify idempotency-key scope, retention, response replay, and what happens
+when a key is reused with different content. Retries must work after restart.
+
+Define commit success, reads during uncommitted ingest, log success followed
+by projection-persist failure, and source-offset advancement together. A
+visible commit position can later support waiting for asynchronous indexing;
+do not add an asynchronous service merely to create that requirement.
+
+Single-object atomicity is the initial proposed boundary. If the first
+workflow requires all-or-nothing edits to several objects, transaction
+boundaries become an M3 prerequisite with their own ADR and crash tests.
+Do not infer atomicity from group commit or claim serializable behavior.
+
+### Queries and access
+
+Use a structured query API, consistent with the current no-query-language
+boundary. Specify set versus path multiplicity, null handling, sort ties,
+page stability, and query work limits. Choose snapshot-bound cursors or
+explicitly documented live pagination before promising either behavior.
+
+The trusted backend supplies access restrictions; end users cannot choose
+their own deny list. Enforce restrictions for load, predicates, sort keys,
+traversal, aggregates, edits, and future subscriptions. The current process
+bearer is not an end-user authorization system. Object visibility, if
+required, needs an externally compiled restriction contract and an ADR;
+principals and policy authoring remain outside mikura.
+
+For M4, retain the existing proxy/gateway ownership of transport security
+from [ADR 0007](../decisions/0007-host-bearer.md). Choose a versioned host
+protocol and one consumer client; REST or generated SDKs are options, not
+assumed requirements. gRPC remains ask-first.
+
+## Impact and proof
+
+| Surface | Evidence found | Required change/check | Risk if missed |
+| --- | --- | --- | --- |
+| Log / projection | Log is authority; joins are reconstructible | Recover types, source/edit merge, deduplication and ingest progress with projections removed | Correct live behavior becomes incorrect after recovery |
+| Rust and host API | String values, single-object load, aggregate-shaped evaluate | Version contracts and cover old/new clients; reject incompatible inputs explicitly | Silent conversion or client breakage |
+| Ingest / writeback | Whole-record merge and replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
+| Access boundary | Caller-provided property denies and process bearer | Trusted-gateway contract; integration/e2e tests across every operation | Restricted values affect observable results or edits bypass admission |
+| Hosting | Single process, blocking connection handling | Bounded input/work, timeouts, writer ownership, overload, shutdown and restore drills | One client stalls service or resources grow without bound |
+| Scale | Existing synthetic misses and incomplete large ingest | Representative workload baseline and one targeted bottleneck investigation at a time | Optimizing a workload the application does not need |
+
+Implementation gates remain formatting, workspace tests (including named
+integration and process e2e), clippy, the quickstart when the public API
+changes, and clean autoreview. Recovery tests include corrupt committed
+pages, uncommitted tails, absent/stale projections, and acknowledged edits.
+
+## Smallest initial work items
+
+1. Capture the consumer workflow and budgets; run a baseline with current APIs.
+2. Decide the minimal type/link/delete contract and log compatibility in an ADR.
+3. Implement typed ingest/load and reconstruction through public APIs and host e2e.
+4. Implement bounded object listing, then the fixture's filters and traversal.
+5. Decide durable source/edit merge, retry, concurrency, and commit semantics.
+6. Implement those contracts in separate persistence, ingest, and host increments.
+7. Integrate the consumer and complete the operational pilot checks.
+
+Shape focused GitHub issues after the consumer contract is agreed. No issue
+numbers are reserved by this proposal, and no issues are published by it.
+
+## Deferred work and scale gates
+
+Keep [#54](https://github.com/Sannrox/mikura/issues/54) and
+[#55](https://github.com/Sannrox/mikura/issues/55) blocked until their existing
+prerequisites hold. Measure the application's actual scale first. Diagnose
+the unfinished 10⁸ run before attempting larger envelopes; no run is needed
+to justify the next application milestone.
+
+Defer full text, vector/geospatial search, group-by and extra aggregates,
+multi-source mappings, general schema-edit migration, SDK generation,
+subscriptions, and materialized exports until a consumer justifies them.
+Current ADR and named-fixture gates still apply. Trigger log compaction on
+measured growth/recovery needs; trigger replication or partitioning on
+capacity or availability requirements. Cluster compute remains behind its
+existing evidence gate.
+
+Type-catalog administration, application builders, and policy authoring
+remain in consumers. Object database capabilities can support those products
+without absorbing their responsibilities.

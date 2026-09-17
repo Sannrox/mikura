@@ -3,6 +3,12 @@
 How this crate becomes a hosted object database. Envelopes gate scale and
 compute. This repository stays independent.
 
+The selected next direction is an application-led object database: typed
+objects and links, usable object-set queries, refresh-safe edits, and
+reliable hosting. The [roadmap proposal](docs/plans/application-roadmap.md)
+defines milestones and exit checks. Its detailed contracts remain draft
+until the first consumer workflow is chosen; existing ADRs still apply.
+
 Rationale: [VISION.md](VISION.md). How v1 actually works:
 [docs/architecture.md](docs/architecture.md).
 
@@ -43,9 +49,32 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 
 ## Next (this repository, in order)
 
-Scale and the log:
+Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md):
+
+1. **M0 — application contract:** choose the consumer, fixture, expected
+   answers, access boundary, and workload budgets; measure the current baseline.
+2. **M1 — typed objects and links:** minimal value types, supplied schema
+   validation, link and deletion semantics, and compatible recovery.
+3. **M2 — application queries:** return matching objects with bounded pages,
+   sorting, composed filters, and the workflow's traversal and aggregates.
+4. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
+   writes, retry safety, ingest progress, and a defined commit contract.
+5. **M4 — hosted pilot:** integrate the real consumer, then prove access
+   enforcement, overload behavior, backup/restore, and upgrades against budgets.
+6. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+   features justified by consumer fixtures and measurements.
+
+M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
+tests accompany each feature. These are planning milestones, not releases
+or published Issues. Choose the M0 workflow before treating later work as
+implementation-ready.
+
+Scale and the log remain gated research:
 
 1. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
+
+Measure the application's workload first. Diagnose the unfinished 10⁸ run
+before larger envelopes; they do not block defining and delivering the pilot.
 
 Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture.
 
