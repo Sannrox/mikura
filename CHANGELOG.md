@@ -43,6 +43,10 @@ window.
 
 ### Fixed
 
+- [ADR 0007](docs/decisions/0007-host-bearer.md) Consequences and status
+  text now match landed bind and serve: non-loopback requires a clerk
+  bearer; `serve` / `serve_one` fail closed without `require_bearer`
+  ([#91](https://github.com/Sannrox/mikura/issues/91)).
 - [ADR 0006](docs/decisions/0006-action-provenance.md) Consequences now
   match Decision, architecture, and `old_join_sidecar_magic_fails_closed`:
   `MKJOIN02` sidecars fail closed on open; delete the sidecar to rebuild
