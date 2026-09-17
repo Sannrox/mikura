@@ -191,7 +191,8 @@ No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do
 
-- Multi-process replication
+- Multi-process replication (researched no-action: one process remains enough;
+  [#56](https://github.com/Sannrox/mikura/issues/56))
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Principals, tenants, or policy compile in this crate

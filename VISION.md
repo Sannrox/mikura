@@ -98,7 +98,9 @@ Envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then
 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend
 only after a published in-process miss.
 
-**v10:** multi-process host only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)); git tag for a consumer ([#57](https://github.com/Sannrox/mikura/issues/57)). crates.io stays ask-first.
+**v10 (one process):** one process remains the hosted form
+([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)).
+Git tag for a consumer ([#57](https://github.com/Sannrox/mikura/issues/57)). crates.io stays ask-first.
 
 See [ROADMAP.md](ROADMAP.md) for the ordered work list.
 
