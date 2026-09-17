@@ -37,7 +37,8 @@ window.
   aggregate still returns `AclError::Denied`.
 - [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
   clerk-owned bearer checked for equality. Loopback stays unauthenticated.
-  `Host::bind` takes the optional secret; JSON lines carry `token`.
+- `Hop.incoming` follows `props[join_property]` on the frontier to `far_kind`.
+  Default hop still finds rows that point at the frontier key.
 
 ### Changed
 

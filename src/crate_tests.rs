@@ -22,10 +22,12 @@ fn fixture_request() -> EvaluateRequest {
             Hop {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
+                incoming: false,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
+                incoming: false,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -80,6 +82,7 @@ fn asset_request() -> EvaluateRequest {
         hops: vec![Hop {
             far_kind: "Asset".into(),
             join_property: "owner_id".into(),
+            incoming: false,
         }],
         sum_kind: "Asset".into(),
         sum_property: "mass".into(),
@@ -527,6 +530,77 @@ fn load_omits_denied_properties() {
         after_replay.props.get("order_id").map(String::as_str),
         Some("o1")
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn incoming_hop_follows_join_property() {
+    let (dir, log) = temp_log("incoming-hop");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let oss = ObjectSet::new(LocalCompute);
+    let outgoing = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!(outgoing.two_hop_count, 1);
+    assert_eq!(outgoing.sum_amount, 10);
+    let from_customer = EvaluateRequest {
+        root_kind: "Customer".into(),
+        hops: vec![Hop {
+            far_kind: "Order".into(),
+            join_property: "customer_id".into(),
+            incoming: false,
+        }],
+        sum_kind: "Order".into(),
+        sum_property: "customer_id".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+    };
+    assert_eq!(
+        oss.evaluate(&store, &from_customer).unwrap().two_hop_count,
+        1
+    );
+    let incoming = EvaluateRequest {
+        root_kind: "Order".into(),
+        hops: vec![Hop {
+            far_kind: "Customer".into(),
+            join_property: "customer_id".into(),
+            incoming: true,
+        }],
+        sum_kind: "Customer".into(),
+        sum_property: "region".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+    };
+    let response = oss.evaluate(&store, &incoming).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert!(!store.joins().is_visible("Order", "o0"));
+    assert!(!store.joins().is_visible("Customer", "c0"));
+    let denied = EvaluateRequest {
+        root_kind: "Order".into(),
+        hops: vec![Hop {
+            far_kind: "Customer".into(),
+            join_property: "customer_id".into(),
+            incoming: true,
+        }],
+        sum_kind: "Customer".into(),
+        sum_property: "region".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::deny_property("Customer", "region"),
+        filter: None,
+    };
+    assert!(matches!(
+        oss.evaluate(&store, &denied),
+        Err(ComputeError::Acl(AclError::Denied { .. }))
+    ));
+    drop(store);
+
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(oss.evaluate(&reopened, &incoming).unwrap().two_hop_count, 1);
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let replayed = Store::open(&log).unwrap();
+    assert_eq!(oss.evaluate(&replayed, &incoming).unwrap().two_hop_count, 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -38,10 +38,12 @@ fn eval_req() -> WireEvaluate {
             WireHop {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
+                incoming: false,
             },
             WireHop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
+                incoming: false,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -161,10 +163,12 @@ fn loopback_ingest_evaluate_matches_in_process() {
                     Hop {
                         far_kind: "Order".into(),
                         join_property: "customer_id".into(),
+                        incoming: false,
                     },
                     Hop {
                         far_kind: "Shipment".into(),
                         join_property: "order_id".into(),
+                        incoming: false,
                     },
                 ],
                 sum_kind: "Shipment".into(),

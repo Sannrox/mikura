@@ -84,10 +84,12 @@ fn shipment_request() -> EvaluateRequest {
             Hop {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
+                incoming: false,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
+                incoming: false,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -104,6 +106,7 @@ fn asset_request() -> EvaluateRequest {
         hops: vec![Hop {
             far_kind: "Asset".into(),
             join_property: "owner_id".into(),
+            incoming: false,
         }],
         sum_kind: "Asset".into(),
         sum_property: "mass".into(),
@@ -387,6 +390,38 @@ fn load_current_object_after_restart() {
             .unwrap(),
         hidden
     );
+}
+
+#[test]
+fn incoming_hop_follows_join_property() {
+    let tmp = TempLog::new("incoming");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let outgoing = oss.evaluate(&store, &shipment_request()).unwrap();
+    assert_eq!(outgoing.two_hop_count, 1);
+    let incoming = EvaluateRequest {
+        root_kind: "Order".into(),
+        hops: vec![Hop {
+            far_kind: "Customer".into(),
+            join_property: "customer_id".into(),
+            incoming: true,
+        }],
+        sum_kind: "Customer".into(),
+        sum_property: "region".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+    };
+    let response = oss.evaluate(&store, &incoming).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert!(!store.joins().is_visible("Order", "o0"));
+    drop(store);
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(oss.evaluate(&reopened, &incoming).unwrap().two_hop_count, 1);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(oss.evaluate(&replayed, &incoming).unwrap().two_hop_count, 1);
 }
 
 #[test]

@@ -135,9 +135,11 @@ uncommitted tail; rebuild reads only committed pages.
 1. Start from visible keys of `root_kind`.
 2. If `request.filter` is set, keep only roots whose interned
    `props[property] == value`. Empty match is count 0, sum 0.
-3. For each `Hop` except the last, join `parent.key` to child
-   `join_property` among visible children of `far_kind`, keeping
-   `(root, identity)` only for the current frontier.
+3. For each `Hop` except the last, join either default (`parent.key` to
+   child `join_property` among visible `far_kind` children) or
+   `incoming: true` (follow `props[join_property]` on the frontier to a
+   visible `far_kind` key), keeping `(root, identity)` only for the
+   current frontier.
 4. The last hop folds the linked set in place: it does not store a
    `(root, leaf)` tuple per path.
 5. Count distinct roots that still have a path (`EvaluateResponse.two_hop_count`

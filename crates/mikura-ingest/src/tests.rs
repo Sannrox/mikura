@@ -47,10 +47,12 @@ pub(crate) fn fixture_request() -> EvaluateRequest {
             Hop {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
+                incoming: false,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
+                incoming: false,
             },
         ],
         sum_kind: "Shipment".into(),
