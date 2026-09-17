@@ -456,3 +456,30 @@ fn process_non_loopback_bearer_accepts_matching_token() {
     assert!(!live.props.contains_key("token"));
     assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
 }
+
+#[test]
+fn process_loopback_bearer_enforces_token() {
+    let tmp = TempLog::new("loopback-bearer");
+    let host = HostProcess::spawn_with(tmp.path(), "127.0.0.1:0", 8, Some("secret"));
+    let denied = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(!denied.ok);
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("bearer"),
+        "{denied:?}"
+    );
+    let wrong = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "token": "nope",
+        "records": fixture(),
+    }));
+    assert!(!wrong.ok);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "token": "secret",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+}

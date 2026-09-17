@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#89](https://github.com/Sannrox/mikura/issues/89), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -33,8 +33,10 @@ the configured secret (constant-time equality). Missing, empty, or
 unequal tokens fail closed. The host does not parse claims, mint tokens,
 or look up principals.
 
-Loopback bind stays unauthenticated. A clerk may still terminate TLS and
-forward to loopback; that deployment needs no change.
+Loopback bind stays unauthenticated unless the operator presents a bearer.
+A presented `--bearer` is stored and checked on every RPC, including
+loopback. A clerk that terminates TLS and forwards to loopback without a
+token keeps the default unauthenticated contract.
 
 `PropertyAcl` on the request remains the view the clerk compiled. This crate
 does not compile policy from the token. Records do not store a principal.
@@ -64,8 +66,9 @@ has been called, even when `bind` was given a secret.
   on that listener must present a matching token. Missing, empty, or
   unequal tokens fail closed.
 - `Host::serve` / `serve_one` refuse a routable listener unless
-  `require_bearer` has been called. Loopback bind and e2e stay
-  unauthenticated.
+  `require_bearer` has been called. Loopback bind stays unauthenticated
+  until `--bearer` is set; a presented bearer is enforced on that
+  listener.
 - `Store` and the object log stay free of callers and sessions.
 
 ## Validation
@@ -79,3 +82,6 @@ The implementation Issue must prove:
 4. A matching token does not become a principal on loaded records.
 5. `Host::serve` on a non-loopback listener without `require_bearer` fails
    closed even if `Host::bind` was given a secret.
+6. Loopback bind with `--bearer` rejects missing or wrong tokens and
+   accepts a matching token. Loopback without `--bearer` stays
+   unauthenticated.

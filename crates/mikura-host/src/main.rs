@@ -1,4 +1,5 @@
-//! Loopback ingest/evaluate process. Non-loopback bind needs a clerk bearer.
+//! Loopback ingest/evaluate process. `--bearer` arms the RPC envelope on any
+//! bind; non-loopback bind still requires a clerk bearer.
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -35,8 +36,8 @@ fn run() -> Result<(), String> {
         .flush()
         .map_err(|err| format!("flush listen address: {err}"))?;
     let mut host = Host::open(&args.log, args.stream_bound)?;
-    if !args.bind.ip().is_loopback() {
-        host.require_bearer(args.bearer.as_deref().unwrap_or(""))?;
+    if let Some(secret) = args.bearer.as_deref() {
+        host.require_bearer(secret)?;
     }
     host.serve(listener)
 }
