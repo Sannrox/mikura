@@ -137,8 +137,9 @@ uncommitted tail; rebuild reads only committed pages.
 `LocalCompute` (generic kinds, from `JoinMaps`):
 
 1. Start from visible keys of `root_kind`.
-2. If `request.filter` is set, keep only roots whose interned
-   `props[property] == value`. Empty match is count 0, sum 0.
+2. If `request.filter` is set, look up matching visible roots in
+   `by_prop[(kind, property)][value]`. Empty or uninterned match is
+   count 0, sum 0. The filter does not scan every root's owned pairs.
 3. For each `Hop` except the last, join either default (`parent.key` to
    child `join_property` among visible `far_kind` children) or
    `incoming: true` (follow `props[join_property]` on the frontier to a

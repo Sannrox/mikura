@@ -44,6 +44,9 @@ window.
 
 ### Fixed
 
+- Exact-match evaluate filter looks up `by_prop` instead of scanning
+  every root's owned pairs
+  ([#73](https://github.com/Sannrox/mikura/issues/73)).
 - Host `load` omit-as-absent vs evaluate `Denied` is the documented ACL
   matrix. Denied keys stay off the wire (never `""`, no `denied: […]`
   list). Dual-read with allow-all sees stored values
