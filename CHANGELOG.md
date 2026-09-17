@@ -43,6 +43,10 @@ window.
 
 ### Fixed
 
+- [ADR 0006](docs/decisions/0006-action-provenance.md) Consequences now
+  match Decision, architecture, and `old_join_sidecar_magic_fails_closed`:
+  `MKJOIN02` sidecars fail closed on open; delete the sidecar to rebuild
+  ([#80](https://github.com/Sannrox/mikura/issues/80)).
 - Host clerk writeback is `apply_action` and fails closed without a non-empty
   Action id. Source ingest may still omit provenance. Changelog treats
   `action_id` as part of the payload. Empty-string `action_id` on append is

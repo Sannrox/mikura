@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
+- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#80](https://github.com/Sannrox/mikura/issues/80), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -71,9 +71,11 @@ journal to this crate.
 ## Consequences
 
 - Public API grows `ObjectRecord.action_id` and a required id on `Action`.
-- Existing logs remain readable. Existing `MKJOIN02` sidecars fail open
-  until deleted, same class of break as ADR 0004.
-- Implementation is a follow-up Issue. This ADR does not change codecs.
+- Existing logs remain readable. Existing `MKJOIN02` sidecars fail closed
+  on open; delete the sidecar to rebuild from the log.
+- Implementation landed ([#64](https://github.com/Sannrox/mikura/issues/64)).
+  Codecs emit the trailing Action id and `MKJOIN03` / `MKJOIN3D` sidecar
+  magic.
 
 ## Validation
 
