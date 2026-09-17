@@ -193,9 +193,11 @@ JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
 optional exact-match `filter`. `load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. The request ACL deny
 list fails closed on evaluate.
-Loopback bind is unauthenticated. Non-loopback bind requires `--bearer` and
-a matching `token` on every line. `Host::serve` also refuses a non-loopback
-listener unless `require_bearer` has been called ([ADR 0007](decisions/0007-host-bearer.md)).
+Loopback bind is unauthenticated unless `--bearer` is set. Presenting
+`--bearer` arms the envelope on any bind, including loopback: every line
+must carry a matching `token`. Non-loopback bind still requires `--bearer`.
+`Host::serve` also refuses a non-loopback listener unless `require_bearer`
+has been called ([ADR 0007](decisions/0007-host-bearer.md)).
 No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do

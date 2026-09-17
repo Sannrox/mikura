@@ -1,8 +1,10 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is unauthenticated.
-//! Non-loopback bind requires a clerk-owned bearer (ADR 0007).
+//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is
+//! unauthenticated until `require_bearer` is called. Non-loopback bind
+//! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
+//! any bind, including loopback.
 //! This crate does not know tenants, policy, receipts, or principals.
 
 use std::collections::HashMap;

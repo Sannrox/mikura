@@ -36,13 +36,18 @@ window.
 - `Store::load(kind, key, acl)` omits denied properties. Evaluate of a denied
   aggregate still returns `AclError::Denied`.
 - [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
-  clerk-owned bearer checked for equality. Loopback stays unauthenticated.
+  clerk-owned bearer checked for equality. Loopback stays unauthenticated
+  unless `--bearer` is presented.
 - Host JSON `load` returns the live object for `(kind, key)` and omits denied
   properties. Evaluate already accepted an exact-match `filter`. Missing
   identity fails closed.
 
 ### Fixed
 
+- CLI `--bearer` arms the host RPC envelope on loopback as well as
+  non-loopback. A presented secret is required on every line; omitting
+  the flag keeps loopback unauthenticated
+  ([#81](https://github.com/Sannrox/mikura/issues/81)).
 - [ADR 0007](docs/decisions/0007-host-bearer.md) Consequences and status
   text now match landed bind and serve: non-loopback requires a clerk
   bearer; `serve` / `serve_one` fail closed without `require_bearer`
