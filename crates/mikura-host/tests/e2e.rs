@@ -492,3 +492,35 @@ fn process_loopback_bearer_enforces_token() {
     }));
     assert!(ingest.ok, "{ingest:?}");
 }
+
+#[test]
+fn process_rejects_unknown_wire_v_and_accepts_omit_or_one() {
+    let tmp = TempLog::new("wire-v");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let omitted = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(omitted.ok, "{omitted:?}");
+    assert_eq!(omitted.v, mikura_host::WIRE_V);
+    let versioned = host.rpc(&serde_json::json!({
+        "v": 1,
+        "op": "load",
+        "kind": "Customer",
+        "key": "c1"
+    }));
+    assert!(versioned.ok, "{versioned:?}");
+    assert_eq!(versioned.v, mikura_host::WIRE_V);
+    let unknown = host.rpc(&serde_json::json!({
+        "v": 2,
+        "op": "load",
+        "kind": "Customer",
+        "key": "c1"
+    }));
+    assert!(!unknown.ok, "{unknown:?}");
+    assert_eq!(unknown.v, mikura_host::WIRE_V);
+    assert!(
+        unknown.error.as_deref().unwrap_or("").contains("wire v"),
+        "{unknown:?}"
+    );
+}

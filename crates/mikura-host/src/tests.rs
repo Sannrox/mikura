@@ -95,6 +95,47 @@ fn listen_loopback_without_bearer_keeps_handle_open() {
     drop(listener);
     let accepted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
     assert!(accepted.ok, "{accepted:?}");
+    assert_eq!(accepted.v, crate::WIRE_V);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn handle_line_wire_v1_omitted_or_one_unknown_fails_closed() {
+    let (dir, log) = temp_log("wire-v");
+    let mut host = Host::open(&log, 8).unwrap();
+    let omitted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(omitted.ok, "{omitted:?}");
+    assert_eq!(omitted.v, crate::WIRE_V);
+    let versioned = host.handle_line(r#"{"v":1,"op":"ingest_batch","records":[]}"#);
+    assert!(versioned.ok, "{versioned:?}");
+    assert_eq!(versioned.v, crate::WIRE_V);
+    let unknown = host.handle_line(r#"{"v":2,"op":"ingest_batch","records":[]}"#);
+    assert!(!unknown.ok, "{unknown:?}");
+    assert_eq!(unknown.v, crate::WIRE_V);
+    assert!(
+        unknown.error.as_deref().unwrap_or("").contains("wire v"),
+        "{unknown:?}"
+    );
+    let not_int = host.handle_line(r#"{"v":"1","op":"ingest_batch","records":[]}"#);
+    assert!(!not_int.ok, "{not_int:?}");
+    assert!(
+        not_int
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("must be an integer"),
+        "{not_int:?}"
+    );
+    host.require_bearer("secret").unwrap();
+    let nested = host
+        .handle_line(r#"{"v":1,"op":"ingest_batch","request":{"token":"secret"},"records":[]}"#);
+    assert!(!nested.ok, "{nested:?}");
+    assert!(
+        nested.error.as_deref().unwrap_or("").contains("bearer"),
+        "{nested:?}"
+    );
+    let sibling = host.handle_line(r#"{"v":1,"op":"ingest_batch","token":"secret","records":[]}"#);
+    assert!(sibling.ok, "{sibling:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

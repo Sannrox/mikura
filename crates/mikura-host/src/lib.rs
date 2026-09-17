@@ -1,7 +1,8 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is
+//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). JSON lines are
+//! envelope `{ v, token?, op, … }` (`v` omitted or `1`). Loopback bind is
 //! unauthenticated until `require_bearer` is called. Non-loopback bind
 //! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
 //! any bind, including loopback.
@@ -78,8 +79,19 @@ pub enum HostRequest {
     },
 }
 
+pub const WIRE_V: u32 = 1;
+
+#[derive(Clone, Debug, Deserialize)]
+struct HostEnvelope {
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(flatten)]
+    request: HostRequest,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostResponse {
+    pub v: u32,
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -191,6 +203,7 @@ impl Host {
             },
             HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
                 Ok(response) => HostResponse {
+                    v: WIRE_V,
                     ok: true,
                     error: None,
                     evaluate: Some(EvaluateWire {
@@ -204,6 +217,7 @@ impl Host {
             HostRequest::Load { kind, key, deny } => {
                 match load_record(&self.store, kind, key, deny) {
                     Ok(record) => HostResponse {
+                        v: WIRE_V,
                         ok: true,
                         error: None,
                         evaluate: None,
@@ -216,24 +230,21 @@ impl Host {
     }
 
     pub fn handle_line(&mut self, line: &str) -> HostResponse {
-        let mut value: serde_json::Value = match serde_json::from_str(line) {
+        let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(error) => return fail(error.to_string()),
         };
-        let token = value
-            .get("token")
-            .and_then(|value| value.as_str())
-            .map(str::to_owned);
-        if let Some(object) = value.as_object_mut() {
-            object.remove("token");
-        }
-        if let Err(error) = self.check_token(token.as_deref()) {
+        if let Err(error) = wire_version(&value) {
             return fail(error);
         }
-        match serde_json::from_value::<HostRequest>(value) {
-            Ok(request) => self.handle(request),
-            Err(error) => fail(error.to_string()),
+        let envelope: HostEnvelope = match serde_json::from_value(value) {
+            Ok(envelope) => envelope,
+            Err(error) => return fail(error.to_string()),
+        };
+        if let Err(error) = self.check_token(envelope.token.as_deref()) {
+            return fail(error);
         }
+        self.handle(envelope.request)
     }
 
     pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
@@ -272,6 +283,7 @@ impl Host {
 
 fn ok() -> HostResponse {
     HostResponse {
+        v: WIRE_V,
         ok: true,
         error: None,
         evaluate: None,
@@ -281,10 +293,27 @@ fn ok() -> HostResponse {
 
 fn fail(error: impl ToString) -> HostResponse {
     HostResponse {
+        v: WIRE_V,
         ok: false,
         error: Some(error.to_string()),
         evaluate: None,
         load: None,
+    }
+}
+
+fn wire_version(value: &serde_json::Value) -> Result<u32, String> {
+    match value.get("v") {
+        None => Ok(WIRE_V),
+        Some(version) => {
+            let version = version
+                .as_u64()
+                .ok_or_else(|| "host wire v must be an integer".to_string())?;
+            if version == u64::from(WIRE_V) {
+                Ok(WIRE_V)
+            } else {
+                Err(format!("unsupported host wire v {version}"))
+            }
+        }
     }
 }
 

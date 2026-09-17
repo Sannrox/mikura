@@ -44,6 +44,10 @@ window.
 
 ### Fixed
 
+- Host JSON lines are envelope `v=1`: omit means v1, unknown `v` fails
+  closed, `token` stays a top-level sibling of `op`, and `filter` stays
+  under evaluate `request`
+  ([#76](https://github.com/Sannrox/mikura/issues/76)).
 - `MIKURAV1` record-body contract now names the optional trailing Action
   id as the only allowed growth under this magic. A second trailing field
   requires a superblock bump so open can fail before decode

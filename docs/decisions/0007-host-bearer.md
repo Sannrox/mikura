@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#90](https://github.com/Sannrox/mikura/issues/90), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#76](https://github.com/Sannrox/mikura/issues/76), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#90](https://github.com/Sannrox/mikura/issues/90), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -55,6 +55,11 @@ has been called, even when `bind` was given a secret. `open` plus
 `handle` / `handle_line` without `require_bearer` stays the in-process
 clerk path.
 
+JSON lines are envelope `{ v, token?, op, … }`. `v` omitted or `1` is
+this contract; any other `v` fails closed. `token` is a sibling of `op`.
+It is required when a bearer is stored and unused on loopback with no
+bearer. `filter` lives only under evaluate `request`.
+
 ## Alternatives considered
 
 | Option | Why not |
@@ -74,6 +79,9 @@ clerk path.
   until `--bearer` is set; a presented bearer is enforced on that
   listener.
 - `Store` and the object log stay free of callers and sessions.
+- JSON lines are envelope `{ v, token?, op, … }`. Omit `v` or `v:1` is
+  this contract; unknown `v` fails closed. `token` is required only when
+  a bearer is stored. `filter` stays under evaluate `request`.
 
 ## Validation
 
@@ -92,3 +100,5 @@ The implementation Issue must prove:
 7. `Host::listen` with a presented bearer stores it so `handle_line`
    fail-closes without a matching token. `listen` without a bearer on
    loopback keeps `handle` open.
+8. Omit `v` or `v:1` is accepted; unknown `v` fails closed. `token` is a
+   sibling of `op`. `filter` is only under evaluate `request`.
