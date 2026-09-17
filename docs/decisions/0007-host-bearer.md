@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#71](https://github.com/Sannrox/mikura/issues/71), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -69,3 +69,5 @@ The implementation Issue must prove:
 3. Non-loopback bind with a bearer accepts a matching token and rejects
    missing or wrong tokens without guessing evaluate results.
 4. A matching token does not become a principal on loaded records.
+5. `Host::serve` on a non-loopback listener without `require_bearer` fails
+   closed even if `Host::bind` was given a secret.
