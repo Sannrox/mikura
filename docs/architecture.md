@@ -198,8 +198,10 @@ list fails closed on evaluate.
 Loopback bind is unauthenticated unless `--bearer` is set. Presenting
 `--bearer` arms the envelope on any bind, including loopback: every line
 must carry a matching `token`. Non-loopback bind still requires `--bearer`.
-`Host::serve` also refuses a non-loopback listener unless `require_bearer`
-has been called ([ADR 0007](decisions/0007-host-bearer.md)).
+`Host::listen` binds and stores a presented bearer together. `Host::serve`
+also refuses a non-loopback listener unless `require_bearer` has been
+called. `open` plus `handle` without a stored bearer stays the in-process
+clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
 No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do

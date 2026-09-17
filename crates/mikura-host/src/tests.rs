@@ -71,6 +71,34 @@ fn non_loopback_bind_is_refused() {
 }
 
 #[test]
+fn listen_stores_presented_bearer_on_loopback() {
+    let (dir, log) = temp_log("listen-bearer");
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let (mut host, listener) = Host::listen(&log, 8, addr, Some("secret")).unwrap();
+    drop(listener);
+    let denied = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(!denied.ok, "{denied:?}");
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("bearer"),
+        "{denied:?}"
+    );
+    let accepted = host.handle_line(r#"{"op":"ingest_batch","token":"secret","records":[]}"#);
+    assert!(accepted.ok, "{accepted:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn listen_loopback_without_bearer_keeps_handle_open() {
+    let (dir, log) = temp_log("listen-open");
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let (mut host, listener) = Host::listen(&log, 8, addr, None).unwrap();
+    drop(listener);
+    let accepted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(accepted.ok, "{accepted:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn non_loopback_bind_with_bearer_listens() {
     let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();
     assert!(listener.local_addr().is_ok());

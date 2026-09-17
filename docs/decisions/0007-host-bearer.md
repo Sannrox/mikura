@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#90](https://github.com/Sannrox/mikura/issues/90), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -46,10 +46,14 @@ transport encryption puts a proxy in front. Do not add tenants.
 
 Implementation landed ([#69](https://github.com/Sannrox/mikura/issues/69),
 [#70](https://github.com/Sannrox/mikura/issues/70),
-[#89](https://github.com/Sannrox/mikura/issues/89)). `Host::bind` refuses
+[#89](https://github.com/Sannrox/mikura/issues/89),
+[#90](https://github.com/Sannrox/mikura/issues/90)). `Host::listen` binds
+and stores a presented bearer as one constructor. `Host::bind` refuses
 non-loopback without a non-empty clerk bearer. `Host::serve` /
 `serve_one` fail closed on a routable listener unless `require_bearer`
-has been called, even when `bind` was given a secret.
+has been called, even when `bind` was given a secret. `open` plus
+`handle` / `handle_line` without `require_bearer` stays the in-process
+clerk path.
 
 ## Alternatives considered
 
@@ -85,3 +89,6 @@ The implementation Issue must prove:
 6. Loopback bind with `--bearer` rejects missing or wrong tokens and
    accepts a matching token. Loopback without `--bearer` stays
    unauthenticated.
+7. `Host::listen` with a presented bearer stores it so `handle_line`
+   fail-closes without a matching token. `listen` without a bearer on
+   loopback keeps `handle` open.

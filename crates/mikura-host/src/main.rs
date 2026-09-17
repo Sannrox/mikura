@@ -27,7 +27,12 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
-    let listener = Host::bind(args.bind, args.bearer.as_deref())?;
+    let (mut host, listener) = Host::listen(
+        &args.log,
+        args.stream_bound,
+        args.bind,
+        args.bearer.as_deref(),
+    )?;
     let bound = listener
         .local_addr()
         .map_err(|err| format!("listener address: {err}"))?;
@@ -35,10 +40,6 @@ fn run() -> Result<(), String> {
     io::stdout()
         .flush()
         .map_err(|err| format!("flush listen address: {err}"))?;
-    let mut host = Host::open(&args.log, args.stream_bound)?;
-    if let Some(secret) = args.bearer.as_deref() {
-        host.require_bearer(secret)?;
-    }
     host.serve(listener)
 }
 
