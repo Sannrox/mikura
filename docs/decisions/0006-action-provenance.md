@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#80](https://github.com/Sannrox/mikura/issues/80), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
+- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#77](https://github.com/Sannrox/mikura/issues/77), [#80](https://github.com/Sannrox/mikura/issues/80), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -34,11 +34,15 @@ policy, or store receipts.
 
 **Log (`MIKURAV1` superblock magic unchanged).** After the sorted property
 pairs, the record body may end (historical records) or continue with one
-length-prefixed Action id string. Empty or absent means `None`. New
-writes always emit the field. Rebuild from `1..=committed_pages` recovers
-the id. Trailing bytes after that field still fail closed. Old binaries
-that reject trailing body bytes fail closed on new records; that is the
-forward-incompatible cost of not rewriting the log.
+length-prefixed Action id string. That optional trailer is the
+`MIKURAV1` body discriminator: EOF after props means `None`; one string
+then EOF is the Action id; anything further fail-closes. Empty string
+means `None`. New writes always emit the field. Rebuild from
+`1..=committed_pages` recovers the id. Old binaries that reject trailing
+body bytes fail closed mid-decode on new records; an early superblock
+magic bump would also reject historical pages that this binary must
+still read in place. A second trailing field requires `MIKURAV2` (or
+equivalent) so `Store::open` can refuse before decode.
 
 **Write path.** `ObjectRecord` carries `action_id: Option<String>`. Source
 ingest and changelog/merge may omit it (those rows are not governed

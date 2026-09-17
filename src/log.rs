@@ -256,6 +256,8 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, &key)?;
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
+    // MIKURAV1 body discriminator: one optional trailing string. A second
+    // field requires a superblock magic bump (ADR 0006).
     write_str(&mut body, record.action_id.as_deref().unwrap_or(""))?;
     Ok(body)
 }
@@ -364,6 +366,24 @@ mod tests {
         assert_eq!(record.action_id, None);
         assert_eq!(record.kind, "Customer");
         assert_eq!(record.key, "c1");
+    }
+
+    #[test]
+    fn second_trailing_body_field_fails_closed() {
+        let body = encode_body(&ObjectRecord {
+            gen: 1,
+            kind: "Customer".into(),
+            key: "c1".into(),
+            hidden: false,
+            action_id: Some("act-1".into()),
+            props: HashMap::new(),
+        })
+        .unwrap();
+        let mut extra = body;
+        extra.extend_from_slice(&1u16.to_le_bytes());
+        extra.push(b'x');
+        let err = decode_body(&extra).unwrap_err();
+        assert!(err.contains("trailing"), "{err}");
     }
 
     #[test]
