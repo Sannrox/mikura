@@ -190,7 +190,9 @@ source-snapshot path and does not become governed writeback.
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `evaluate`, `load`. Evaluate accepts an
-optional exact-match `filter`. `load` returns the live object for `(kind, key)`
+optional exact-match `filter`. Omit or `null` filter means all visible roots.
+An empty `property` or `value` is a wire error, not a silent empty match.
+`load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. The request ACL deny
 list fails closed on evaluate.
 Loopback bind is unauthenticated unless `--bearer` is set. Presenting

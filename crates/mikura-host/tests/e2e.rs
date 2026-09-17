@@ -234,6 +234,15 @@ fn process_filter_restricts_roots() {
     let evaluate = hosted.evaluate.expect("evaluate payload");
     assert_eq!(evaluate.two_hop_count, 1);
     assert_eq!(evaluate.sum_amount, 10);
+    let mut empty = evaluate_wire();
+    empty["request"]["filter"] = serde_json::json!({"property": "", "value": ""});
+    let rejected = host.rpc(&empty);
+    assert!(!rejected.ok, "{rejected:?}");
+    assert!(
+        rejected.error.as_deref().unwrap_or("").contains("filter"),
+        "{rejected:?}"
+    );
+    assert!(rejected.evaluate.is_none());
 }
 
 #[test]

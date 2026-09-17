@@ -300,6 +300,11 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         [deny] => PropertyAcl::deny_property(&deny.kind, &deny.property),
         _ => return Err("host evaluate accepts at most one deny pair in v1".into()),
     };
+    if let Some(filter) = &request.filter {
+        if filter.property.is_empty() || filter.value.is_empty() {
+            return Err("evaluate filter requires non-empty property and value".into());
+        }
+    }
     let request = EvaluateRequest {
         root_kind: request.root_kind,
         hops: request
