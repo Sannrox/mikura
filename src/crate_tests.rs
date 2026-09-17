@@ -480,6 +480,12 @@ fn load_omits_denied_properties() {
     assert_eq!(live.props.get("amount").map(String::as_str), Some("10"));
     assert_eq!(live.props.get("order_id").map(String::as_str), Some("o1"));
 
+    let deny_unknown = PropertyAcl::deny_property("Shipment", "not_a_column");
+    assert_eq!(
+        store.load("Shipment", "s1", &deny_unknown).unwrap().props,
+        live.props
+    );
+
     let deny_amount = PropertyAcl::deny_property("Shipment", "amount");
     let redacted = store.load("Shipment", "s1", &deny_amount).unwrap();
     assert!(!redacted.props.contains_key("amount"));
@@ -677,6 +683,42 @@ fn exact_match_filter_restricts_roots() {
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), us_resp);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn exact_match_filter_uses_by_prop_among_many_roots() {
+    let (dir, log) = temp_log("filter-by-prop");
+    let mut store = Store::create(&log).unwrap();
+    let mut records = vec![
+        rec("Customer", "keep", false, &[("region", "us")]),
+        rec("Order", "o1", false, &[("customer_id", "keep")]),
+        rec(
+            "Shipment",
+            "s1",
+            false,
+            &[("order_id", "o1"), ("amount", "4")],
+        ),
+    ];
+    for i in 0..64 {
+        records.push(rec(
+            "Customer",
+            &format!("other-{i}"),
+            false,
+            &[("region", "eu")],
+        ));
+    }
+    append_all(&mut store, records);
+    let mut request = fixture_request();
+    request.filter = Some(ExactMatch {
+        property: "region".into(),
+        value: "us".into(),
+    });
+    let response = ObjectSet::new(LocalCompute)
+        .evaluate(&store, &request)
+        .unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 4);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

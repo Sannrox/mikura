@@ -36,13 +36,40 @@ window.
 - `Store::load(kind, key, acl)` omits denied properties. Evaluate of a denied
   aggregate still returns `AclError::Denied`.
 - [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
-  clerk-owned bearer checked for equality. Loopback stays unauthenticated.
+  clerk-owned bearer checked for equality. Loopback stays unauthenticated
+  unless `--bearer` is presented.
 - Host JSON `load` returns the live object for `(kind, key)` and omits denied
   properties. Evaluate already accepted an exact-match `filter`. Missing
   identity fails closed.
 
 ### Fixed
 
+- Exact-match evaluate filter looks up `by_prop` instead of scanning
+  every root's owned pairs
+  ([#73](https://github.com/Sannrox/mikura/issues/73)).
+- Host `load` omit-as-absent vs evaluate `Denied` is the documented ACL
+  matrix. Denied keys stay off the wire (never `""`, no `denied: […]`
+  list). Dual-read with allow-all sees stored values
+  ([#78](https://github.com/Sannrox/mikura/issues/78)).
+- `Host::listen` binds and stores a presented clerk bearer as one
+  constructor so a routable or `--bearer` path cannot split listen from
+  the RPC envelope. In-process `open` / `handle` without `require_bearer`
+  stays the clerk embedding ([#90](https://github.com/Sannrox/mikura/issues/90)).
+- Host evaluate rejects `filter` with an empty `property` or `value` as a
+  schema error. Omit or `null` remains the only unfiltered form
+  ([#79](https://github.com/Sannrox/mikura/issues/79)).
+- CLI `--bearer` arms the host RPC envelope on loopback as well as
+  non-loopback. A presented secret is required on every line; omitting
+  the flag keeps loopback unauthenticated
+  ([#81](https://github.com/Sannrox/mikura/issues/81)).
+- [ADR 0007](docs/decisions/0007-host-bearer.md) Consequences and status
+  text now match landed bind and serve: non-loopback requires a clerk
+  bearer; `serve` / `serve_one` fail closed without `require_bearer`
+  ([#91](https://github.com/Sannrox/mikura/issues/91)).
+- [ADR 0006](docs/decisions/0006-action-provenance.md) Consequences now
+  match Decision, architecture, and `old_join_sidecar_magic_fails_closed`:
+  `MKJOIN02` sidecars fail closed on open; delete the sidecar to rebuild
+  ([#80](https://github.com/Sannrox/mikura/issues/80)).
 - Host clerk writeback is `apply_action` and fails closed without a non-empty
   Action id. Source ingest may still omit provenance. Changelog treats
   `action_id` as part of the payload. Empty-string `action_id` on append is

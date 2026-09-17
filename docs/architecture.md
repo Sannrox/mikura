@@ -88,7 +88,9 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 It does not keep a hot payload map. `Store::load(kind, key, acl)` reconstructs
 the live `ObjectRecord` from slim identity plus interned property pairs
 already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
-Denied properties are omitted from the returned map. Hidden rows stay out
+The request deny list is resolved once to intern ids; load materializes
+only allowed owned pairs. An empty deny skips that walk. Denied
+properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
@@ -135,8 +137,9 @@ uncommitted tail; rebuild reads only committed pages.
 `LocalCompute` (generic kinds, from `JoinMaps`):
 
 1. Start from visible keys of `root_kind`.
-2. If `request.filter` is set, keep only roots whose interned
-   `props[property] == value`. Empty match is count 0, sum 0.
+2. If `request.filter` is set, look up matching visible roots in
+   `by_prop[(kind, property)][value]`. Empty or uninterned match is
+   count 0, sum 0. The filter does not scan every root's owned pairs.
 3. For each `Hop` except the last, join either default (`parent.key` to
    child `join_property` among visible `far_kind` children) or
    `incoming: true` (follow `props[join_property]` on the frontier to a
@@ -166,9 +169,22 @@ two scalars) and stays out with query languages.
 `deny_property` inserts one pair. `check` errors with `AclError::Denied`.
 
 Load omits denied properties from the returned object; it does not invent
-substitutes. Evaluate of a denied `(sum_kind, sum_property)` still fails
+substitutes. The omit walks interned owned pairs after resolving the deny
+list to `(kind, property)` intern ids; an empty deny skips the walk.
+Evaluate of a denied `(sum_kind, sum_property)` still fails
 closed. There is no allow-list and no principal. Policy stays in the clerk;
 this crate applies the request deny list.
+
+| Surface | Denied property | Result |
+| --- | --- | --- |
+| `Store::load` / host `load` | on the request deny list | key absent from `props` (never `""`) |
+| evaluate aggregate | `(sum_kind, sum_property)` denied | `AclError::Denied` |
+| dual-read | load with allow-all, or delete the sidecar | stored values from the log |
+
+Host `load` uses the same omit-as-absent map. The wire does not grow a
+`denied: […]` list; that would advertise properties the clerk withheld.
+Never stored and denied-on-this-request look the same on the request
+view; dual-read is how a clerk distinguishes them.
 
 ## Action writeback
 
@@ -186,12 +202,18 @@ source-snapshot path and does not become governed writeback.
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `evaluate`, `load`. Evaluate accepts an
-optional exact-match `filter`. `load` returns the live object for `(kind, key)`
+optional exact-match `filter`. Omit or `null` filter means all visible roots.
+An empty `property` or `value` is a wire error, not a silent empty match.
+`load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. The request ACL deny
 list fails closed on evaluate.
-Loopback bind is unauthenticated. Non-loopback bind requires `--bearer` and
-a matching `token` on every line. `Host::serve` also refuses a non-loopback
-listener unless `require_bearer` has been called ([ADR 0007](decisions/0007-host-bearer.md)).
+Loopback bind is unauthenticated unless `--bearer` is set. Presenting
+`--bearer` arms the envelope on any bind, including loopback: every line
+must carry a matching `token`. Non-loopback bind still requires `--bearer`.
+`Host::listen` binds and stores a presented bearer together. `Host::serve`
+also refuses a non-loopback listener unless `require_bearer` has been
+called. `open` plus `handle` without a stored bearer stays the in-process
+clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
 No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do

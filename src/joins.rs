@@ -315,28 +315,18 @@ impl JoinMaps {
     }
 
     fn matching_root_ids(&self, root_kind: &str, property: &str, value: &str) -> HashSet<u32> {
-        let Some(&kind_id) = self.intern_ix.get(root_kind) else {
+        let (Some(&kind_id), Some(&prop_id), Some(&value_id)) = (
+            self.intern_ix.get(root_kind),
+            self.intern_ix.get(property),
+            self.intern_ix.get(value),
+        ) else {
             return HashSet::new();
         };
-        let Some(roots) = self.by_kind.get(&kind_id) else {
-            return HashSet::new();
-        };
-        let (Some(&prop_id), Some(&value_id)) =
-            (self.intern_ix.get(property), self.intern_ix.get(value))
-        else {
-            return HashSet::new();
-        };
-        roots
-            .iter()
-            .copied()
-            .filter(|&key_id| {
-                self.owned.get(&(kind_id, key_id)).is_some_and(|owned| {
-                    owned
-                        .iter()
-                        .any(|(pid, vid)| *pid == prop_id && *vid == value_id)
-                })
-            })
-            .collect()
+        self.by_prop
+            .get(&(kind_id, prop_id))
+            .and_then(|by_val| by_val.get(&value_id))
+            .map(|keys| keys.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Like [`Self::count_and_sum`], but only roots matching `property == value`.
@@ -507,6 +497,15 @@ impl JoinMaps {
     }
 
     pub(crate) fn row_props(&self, kind: &str, key: &str) -> HashMap<String, String> {
+        self.row_props_omitting(kind, key, &HashSet::new())
+    }
+
+    pub(crate) fn row_props_omitting(
+        &self,
+        kind: &str,
+        key: &str,
+        denied: &HashSet<(u32, u32)>,
+    ) -> HashMap<String, String> {
         let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
         else {
             return HashMap::new();
@@ -514,16 +513,7 @@ impl JoinMaps {
         let Some(owned) = self.owned.get(&(kind_id, key_id)) else {
             return HashMap::new();
         };
-        let mut props = HashMap::new();
-        for (prop_id, value_id) in owned {
-            if let (Some(prop), Some(value)) = (
-                self.intern.get(*prop_id as usize),
-                self.intern.get(*value_id as usize),
-            ) {
-                props.insert(prop.clone(), value.clone());
-            }
-        }
-        props
+        crate::acl::PropertyAcl::omit_owned(&self.intern, kind_id, owned, denied)
     }
 }
 

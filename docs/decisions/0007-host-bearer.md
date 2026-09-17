@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#71](https://github.com/Sannrox/mikura/issues/71), [ADR 0003](0003-hosted-service.md)
+- Related: [#48](https://github.com/Sannrox/mikura/issues/48), [#69](https://github.com/Sannrox/mikura/issues/69), [#70](https://github.com/Sannrox/mikura/issues/70), [#71](https://github.com/Sannrox/mikura/issues/71), [#81](https://github.com/Sannrox/mikura/issues/81), [#89](https://github.com/Sannrox/mikura/issues/89), [#90](https://github.com/Sannrox/mikura/issues/90), [#91](https://github.com/Sannrox/mikura/issues/91), [ADR 0003](0003-hosted-service.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -14,9 +14,10 @@ socket with no credential is a public ingest/evaluate surface. This crate
 must not become the identity provider, policy compiler, or session store.
 The clerk already owns who, policy, receipts, and admission.
 
-VISION v7 names bearer tokens owned by the control plane. `Host::bind`
-refuses any non-loopback address today. Loopback ingest/evaluate and the
-process e2e suite exist ([#18](https://github.com/Sannrox/mikura/issues/18),
+VISION v7 names bearer tokens owned by the control plane. Before this
+implementation landed, `Host::bind` refused every non-loopback address.
+Loopback ingest/evaluate and the process e2e suite exist
+([#18](https://github.com/Sannrox/mikura/issues/18),
 [#33](https://github.com/Sannrox/mikura/issues/33)).
 
 A warehouse answers object questions. It does not log callers in. The
@@ -32,8 +33,10 @@ the configured secret (constant-time equality). Missing, empty, or
 unequal tokens fail closed. The host does not parse claims, mint tokens,
 or look up principals.
 
-Loopback bind stays unauthenticated. A clerk may still terminate TLS and
-forward to loopback; that deployment needs no change.
+Loopback bind stays unauthenticated unless the operator presents a bearer.
+A presented `--bearer` is stored and checked on every RPC, including
+loopback. A clerk that terminates TLS and forwards to loopback without a
+token keeps the default unauthenticated contract.
 
 `PropertyAcl` on the request remains the view the clerk compiled. This crate
 does not compile policy from the token. Records do not store a principal.
@@ -41,7 +44,16 @@ does not compile policy from the token. Records do not store a principal.
 TLS, OAuth, JWKS, and cookies are out of this crate. An operator who needs
 transport encryption puts a proxy in front. Do not add tenants.
 
-This ADR does not change `Host::bind`. Implementation: [#69](https://github.com/Sannrox/mikura/issues/69).
+Implementation landed ([#69](https://github.com/Sannrox/mikura/issues/69),
+[#70](https://github.com/Sannrox/mikura/issues/70),
+[#89](https://github.com/Sannrox/mikura/issues/89),
+[#90](https://github.com/Sannrox/mikura/issues/90)). `Host::listen` binds
+and stores a presented bearer as one constructor. `Host::bind` refuses
+non-loopback without a non-empty clerk bearer. `Host::serve` /
+`serve_one` fail closed on a routable listener unless `require_bearer`
+has been called, even when `bind` was given a secret. `open` plus
+`handle` / `handle_line` without `require_bearer` stays the in-process
+clerk path.
 
 ## Alternatives considered
 
@@ -54,10 +66,13 @@ This ADR does not change `Host::bind`. Implementation: [#69](https://github.com/
 
 ## Consequences
 
-- `mikura-host` remains loopback-only until the follow-up lands.
-- The follow-up must refuse non-loopback bind when no bearer is configured,
-  require the token on every JSON-line RPC for a non-loopback listener, and
-  keep loopback e2e without a token.
+- Non-loopback bind is allowed only with a clerk-owned bearer. Every RPC
+  on that listener must present a matching token. Missing, empty, or
+  unequal tokens fail closed.
+- `Host::serve` / `serve_one` refuse a routable listener unless
+  `require_bearer` has been called. Loopback bind stays unauthenticated
+  until `--bearer` is set; a presented bearer is enforced on that
+  listener.
 - `Store` and the object log stay free of callers and sessions.
 
 ## Validation
@@ -71,3 +86,9 @@ The implementation Issue must prove:
 4. A matching token does not become a principal on loaded records.
 5. `Host::serve` on a non-loopback listener without `require_bearer` fails
    closed even if `Host::bind` was given a secret.
+6. Loopback bind with `--bearer` rejects missing or wrong tokens and
+   accepts a matching token. Loopback without `--bearer` stays
+   unauthenticated.
+7. `Host::listen` with a presented bearer stores it so `handle_line`
+   fail-closes without a matching token. `listen` without a bearer on
+   loopback keeps `handle` open.

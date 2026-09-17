@@ -1,8 +1,10 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is unauthenticated.
-//! Non-loopback bind requires a clerk-owned bearer (ADR 0007).
+//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). Loopback bind is
+//! unauthenticated until `require_bearer` is called. Non-loopback bind
+//! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
+//! any bind, including loopback.
 //! This crate does not know tenants, policy, receipts, or principals.
 
 use std::collections::HashMap;
@@ -121,6 +123,25 @@ impl Host {
         }
         self.bearer = Some(bearer);
         Ok(())
+    }
+
+    /// Bind `addr` and open the store as one host.
+    ///
+    /// A presented bearer is stored on any bind, including loopback.
+    /// Non-loopback still requires a non-empty bearer. `open` plus `handle`
+    /// without `require_bearer` remains the in-process clerk path.
+    pub fn listen(
+        log: &Path,
+        stream_bound: usize,
+        addr: SocketAddr,
+        bearer: Option<&str>,
+    ) -> Result<(Self, TcpListener), String> {
+        let listener = Self::bind(addr, bearer)?;
+        let mut host = Self::open(log, stream_bound)?;
+        if let Some(secret) = bearer {
+            host.require_bearer(secret)?;
+        }
+        Ok((host, listener))
     }
 
     /// Bind a TCP listener. Non-loopback addresses need a non-empty bearer.
@@ -298,6 +319,11 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         [deny] => PropertyAcl::deny_property(&deny.kind, &deny.property),
         _ => return Err("host evaluate accepts at most one deny pair in v1".into()),
     };
+    if let Some(filter) = &request.filter {
+        if filter.property.is_empty() || filter.value.is_empty() {
+            return Err("evaluate filter requires non-empty property and value".into());
+        }
+    }
     let request = EvaluateRequest {
         root_kind: request.root_kind,
         hops: request

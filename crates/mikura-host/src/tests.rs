@@ -71,6 +71,34 @@ fn non_loopback_bind_is_refused() {
 }
 
 #[test]
+fn listen_stores_presented_bearer_on_loopback() {
+    let (dir, log) = temp_log("listen-bearer");
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let (mut host, listener) = Host::listen(&log, 8, addr, Some("secret")).unwrap();
+    drop(listener);
+    let denied = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(!denied.ok, "{denied:?}");
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("bearer"),
+        "{denied:?}"
+    );
+    let accepted = host.handle_line(r#"{"op":"ingest_batch","token":"secret","records":[]}"#);
+    assert!(accepted.ok, "{accepted:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn listen_loopback_without_bearer_keeps_handle_open() {
+    let (dir, log) = temp_log("listen-open");
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let (mut host, listener) = Host::listen(&log, 8, addr, None).unwrap();
+    drop(listener);
+    let accepted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(accepted.ok, "{accepted:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn non_loopback_bind_with_bearer_listens() {
     let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();
     assert!(listener.local_addr().is_ok());
@@ -315,6 +343,25 @@ fn evaluate_filter_matches_in_process() {
     let hosted = hosted.evaluate.unwrap();
     assert_eq!(hosted.two_hop_count, 1);
     assert_eq!(hosted.sum_amount, 10);
+    let mut empty = eval_req();
+    empty.filter = Some(WireFilter {
+        property: String::new(),
+        value: String::new(),
+    });
+    let rejected = host.handle(HostRequest::Evaluate { request: empty });
+    assert!(!rejected.ok, "{rejected:?}");
+    assert!(
+        rejected.error.as_deref().unwrap_or("").contains("filter"),
+        "{rejected:?}"
+    );
+    assert!(rejected.evaluate.is_none());
+    let omitted = host.handle(HostRequest::Evaluate {
+        request: eval_req(),
+    });
+    assert!(omitted.ok, "{omitted:?}");
+    let omitted = omitted.evaluate.unwrap();
+    assert_eq!(omitted.two_hop_count, 2);
+    assert_eq!(omitted.sum_amount, 17);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -411,6 +458,31 @@ fn load_matches_in_process_and_omits_denied() {
     assert!(omitted.ok, "{omitted:?}");
     let omitted = omitted.load.expect("load payload");
     assert!(!omitted.props.contains_key("region"));
+    assert_ne!(omitted.props.get("region"), Some(&String::new()));
+    let wire = serde_json::to_value(&omitted).expect("load wire");
+    assert!(
+        wire.get("props")
+            .and_then(|props| props.get("region"))
+            .is_none(),
+        "{wire}"
+    );
+    let mut denied_eval = eval_req();
+    denied_eval.deny.push(WireDeny {
+        kind: "Shipment".into(),
+        property: "amount".into(),
+    });
+    let denied_eval = host.handle(HostRequest::Evaluate {
+        request: denied_eval,
+    });
+    assert!(!denied_eval.ok, "{denied_eval:?}");
+    assert!(
+        denied_eval
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Denied"),
+        "{denied_eval:?}"
+    );
     let missing = host.handle(HostRequest::Load {
         kind: "Customer".into(),
         key: "nope".into(),

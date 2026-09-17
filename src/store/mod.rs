@@ -127,10 +127,11 @@ impl Store {
             .identity
             .get(&id)
             .ok_or_else(|| format!("unknown identity {kind}/{key}"))?;
+        let denied = acl.interned_denies(|token| self.joins.intern_existing(token));
         let props = if meta.hidden {
-            self.hidden_props.get(&id).cloned().unwrap_or_default()
+            self.hidden_props_omitting(kind, &id, &denied)
         } else {
-            self.joins.row_props(kind, key)
+            self.joins.row_props_omitting(kind, key, &denied)
         };
         Ok(ObjectRecord {
             gen: meta.gen,
@@ -138,7 +139,7 @@ impl Store {
             key: key.to_string(),
             hidden: meta.hidden,
             action_id: meta.action_id.clone(),
-            props: acl.omit_denied(kind, props),
+            props,
         })
     }
 
@@ -197,6 +198,33 @@ impl Store {
 
     pub fn joins(&self) -> &JoinMaps {
         &self.joins
+    }
+
+    fn hidden_props_omitting(
+        &self,
+        kind: &str,
+        id: &(String, String),
+        denied: &HashSet<(u32, u32)>,
+    ) -> HashMap<String, String> {
+        let Some(props) = self.hidden_props.get(id) else {
+            return HashMap::new();
+        };
+        if denied.is_empty() {
+            return props.clone();
+        }
+        let Some(kind_id) = self.joins.intern_existing(kind) else {
+            return props.clone();
+        };
+        let mut allowed = HashMap::with_capacity(props.len());
+        for (name, value) in props {
+            if let Some(prop_id) = self.joins.intern_existing(name) {
+                if denied.contains(&(kind_id, prop_id)) {
+                    continue;
+                }
+            }
+            allowed.insert(name.clone(), value.clone());
+        }
+        allowed
     }
 
     fn replay_from_log(&mut self) -> Result<(), String> {
