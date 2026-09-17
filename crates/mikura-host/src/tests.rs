@@ -319,6 +319,69 @@ fn evaluate_filter_matches_in_process() {
 }
 
 #[test]
+fn apply_action_stores_provenance_and_empty_id_fails_closed() {
+    let (dir, log) = temp_log("apply-action");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    let omitted = host.handle(HostRequest::Load {
+        kind: "Shipment".into(),
+        key: "s1".into(),
+        deny: Vec::new(),
+    });
+    assert!(omitted.ok, "{omitted:?}");
+    assert_eq!(omitted.load.expect("load payload").action_id, None);
+    let written = host.handle(HostRequest::ApplyAction {
+        id: "act-s2".into(),
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        props: [
+            ("order_id".into(), "o1".into()),
+            ("amount".into(), "5".into()),
+        ]
+        .into_iter()
+        .collect(),
+    });
+    assert!(written.ok, "{written:?}");
+    let loaded = host.handle(HostRequest::Load {
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        deny: Vec::new(),
+    });
+    assert!(loaded.ok, "{loaded:?}");
+    let loaded = loaded.load.expect("load payload");
+    assert_eq!(loaded.action_id.as_deref(), Some("act-s2"));
+    assert_eq!(loaded.props.get("amount").map(String::as_str), Some("5"));
+    let missing = host.handle(HostRequest::ApplyAction {
+        id: String::new(),
+        kind: "Shipment".into(),
+        key: "s3".into(),
+        props: [("order_id".into(), "o1".into())].into_iter().collect(),
+    });
+    assert!(!missing.ok);
+    assert!(
+        missing.error.as_deref().unwrap_or("").contains("action id"),
+        "{missing:?}"
+    );
+    let empty_ingest = host.handle(HostRequest::IngestBatch {
+        records: vec![{
+            let mut record = rec("Shipment", "s4", false, &[("order_id", "o1")]);
+            record.action_id = Some(String::new());
+            record
+        }],
+    });
+    assert!(!empty_ingest.ok);
+    assert!(
+        empty_ingest
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("empty action id"),
+        "{empty_ingest:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn load_matches_in_process_and_omits_denied() {
     let (dir, log) = temp_log("load");
     let mut host = Host::open(&log, 8).unwrap();

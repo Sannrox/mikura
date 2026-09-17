@@ -7,7 +7,7 @@ use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
     ObjectRecord, ObjectSet, PropertyAcl, Store,
 };
-use mikura_ingest::{BatchIngest, StreamIngest};
+use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -159,6 +159,17 @@ fn action_writeback_is_a_new_generation() {
     let after = oss.evaluate(&store, &shipment_request()).unwrap();
     assert_eq!(after.two_hop_count, 1);
     assert_eq!(after.sum_amount, 15);
+}
+
+#[test]
+fn changelog_treats_action_id_as_payload() {
+    let mut previous = rec("Shipment", "s1", false, &[("amount", "10")]);
+    previous.action_id = Some("act-a".into());
+    let mut current = rec("Shipment", "s1", false, &[("amount", "10")]);
+    current.action_id = Some("act-b".into());
+    let records = snapshot_changelog(vec![previous], vec![current]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].action_id.as_deref(), Some("act-b"));
 }
 
 #[test]

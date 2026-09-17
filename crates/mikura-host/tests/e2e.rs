@@ -316,6 +316,46 @@ fn process_stream_overflow_fails_closed() {
 }
 
 #[test]
+fn process_apply_action_round_trips_and_empty_id_fails_closed() {
+    let tmp = TempLog::new("apply-action");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let written = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-s2",
+        "kind": "Shipment",
+        "key": "s2",
+        "props": {"order_id": "o1", "amount": "5"}
+    }));
+    assert!(written.ok, "{written:?}");
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Shipment",
+        "key": "s2"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let record = loaded.load.expect("load payload");
+    assert_eq!(record.action_id.as_deref(), Some("act-s2"));
+    assert_eq!(record.props.get("amount").map(String::as_str), Some("5"));
+    let missing = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "",
+        "kind": "Shipment",
+        "key": "s3",
+        "props": {"order_id": "o1"}
+    }));
+    assert!(!missing.ok);
+    assert!(
+        missing.error.as_deref().unwrap_or("").contains("action id"),
+        "{missing:?}"
+    );
+}
+
+#[test]
 fn process_acl_deny_returns_error_not_guess() {
     let tmp = TempLog::new("acl");
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 4);

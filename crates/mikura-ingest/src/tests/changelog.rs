@@ -44,6 +44,21 @@ fn changelog_deleted_key_emits_hide() {
 }
 
 #[test]
+fn changelog_changed_action_id_emits_current_payload() {
+    let mut previous = rec("Shipment", "s1", false, &[("amount", "10")]);
+    previous.action_id = Some("act-a".into());
+    let mut current = rec("Shipment", "s1", false, &[("amount", "10")]);
+    current.action_id = Some("act-b".into());
+    let records = snapshot_changelog(vec![previous], vec![current]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].action_id.as_deref(), Some("act-b"));
+    assert_eq!(
+        records[0].props.get("amount").map(String::as_str),
+        Some("10")
+    );
+}
+
+#[test]
 fn changelog_changed_prop_emits_current_payload() {
     let records = snapshot_changelog(
         vec![rec("Shipment", "s1", false, &[("amount", "10")])],

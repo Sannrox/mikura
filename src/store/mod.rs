@@ -156,6 +156,9 @@ impl Store {
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
     pub fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
+        if matches!(record.action_id.as_deref(), Some("")) {
+            return Err("empty action id".into());
+        }
         let id = (record.kind.clone(), record.key.clone());
         if let Some(existing) = self.identity.get(&id) {
             record.gen = existing.gen.max(1) + 1;

@@ -43,6 +43,10 @@ window.
 
 ### Fixed
 
+- Host clerk writeback is `apply_action` and fails closed without a non-empty
+  Action id. Source ingest may still omit provenance. Changelog treats
+  `action_id` as part of the payload. Empty-string `action_id` on append is
+  refused ([#72](https://github.com/Sannrox/mikura/issues/72)).
 - Non-loopback `Host::serve` / `serve_one` refuse unless `require_bearer` has
   been called ([#71](https://github.com/Sannrox/mikura/issues/71)). `Host::bind`
   with a secret is not enough by itself.
