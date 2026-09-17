@@ -21,7 +21,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
 | `src/store/` | Identity, sidecar persist/load, append/commit |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
-| `crates/mikura-host/` | Loopback ingest/evaluate host over `Store`, plus `mikura-host` binary |
+| `crates/mikura-host/` | Loopback ingest/evaluate/load host over `Store`, plus `mikura-host` binary |
 | `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |
 | `src/objectset.rs` | Evaluate request/response |
 | `src/acl.rs` | Property deny-list (fail closed) |

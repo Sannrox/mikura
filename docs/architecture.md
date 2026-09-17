@@ -12,7 +12,7 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
 
 The public surface is three crates: `mikura` (`src/lib.rs`) for the log and
 evaluate, `mikura-ingest` for batch/stream append, and `mikura-host` for
-loopback ingest/evaluate. A control plane maps datasets and admitted edits
+loopback ingest, evaluate, and load. A control plane maps datasets and admitted edits
 to `ObjectRecord`s; it does not live in this repository. The destination
 object-set is filter, load, hop, and aggregate; today evaluate is hop +
 count/sum.
@@ -181,8 +181,10 @@ Source ingest may omit `action_id`. Hop/sum indexes ignore the id.
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `evaluate`. Evaluate accepts an
-optional exact-match `filter`. The request ACL deny list fails closed.
+`ingest_stream_push`, `ingest_stream_flush`, `evaluate`, `load`. Evaluate accepts an
+optional exact-match `filter`. `load` returns the live object for `(kind, key)`
+and omits denied properties. Missing identity fails closed. The request ACL deny
+list fails closed on evaluate.
 Loopback bind is unauthenticated. Non-loopback bind requires `--bearer` and
 a matching `token` on every line ([ADR 0007](decisions/0007-host-bearer.md)).
 No tenants, policy compile, receipts, or principals.

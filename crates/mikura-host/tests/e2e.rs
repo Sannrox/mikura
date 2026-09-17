@@ -237,6 +237,43 @@ fn process_filter_restricts_roots() {
 }
 
 #[test]
+fn process_load_matches_in_process_and_survives_exit() {
+    let tmp = TempLog::new("load");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let hosted = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Customer",
+        "key": "c1"
+    }));
+    assert!(hosted.ok, "{hosted:?}");
+    let loaded = hosted.load.expect("load payload");
+    assert_eq!(loaded.key, "c1");
+    assert_eq!(loaded.props.get("region").map(String::as_str), Some("us"));
+    let omitted = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Customer",
+        "key": "c1",
+        "deny": [{"kind": "Customer", "property": "region"}]
+    }));
+    assert!(omitted.ok, "{omitted:?}");
+    let omitted = omitted.load.expect("load payload");
+    assert!(!omitted.props.contains_key("region"));
+    drop(host);
+    let store = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        loaded,
+        store
+            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .unwrap()
+    );
+}
+
+#[test]
 fn process_stream_overflow_fails_closed() {
     let tmp = TempLog::new("stream");
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 1);

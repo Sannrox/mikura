@@ -11,7 +11,7 @@ window.
 
 - `mikura-host` process binary and named e2e suite
   (`cargo test -p mikura-host --test e2e --locked`) that spawn the process
-  on loopback, drive JSON-line ingest/evaluate, and fail closed on ACL
+  on loopback, drive JSON-line ingest/evaluate/load, and fail closed on ACL
   deny, stream overflow, and non-loopback bind.
 - Named public-API integration suite (`tests/integration.rs`,
   `cargo test --test integration --locked`) covering batch ingest, hop
@@ -37,8 +37,9 @@ window.
   aggregate still returns `AclError::Denied`.
 - [ADR 0007](docs/decisions/0007-host-bearer.md): non-loopback bind requires a
   clerk-owned bearer checked for equality. Loopback stays unauthenticated.
-- `Hop.incoming` follows `props[join_property]` on the frontier to `far_kind`.
-  Default hop still finds rows that point at the frontier key.
+- Host JSON `load` returns the live object for `(kind, key)` and omits denied
+  properties. Evaluate already accepted an exact-match `filter`. Missing
+  identity fails closed.
 
 ### Changed
 

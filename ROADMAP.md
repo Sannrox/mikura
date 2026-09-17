@@ -36,20 +36,19 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v8 10⁸ remasure | After load/filter, 10⁷ query **1298 ms miss** vs 500 ms; 10⁸ ingest **did not finish** at 29 M / 10.7 h; dual-read holds at 10⁷ ([#49](https://github.com/Sannrox/mikura/issues/49), spike 011 addendum) |
 | v8 incoming hop | `Hop.incoming` follows `props[join_property]` to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)) |
 | v8 aggregate catalog | Count+sum stays the only aggregate until a consumer names another with a fixture ([#51](https://github.com/Sannrox/mikura/issues/51)) |
+| v8 host load | Host JSON `load` returns the live object; evaluate filter stays on the wire ([#52](https://github.com/Sannrox/mikura/issues/52)) |
 
 ## Next (this repository, in order)
 
-1. Load and filter on the loopback host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
-
 Scale and the log:
 
-2. Compact or checkpoint the object log — ADR or no-action ([#53](https://github.com/Sannrox/mikura/issues/53)).
-3. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
+1. Compact or checkpoint the object log — ADR or no-action ([#53](https://github.com/Sannrox/mikura/issues/53)).
+2. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
 
 Hosted form and independence:
 
-4. Split ingest/evaluate processes only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)).
-5. Tag a crate the clerk can depend on. Git tag first; crates.io stays ask-first ([#57](https://github.com/Sannrox/mikura/issues/57)).
+3. Split ingest/evaluate processes only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)).
+4. Tag a crate the clerk can depend on. Git tag first; crates.io stays ask-first ([#57](https://github.com/Sannrox/mikura/issues/57)).
 
 Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture.
 
