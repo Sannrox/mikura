@@ -44,6 +44,10 @@ window.
 
 ### Fixed
 
+- Host `load` omit-as-absent vs evaluate `Denied` is the documented ACL
+  matrix. Denied keys stay off the wire (never `""`, no `denied: […]`
+  list). Dual-read with allow-all sees stored values
+  ([#78](https://github.com/Sannrox/mikura/issues/78)).
 - `Host::listen` binds and stores a presented clerk bearer as one
   constructor so a routable or `--bearer` path cannot split listen from
   the RPC envelope. In-process `open` / `handle` without `require_bearer`
