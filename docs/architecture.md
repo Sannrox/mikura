@@ -174,6 +174,17 @@ Evaluate of a denied `(sum_kind, sum_property)` still fails
 closed. There is no allow-list and no principal. Policy stays in the clerk;
 this crate applies the request deny list.
 
+| Surface | Denied property | Result |
+| --- | --- | --- |
+| `Store::load` / host `load` | on the request deny list | key absent from `props` (never `""`) |
+| evaluate aggregate | `(sum_kind, sum_property)` denied | `AclError::Denied` |
+| dual-read | load with allow-all, or delete the sidecar | stored values from the log |
+
+Host `load` uses the same omit-as-absent map. The wire does not grow a
+`denied: […]` list; that would advertise properties the clerk withheld.
+Never stored and denied-on-this-request look the same on the request
+view; dual-read is how a clerk distinguishes them.
+
 ## Action writeback
 
 `Store::apply_action` requires a non-empty clerk-assigned `Action.id` and

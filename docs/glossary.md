@@ -18,7 +18,7 @@ meaning; say it is undefined.
 | **Envelope** | A published measurement with fixture size, hardware, hold/miss, and the question asked. A miss is not an engine pick. |
 | **Hold / miss** | Envelope result: the target latency or correctness check passed (hold) or failed (miss). |
 | **Fail closed** | On checksum mismatch, missing committed pages, or ACL denial of an aggregate: return an error. Do not guess. Load omits denied properties instead of fabricating them. |
-| **Property ACL** | v1: in-process deny list of `(kind, property)`. Load omits those keys. Evaluate of a denied aggregate returns `AclError::Denied`. Not a principal. |
+| **Property ACL** | v1: in-process deny list of `(kind, property)`. Load / host `load` omit those keys (never `""`). Evaluate of a denied aggregate returns `AclError::Denied`. The wire does not list denied names. Not a principal. |
 | **Action** | Governed edit in the product sense. `apply_action` appends a new visible generation and stores the clerk-assigned Action id ([ADR 0006](decisions/0006-action-provenance.md)). |
 | **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` returns unsupported until an envelope. |
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |

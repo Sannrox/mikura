@@ -458,6 +458,31 @@ fn load_matches_in_process_and_omits_denied() {
     assert!(omitted.ok, "{omitted:?}");
     let omitted = omitted.load.expect("load payload");
     assert!(!omitted.props.contains_key("region"));
+    assert_ne!(omitted.props.get("region"), Some(&String::new()));
+    let wire = serde_json::to_value(&omitted).expect("load wire");
+    assert!(
+        wire.get("props")
+            .and_then(|props| props.get("region"))
+            .is_none(),
+        "{wire}"
+    );
+    let mut denied_eval = eval_req();
+    denied_eval.deny.push(WireDeny {
+        kind: "Shipment".into(),
+        property: "amount".into(),
+    });
+    let denied_eval = host.handle(HostRequest::Evaluate {
+        request: denied_eval,
+    });
+    assert!(!denied_eval.ok, "{denied_eval:?}");
+    assert!(
+        denied_eval
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Denied"),
+        "{denied_eval:?}"
+    );
     let missing = host.handle(HostRequest::Load {
         kind: "Customer".into(),
         key: "nope".into(),
