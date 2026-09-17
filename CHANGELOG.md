@@ -44,6 +44,10 @@ window.
 
 ### Fixed
 
+- `MIKURAV1` record-body contract now names the optional trailing Action
+  id as the only allowed growth under this magic. A second trailing field
+  requires a superblock bump so open can fail before decode
+  ([#77](https://github.com/Sannrox/mikura/issues/77)).
 - Live identity and the join checkpoint keep Action ids as intern `u32`
   until `Store::load`. The object log still stores the clerk string so
   dual-read can rebuild after the sidecar is deleted
