@@ -44,6 +44,9 @@ window.
 
 ### Fixed
 
+- Host evaluate rejects `filter` with an empty `property` or `value` as a
+  schema error. Omit or `null` remains the only unfiltered form
+  ([#79](https://github.com/Sannrox/mikura/issues/79)).
 - CLI `--bearer` arms the host RPC envelope on loopback as well as
   non-loopback. A presented secret is required on every line; omitting
   the flag keeps loopback unauthenticated

@@ -315,6 +315,25 @@ fn evaluate_filter_matches_in_process() {
     let hosted = hosted.evaluate.unwrap();
     assert_eq!(hosted.two_hop_count, 1);
     assert_eq!(hosted.sum_amount, 10);
+    let mut empty = eval_req();
+    empty.filter = Some(WireFilter {
+        property: String::new(),
+        value: String::new(),
+    });
+    let rejected = host.handle(HostRequest::Evaluate { request: empty });
+    assert!(!rejected.ok, "{rejected:?}");
+    assert!(
+        rejected.error.as_deref().unwrap_or("").contains("filter"),
+        "{rejected:?}"
+    );
+    assert!(rejected.evaluate.is_none());
+    let omitted = host.handle(HostRequest::Evaluate {
+        request: eval_req(),
+    });
+    assert!(omitted.ok, "{omitted:?}");
+    let omitted = omitted.evaluate.unwrap();
+    assert_eq!(omitted.two_hop_count, 2);
+    assert_eq!(omitted.sum_amount, 17);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
