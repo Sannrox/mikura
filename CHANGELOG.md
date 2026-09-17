@@ -41,6 +41,12 @@ window.
   properties. Evaluate already accepted an exact-match `filter`. Missing
   identity fails closed.
 
+### Fixed
+
+- Non-loopback `Host::serve` / `serve_one` refuse unless `require_bearer` has
+  been called ([#71](https://github.com/Sannrox/mikura/issues/71)). `Host::bind`
+  with a secret is not enough by itself.
+
 ### Changed
 
 - Aggregates stay count+sum ([#51](https://github.com/Sannrox/mikura/issues/51)).

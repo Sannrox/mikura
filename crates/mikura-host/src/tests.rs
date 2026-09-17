@@ -77,6 +77,16 @@ fn non_loopback_bind_with_bearer_listens() {
 }
 
 #[test]
+fn non_loopback_serve_without_bearer_fails_closed() {
+    let (dir, log) = temp_log("serve-bearer");
+    let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();
+    let mut host = Host::open(&log, 4).unwrap();
+    let err = host.serve(listener).unwrap_err();
+    assert!(err.contains("non-loopback"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn bearer_line_rejects_missing_or_wrong_token() {
     let (dir, log) = temp_log("bearer-line");
     let mut host = Host::open(&log, 4).unwrap();

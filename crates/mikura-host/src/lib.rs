@@ -195,6 +195,7 @@ impl Host {
 
     pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
         use std::io::{BufRead, BufReader, Write};
+        self.refuse_unauthenticated_routable(stream.local_addr().map_err(|err| err.to_string())?)?;
         let mut reader = BufReader::new(stream.try_clone().map_err(|err| err.to_string())?);
         let mut line = String::new();
         reader.read_line(&mut line).map_err(|err| err.to_string())?;
@@ -209,8 +210,18 @@ impl Host {
 
     /// Accept connections until the listener closes or an I/O error occurs.
     pub fn serve(&mut self, listener: TcpListener) -> Result<(), String> {
+        self.refuse_unauthenticated_routable(
+            listener.local_addr().map_err(|err| err.to_string())?,
+        )?;
         for incoming in listener.incoming() {
             self.serve_one(incoming.map_err(|err| err.to_string())?)?;
+        }
+        Ok(())
+    }
+
+    fn refuse_unauthenticated_routable(&self, addr: SocketAddr) -> Result<(), String> {
+        if !addr.ip().is_loopback() && self.bearer.is_none() {
+            return Err("non-loopback serve refused without a clerk bearer".into());
         }
         Ok(())
     }
