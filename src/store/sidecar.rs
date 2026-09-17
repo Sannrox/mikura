@@ -71,13 +71,7 @@ impl Store {
                 body.extend_from_slice(&prop_id.to_le_bytes());
                 body.extend_from_slice(&value_id.to_le_bytes());
             }
-            let action_intern = match meta.action_id.as_deref() {
-                None | Some("") => ACTION_NONE,
-                Some(action_id) => self
-                    .joins
-                    .intern_existing(action_id)
-                    .ok_or_else(|| "missing intern action".to_string())?,
-            };
+            let action_intern = meta.action_id.unwrap_or(ACTION_NONE);
             body.extend_from_slice(&action_intern.to_le_bytes());
         }
         write_checksummed(&Self::join_map_path(&self.log), &body)
@@ -118,7 +112,17 @@ impl Store {
                         .ok_or_else(|| "missing dirty prop".to_string())?,
                 )?;
             }
-            write_str(&mut body, meta.action_id.as_deref().unwrap_or(""))?;
+            write_str(
+                &mut body,
+                meta.action_id
+                    .map(|id| {
+                        self.joins
+                            .intern_get(id)
+                            .ok_or_else(|| "missing intern action".to_string())
+                    })
+                    .transpose()?
+                    .unwrap_or(""),
+            )?;
         }
         write_checksummed(&Self::join_delta_path(&self.log), &body)
     }
@@ -167,13 +171,10 @@ impl Store {
             let action_id = if action_intern == ACTION_NONE {
                 None
             } else {
-                Some(
-                    joins
-                        .intern
-                        .get(action_intern as usize)
-                        .ok_or_else(|| "bad intern action".to_string())?
-                        .clone(),
-                )
+                if joins.intern_get(action_intern).is_none() {
+                    return Err("bad intern action".into());
+                }
+                Some(action_intern)
             };
             identity.insert(
                 (kind.clone(), key.clone()),
@@ -224,12 +225,9 @@ impl Store {
             let action_id = if action_id.is_empty() {
                 None
             } else {
-                Some(action_id)
+                Some(self.joins.intern(&action_id))
             };
             self.joins.remove(&kind, &key);
-            if let Some(action_id) = &action_id {
-                self.joins.intern(action_id);
-            }
             self.identity.insert(
                 (kind.clone(), key.clone()),
                 LiveMeta {

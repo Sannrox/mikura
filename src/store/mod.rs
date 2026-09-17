@@ -86,15 +86,17 @@ impl Store {
         self.joins.remove(&record.kind, &record.key);
         self.joins.intern(&record.kind);
         self.joins.intern(&record.key);
-        if let Some(action_id) = &record.action_id {
-            self.joins.intern(action_id);
-        }
+        let action_id = record
+            .action_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(|id| self.joins.intern(id));
         self.identity.insert(
             id.clone(),
             LiveMeta {
                 gen: record.gen,
                 hidden: record.hidden,
-                action_id: record.action_id.clone(),
+                action_id,
             },
         );
         if record.hidden {
@@ -138,7 +140,15 @@ impl Store {
             kind: kind.to_string(),
             key: key.to_string(),
             hidden: meta.hidden,
-            action_id: meta.action_id.clone(),
+            action_id: match meta.action_id {
+                None => None,
+                Some(intern) => Some(
+                    self.joins
+                        .intern_get(intern)
+                        .ok_or_else(|| "missing intern action".to_string())?
+                        .to_string(),
+                ),
+            },
             props,
         })
     }
