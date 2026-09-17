@@ -100,7 +100,9 @@ only after a published in-process miss.
 
 **v10 (one process):** one process remains the hosted form
 ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)).
-Git tag for a consumer ([#57](https://github.com/Sannrox/mikura/issues/57)). crates.io stays ask-first.
+A git tag is enough for a consumer to depend on this crate
+([#57](https://github.com/Sannrox/mikura/issues/57)). Cut it with prepare-release.
+crates.io stays ask-first (`publish = false`).
 
 See [ROADMAP.md](ROADMAP.md) for the ordered work list.
 

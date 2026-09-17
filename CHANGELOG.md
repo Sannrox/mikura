@@ -55,6 +55,10 @@ window.
 - One process remains the hosted form ([#56](https://github.com/Sannrox/mikura/issues/56)).
   10⁸ ingest did not finish, so ingest-versus-evaluate contention was not
   measured. Split waits for a published miss that one process cannot fix.
+- A git tag is enough for the first consumer ([#57](https://github.com/Sannrox/mikura/issues/57)).
+  Load, filter, hop both ways, count/sum, ACL omit, Action id, and host
+  `load` are on the documented surface. Cut the tag with prepare-release.
+  crates.io stays `publish = false`.
 
 - Remeasured hop count+sum after load and filter ([#49](https://github.com/Sannrox/mikura/issues/49)):
   10⁷ query is 1298 ms (still a miss vs 500 ms); 10⁸ ingest did not
