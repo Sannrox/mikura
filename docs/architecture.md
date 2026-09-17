@@ -88,7 +88,9 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 It does not keep a hot payload map. `Store::load(kind, key, acl)` reconstructs
 the live `ObjectRecord` from slim identity plus interned property pairs
 already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
-Denied properties are omitted from the returned map. Hidden rows stay out
+The request deny list is resolved once to intern ids; load materializes
+only allowed owned pairs. An empty deny skips that walk. Denied
+properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
@@ -166,7 +168,9 @@ two scalars) and stays out with query languages.
 `deny_property` inserts one pair. `check` errors with `AclError::Denied`.
 
 Load omits denied properties from the returned object; it does not invent
-substitutes. Evaluate of a denied `(sum_kind, sum_property)` still fails
+substitutes. The omit walks interned owned pairs after resolving the deny
+list to `(kind, property)` intern ids; an empty deny skips the walk.
+Evaluate of a denied `(sum_kind, sum_property)` still fails
 closed. There is no allow-list and no principal. Policy stays in the clerk;
 this crate applies the request deny list.
 

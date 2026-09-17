@@ -507,6 +507,15 @@ impl JoinMaps {
     }
 
     pub(crate) fn row_props(&self, kind: &str, key: &str) -> HashMap<String, String> {
+        self.row_props_omitting(kind, key, &HashSet::new())
+    }
+
+    pub(crate) fn row_props_omitting(
+        &self,
+        kind: &str,
+        key: &str,
+        denied: &HashSet<(u32, u32)>,
+    ) -> HashMap<String, String> {
         let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
         else {
             return HashMap::new();
@@ -514,16 +523,7 @@ impl JoinMaps {
         let Some(owned) = self.owned.get(&(kind_id, key_id)) else {
             return HashMap::new();
         };
-        let mut props = HashMap::new();
-        for (prop_id, value_id) in owned {
-            if let (Some(prop), Some(value)) = (
-                self.intern.get(*prop_id as usize),
-                self.intern.get(*value_id as usize),
-            ) {
-                props.insert(prop.clone(), value.clone());
-            }
-        }
-        props
+        crate::acl::PropertyAcl::omit_owned(&self.intern, kind_id, owned, denied)
     }
 }
 

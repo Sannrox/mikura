@@ -480,6 +480,12 @@ fn load_omits_denied_properties() {
     assert_eq!(live.props.get("amount").map(String::as_str), Some("10"));
     assert_eq!(live.props.get("order_id").map(String::as_str), Some("o1"));
 
+    let deny_unknown = PropertyAcl::deny_property("Shipment", "not_a_column");
+    assert_eq!(
+        store.load("Shipment", "s1", &deny_unknown).unwrap().props,
+        live.props
+    );
+
     let deny_amount = PropertyAcl::deny_property("Shipment", "amount");
     let redacted = store.load("Shipment", "s1", &deny_amount).unwrap();
     assert!(!redacted.props.contains_key("amount"));
