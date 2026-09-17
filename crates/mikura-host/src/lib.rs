@@ -125,6 +125,25 @@ impl Host {
         Ok(())
     }
 
+    /// Bind `addr` and open the store as one host.
+    ///
+    /// A presented bearer is stored on any bind, including loopback.
+    /// Non-loopback still requires a non-empty bearer. `open` plus `handle`
+    /// without `require_bearer` remains the in-process clerk path.
+    pub fn listen(
+        log: &Path,
+        stream_bound: usize,
+        addr: SocketAddr,
+        bearer: Option<&str>,
+    ) -> Result<(Self, TcpListener), String> {
+        let listener = Self::bind(addr, bearer)?;
+        let mut host = Self::open(log, stream_bound)?;
+        if let Some(secret) = bearer {
+            host.require_bearer(secret)?;
+        }
+        Ok((host, listener))
+    }
+
     /// Bind a TCP listener. Non-loopback addresses need a non-empty bearer.
     pub fn bind(addr: SocketAddr, bearer: Option<&str>) -> Result<TcpListener, String> {
         if !addr.ip().is_loopback() {

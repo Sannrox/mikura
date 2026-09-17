@@ -44,6 +44,10 @@ window.
 
 ### Fixed
 
+- `Host::listen` binds and stores a presented clerk bearer as one
+  constructor so a routable or `--bearer` path cannot split listen from
+  the RPC envelope. In-process `open` / `handle` without `require_bearer`
+  stays the clerk embedding ([#90](https://github.com/Sannrox/mikura/issues/90)).
 - Host evaluate rejects `filter` with an empty `property` or `value` as a
   schema error. Omit or `null` remains the only unfiltered form
   ([#79](https://github.com/Sannrox/mikura/issues/79)).
