@@ -12,10 +12,12 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
 
 The public surface is three crates: `mikura` (`src/lib.rs`) for the log and
 evaluate, `mikura-ingest` for batch/stream append, and `mikura-host` for
-loopback ingest, evaluate, and load. A control plane maps datasets and admitted edits
-to `ObjectRecord`s; it does not live in this repository. The destination
-object-set is filter, load, hop, and aggregate; today evaluate is hop +
-count/sum.
+loopback ingest, evaluate, and load. A git tag of that surface is enough for
+a first consumer; `publish = false` until crates.io is authorized
+([#57](https://github.com/Sannrox/mikura/issues/57)). A control plane maps
+datasets and admitted edits to `ObjectRecord`s; it does not live in this
+repository. The destination object-set is filter, load, hop, and aggregate;
+today evaluate is hop + count/sum.
 
 ## Object model
 

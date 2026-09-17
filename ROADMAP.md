@@ -39,16 +39,13 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v8 host load | Host JSON `load` returns the live object; evaluate filter stays on the wire ([#52](https://github.com/Sannrox/mikura/issues/52)) |
 | v9 log compact | No compact/checkpoint until a later envelope misses on disk or `Store::open` because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)) |
 | v10 one process | One process remains the hosted form; split waits for a miss one process cannot fix ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
+| v10 tag | A git tag is enough for the first consumer; crates.io stays `publish = false` until a human authorizes it ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut the tag with prepare-release, not from this research. |
 
 ## Next (this repository, in order)
 
 Scale and the log:
 
 1. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
-
-Hosted form and independence:
-
-2. Tag a crate the clerk can depend on. Git tag first; crates.io stays ask-first ([#57](https://github.com/Sannrox/mikura/issues/57)).
 
 Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture.
 
