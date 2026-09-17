@@ -90,7 +90,13 @@ consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51)).
 Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
 wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
-**v9:** log compact/checkpoint decision ([#53](https://github.com/Sannrox/mikura/issues/53)); envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend only after a published in-process miss.
+**v9 (compact no-action):** the append-only log plus a deletable sidecar stay
+enough. 10⁷ is 613 MiB log / 18.9 s open; 10⁸ ingest did not finish. No
+checkpoint ADR. Revisit if a later envelope misses on disk or open time
+because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)).
+Envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then
+10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend
+only after a published in-process miss.
 
 **v10:** multi-process host only if one process is insufficient ([#56](https://github.com/Sannrox/mikura/issues/56)); git tag for a consumer ([#57](https://github.com/Sannrox/mikura/issues/57)). crates.io stays ask-first.
 
