@@ -87,7 +87,8 @@ process, one `Store`.
 follow a join property to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)).
 Count+sum stays the evaluate aggregate; extra aggregates wait for a named
 consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51)).
-Load and filter on the host wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
+Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
+wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
 **v9:** log compact/checkpoint decision ([#53](https://github.com/Sannrox/mikura/issues/53)); envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend only after a published in-process miss.
 

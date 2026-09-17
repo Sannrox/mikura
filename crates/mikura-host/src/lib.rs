@@ -1,7 +1,7 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `Evaluate`). Loopback bind is unauthenticated.
+//! `IngestStreamFlush`, `Evaluate`, `Load`). Loopback bind is unauthenticated.
 //! Non-loopback bind requires a clerk-owned bearer (ADR 0007).
 //! This crate does not know tenants, policy, receipts, or principals.
 
@@ -50,10 +50,22 @@ pub struct WireEvaluate {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum HostRequest {
-    IngestBatch { records: Vec<ObjectRecord> },
-    IngestStreamPush { record: ObjectRecord },
+    IngestBatch {
+        records: Vec<ObjectRecord>,
+    },
+    IngestStreamPush {
+        record: ObjectRecord,
+    },
     IngestStreamFlush,
-    Evaluate { request: WireEvaluate },
+    Evaluate {
+        request: WireEvaluate,
+    },
+    Load {
+        kind: String,
+        key: String,
+        #[serde(default)]
+        deny: Vec<WireDeny>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,6 +75,8 @@ pub struct HostResponse {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluate: Option<EvaluateWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<ObjectRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -140,9 +154,21 @@ impl Host {
                         two_hop_count: response.two_hop_count,
                         sum_amount: response.sum_amount,
                     }),
+                    load: None,
                 },
                 Err(error) => fail(error),
             },
+            HostRequest::Load { kind, key, deny } => {
+                match load_record(&self.store, kind, key, deny) {
+                    Ok(record) => HostResponse {
+                        ok: true,
+                        error: None,
+                        evaluate: None,
+                        load: Some(record),
+                    },
+                    Err(error) => fail(error),
+                }
+            }
         }
     }
 
@@ -195,6 +221,7 @@ fn ok() -> HostResponse {
         ok: true,
         error: None,
         evaluate: None,
+        load: None,
     }
 }
 
@@ -203,6 +230,7 @@ fn fail(error: impl ToString) -> HostResponse {
         ok: false,
         error: Some(error.to_string()),
         evaluate: None,
+        load: None,
     }
 }
 
@@ -260,6 +288,20 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
     ObjectSet::new(LocalCompute)
         .evaluate(store, &request)
         .map_err(|err| format!("{err:?}"))
+}
+
+fn load_record(
+    store: &Store,
+    kind: String,
+    key: String,
+    deny: Vec<WireDeny>,
+) -> Result<ObjectRecord, String> {
+    let acl = match deny.as_slice() {
+        [] => PropertyAcl::allow_all(),
+        [deny] => PropertyAcl::deny_property(&deny.kind, &deny.property),
+        _ => return Err("host load accepts at most one deny pair in v1".into()),
+    };
+    store.load(&kind, &key, &acl)
 }
 
 #[cfg(test)]

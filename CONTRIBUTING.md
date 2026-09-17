@@ -59,7 +59,8 @@ The default suite has three layers. All stay offline and fail closed.
   `crates/mikura-host/tests/e2e.rs`. Run it with
   `cargo test -p mikura-host --test e2e --locked`, or as part of
   `cargo test --workspace --locked`. It starts a `mikura-host` process on
-  loopback and drives JSON-line ingest/evaluate over the wire.
+  loopback and drives JSON-line ingest, evaluate (including filter), and load
+  over the wire.
 
 - Use a temp directory for object logs. Clean it up in the test.
 - Do not require a network, PostgreSQL, Spark, or credentials.

@@ -307,3 +307,43 @@ fn evaluate_filter_matches_in_process() {
     assert_eq!(hosted.sum_amount, 10);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn load_matches_in_process_and_omits_denied() {
+    let (dir, log) = temp_log("load");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    let hosted = host.handle(HostRequest::Load {
+        kind: "Customer".into(),
+        key: "c1".into(),
+        deny: Vec::new(),
+    });
+    assert!(hosted.ok, "{hosted:?}");
+    let loaded = hosted.load.expect("load payload");
+    let store = Store::open(&log).unwrap();
+    assert_eq!(
+        loaded,
+        store
+            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .unwrap()
+    );
+    let omitted = host.handle(HostRequest::Load {
+        kind: "Customer".into(),
+        key: "c1".into(),
+        deny: vec![WireDeny {
+            kind: "Customer".into(),
+            property: "region".into(),
+        }],
+    });
+    assert!(omitted.ok, "{omitted:?}");
+    let omitted = omitted.load.expect("load payload");
+    assert!(!omitted.props.contains_key("region"));
+    let missing = host.handle(HostRequest::Load {
+        kind: "Customer".into(),
+        key: "nope".into(),
+        deny: Vec::new(),
+    });
+    assert!(!missing.ok);
+    assert!(missing.load.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
