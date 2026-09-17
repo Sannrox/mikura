@@ -207,7 +207,17 @@ source-snapshot path and does not become governed writeback.
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
-JSON line per connection. Line-delimited JSON RPCs: `ingest_batch`,
+JSON line per connection. Line-delimited JSON envelope `{ v, token?, op, … }`. Responses always
+include `v`. Required and unused fields by bind:
+
+| Bind | Bearer stored | `v` | `token` | `filter` |
+| --- | --- | --- | --- | --- |
+| loopback | no | omit or `1` | unused | only under evaluate `request` |
+| loopback | yes (`--bearer`) | omit or `1` | required, must match | only under evaluate `request` |
+| non-loopback | required | omit or `1` | required, must match | only under evaluate `request` |
+
+Any other `v` is a wire error. `token` is a top-level sibling of `op`,
+never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `evaluate`, `load`. Evaluate accepts an
 optional exact-match `filter`. Omit or `null` filter means all visible roots.
 An empty `property` or `value` is a wire error, not a silent empty match.
