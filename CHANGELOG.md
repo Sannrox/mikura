@@ -9,6 +9,9 @@ window.
 
 ### Added
 
+- Spike 011 addendum: 10⁸ ingest time is join persist growing with
+  identity, not log fsync and not OOM. 10⁹ stays blocked
+  ([#124](https://github.com/Sannrox/mikura/issues/124)).
 - Closing host stdin stops the listener without flushing uncommitted
   stream pushes. A replacement process on the same files answers the
   product-loop load, list, hop, and overlay. Wire `v` other than omit/`1`

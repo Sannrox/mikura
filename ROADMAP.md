@@ -60,6 +60,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M4 overload | Host request-byte bound and socket timeout fail closed; disconnect does not stop the listener ([#125](https://github.com/Sannrox/mikura/issues/125)). |
 | M4 backup | Copy the object log plus optional `{log}.joins`; a fresh host on the copy answers load, list, hop, and overlay. Delete the sidecar; rebuild from the log. Corrupt pages stay fail-closed ([#126](https://github.com/Sannrox/mikura/issues/126)). |
 | M4 shutdown | Closing stdin stops the listener without promoting uncommitted stream pages. A replacement process on the same files answers product-loop load, list, hop, and overlay. Wire `v` other than omit/`1` stays fail-closed ([#127](https://github.com/Sannrox/mikura/issues/127)). |
+| 10⁸ ingest diagnosis | Unfinished 10⁸ ingest is join persist growing with identity, not log fsync and not OOM. 10⁹ stays blocked ([#124](https://github.com/Sannrox/mikura/issues/124)). |
 
 ## Next (this repository, in order)
 
@@ -75,7 +76,7 @@ or published Issues.
 
 Scale and the log remain gated research:
 
-1. Diagnose the unfinished 10⁸ ingest ([#124](https://github.com/Sannrox/mikura/issues/124)), then 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
+1. Keep join persist bounded as identity grows ([#134](https://github.com/Sannrox/mikura/issues/134)), then 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
 
 Measure the application's workload first. Diagnose the unfinished 10⁸ run
 before larger envelopes; they do not block defining and delivering the pilot.
