@@ -65,8 +65,15 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | join delta compact | Rewrite the interned checkpoint and delete `{log}.joins.delta` when that dirty-set file exceeds `JOIN_DELTA_COMPACT_BYTES`, not only when dirty rows are a quarter of identity ([#149](https://github.com/Sannrox/mikura/issues/149)). |
 | 10⁸ ingest remasure | After #134, 10⁸ ingest finishes (~2.8 h, 100 × 1 M chunks, peak 7.9 GiB). 10⁸ query/open were not reached. 10⁷ query still misses 500 ms ([#137](https://github.com/Sannrox/mikura/issues/137)). |
 | 10⁹ envelope | Hop count+sum already misses 500 ms at 10⁷. 10⁹ ingest is not required; a 77 M sample showed climbing commit cost and a disk fill before 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)). |
+| last-hop measures ADR | Count and sum for a schema-named leaf property persist as parent rollups on the deletable sidecar. Evaluate still leaf-walks undeclared sums. No engine pick ([#150](https://github.com/Sannrox/mikura/issues/150), [ADR 0010](docs/decisions/0010-last-hop-measures.md)). |
 
 ## Next (this repository, in order)
+
+1. **Last-hop measures:** persist schema-named parent rollups on the join
+   sidecar and answer hop count+sum from them
+   ([#151](https://github.com/Sannrox/mikura/issues/151),
+   [ADR 0010](docs/decisions/0010-last-hop-measures.md)). Undeclared sums
+   stay on today's leaf walk.
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M4 are accepted and implemented. Remaining items:

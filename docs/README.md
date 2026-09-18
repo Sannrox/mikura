@@ -12,7 +12,7 @@ the job.
 | [plans/m4-hosted-pilot-contract.md](plans/m4-hosted-pilot-contract.md) | Reference | Accepted one-process pilot: overload, restore, shutdown, upgrade |
 | [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
 | [glossary.md](glossary.md) | Reference | Project terms |
-| [decisions/](decisions/README.md) | Reference | Accepted ADRs ([0008](decisions/0008-type-link-delete.md) type/link/delete; [0009](decisions/0009-refresh-safe-edit-overlay.md) refresh-safe overlay) |
+| [decisions/](decisions/README.md) | Reference | Accepted ADRs ([0008](decisions/0008-type-link-delete.md) type/link/delete; [0009](decisions/0009-refresh-safe-edit-overlay.md) refresh-safe overlay; [0010](decisions/0010-last-hop-measures.md) last-hop measures) |
 | [../spikes/README.md](../spikes/README.md) | Reference | Historical measurements |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Guide | How to change the code |
 | [../AGENTS.md](../AGENTS.md) | Governance | How agents work in this tree |
