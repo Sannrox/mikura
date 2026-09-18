@@ -1,12 +1,13 @@
-//! 10⁸ hop count + sum envelope on product `Store` join maps.
-//! Throwaway. Dual-read versus log replay. Spark stays unsupported.
+//! Hop count + sum envelope on product `Store` join maps.
+//! Throwaway. Dual-read versus sidecar and optional log replay.
+//! Spark stays unsupported.
 
 use mikura::{
     Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl, Store,
 };
 use mikura_ingest::BatchIngest;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -31,6 +32,19 @@ impl Scale {
     fn total(&self) -> i64 {
         self.customers + self.orders + self.shipments
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Oracle {
+    Full,
+    Sidecar,
+}
+
+struct Args {
+    objects: i64,
+    dir: Option<PathBuf>,
+    keep: bool,
+    oracle: Oracle,
 }
 
 fn rec(kind: &str, key: String, hidden: bool, props: Vec<(&str, String)>) -> ObjectRecord {
@@ -84,8 +98,9 @@ fn rss_bytes() -> u64 {
         .unwrap_or(0)
 }
 
-fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<(), String> {
+fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<u64, String> {
     let mut batch = Vec::with_capacity(chunk);
+    let mut peak_rss = rss_bytes();
     for id in 0..scale.customers {
         batch.push(rec(
             "Customer",
@@ -93,7 +108,7 @@ fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<(), String> 
             id % 100 == 0,
             vec![("region", region(id))],
         ));
-        flush_if_full(store, &mut batch, chunk)?;
+        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
     }
     for id in 0..scale.orders {
         batch.push(rec(
@@ -102,7 +117,7 @@ fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<(), String> 
             id % 100 == 0,
             vec![("customer_id", format!("c{}", id % scale.customers))],
         ));
-        flush_if_full(store, &mut batch, chunk)?;
+        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
     }
     for id in 0..scale.shipments {
         batch.push(rec(
@@ -114,32 +129,34 @@ fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<(), String> 
                 ("amount", format!("{}", (id % 50) + 1)),
             ],
         ));
-        flush_if_full(store, &mut batch, chunk)?;
+        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
     }
     if !batch.is_empty() {
         BatchIngest::run(store, std::mem::take(&mut batch))?;
+        peak_rss = peak_rss.max(rss_bytes());
     }
-    Ok(())
+    Ok(peak_rss)
 }
 
 fn flush_if_full(
     store: &mut Store,
     batch: &mut Vec<ObjectRecord>,
     chunk: usize,
-) -> Result<(), String> {
-    if batch.len() >= chunk {
-        let n = batch.len();
-        let fsync_before = store.log_fsync_count();
-        let t = Instant::now();
-        BatchIngest::run(store, std::mem::take(batch))?;
-        eprintln!(
-            "ingested_chunk={n} commit_ms={} fsync_delta={} rss_bytes={}",
-            t.elapsed().as_millis(),
-            store.log_fsync_count() - fsync_before,
-            rss_bytes()
-        );
+) -> Result<u64, String> {
+    if batch.len() < chunk {
+        return Ok(0);
     }
-    Ok(())
+    let n = batch.len();
+    let fsync_before = store.log_fsync_count();
+    let t = Instant::now();
+    BatchIngest::run(store, std::mem::take(batch))?;
+    let rss = rss_bytes();
+    eprintln!(
+        "ingested_chunk={n} commit_ms={} fsync_delta={} rss_bytes={rss}",
+        t.elapsed().as_millis(),
+        store.log_fsync_count() - fsync_before,
+    );
+    Ok(rss)
 }
 
 fn region(id: i64) -> String {
@@ -157,21 +174,48 @@ fn log_bytes(log: &Path) -> u64 {
 }
 
 fn main() -> ExitCode {
-    let objects = parse_objects(env::args().skip(1)).unwrap_or(10_000);
-    let scale = match Scale::from_objects(objects) {
+    let args = match parse_args(env::args().skip(1)) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    };
+    let scale = match Scale::from_objects(args.objects) {
         Ok(scale) => scale,
         Err(error) => {
             eprintln!("{error}");
             return ExitCode::from(2);
         }
     };
-    let dir = env::temp_dir().join(format!("mikura-envelope-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let (dir, ephemeral) = match &args.dir {
+        Some(dir) => (dir.clone(), false),
+        None => (
+            env::temp_dir().join(format!("mikura-envelope-{}", std::process::id())),
+            !args.keep,
+        ),
+    };
+    if ephemeral {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!("mkdir: {error}");
         return ExitCode::from(1);
     }
     let log = dir.join("objects.mikura");
+    if let Err(error) = refuse_existing_run(&log, ephemeral) {
+        eprintln!("{error}");
+        return ExitCode::from(1);
+    }
+    let oracle = match args.oracle {
+        Oracle::Full => "full",
+        Oracle::Sidecar => "sidecar",
+    };
+    eprintln!(
+        "objects={} oracle={oracle} query_budget_ms=500 keep={}",
+        scale.total(),
+        args.keep || !ephemeral
+    );
     let ingest_start = Instant::now();
     let mut store = match Store::create(&log) {
         Ok(store) => store,
@@ -180,11 +224,23 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    if let Err(error) = ingest(&mut store, &scale, 1_000_000) {
-        eprintln!("ingest: {error}");
-        let _ = std::fs::remove_dir_all(&dir);
-        return ExitCode::from(1);
-    }
+    let peak_rss = match ingest(&mut store, &scale, 1_000_000) {
+        Ok(peak) => peak.max(rss_bytes()),
+        Err(error) => {
+            eprintln!("ingest: {error}");
+            eprintln!(
+                "ingest_ms={} log_bytes={} join_bytes={} rss_bytes={}",
+                ingest_start.elapsed().as_millis(),
+                log_bytes(&log),
+                sidecar_bytes(&log),
+                rss_bytes()
+            );
+            if ephemeral {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            return ExitCode::from(1);
+        }
+    };
     let ingest_ms = ingest_start.elapsed().as_millis();
     let ingest_rss = rss_bytes();
     let oss = ObjectSet::new(LocalCompute);
@@ -193,7 +249,9 @@ fn main() -> ExitCode {
         Ok(response) => response,
         Err(error) => {
             eprintln!("evaluate: {error:?}");
-            let _ = std::fs::remove_dir_all(&dir);
+            if ephemeral {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
             return ExitCode::from(1);
         }
     };
@@ -207,7 +265,9 @@ fn main() -> ExitCode {
         Ok(store) => store,
         Err(error) => {
             eprintln!("open: {error}");
-            let _ = std::fs::remove_dir_all(&dir);
+            if ephemeral {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
             return ExitCode::from(1);
         }
     };
@@ -218,33 +278,44 @@ fn main() -> ExitCode {
         Ok(response) => response,
         Err(error) => {
             eprintln!("reopen evaluate: {error:?}");
-            let _ = std::fs::remove_dir_all(&dir);
+            if ephemeral {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
             return ExitCode::from(1);
         }
     };
     let sidecar_query_ms = reopen_start.elapsed().as_millis();
     drop(reopened);
 
-    std::fs::remove_file(Store::join_map_path(&log)).ok();
-    let replay_start = Instant::now();
-    let replayed = match Store::open(&log) {
-        Ok(store) => store,
-        Err(error) => {
-            eprintln!("replay: {error}");
-            let _ = std::fs::remove_dir_all(&dir);
-            return ExitCode::from(1);
-        }
+    let (replay_ms, from_log, replayed_oracle) = if args.oracle == Oracle::Full {
+        std::fs::remove_file(Store::join_map_path(&log)).ok();
+        let replay_start = Instant::now();
+        let replayed = match Store::open(&log) {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("replay: {error}");
+                if ephemeral {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
+                return ExitCode::from(1);
+            }
+        };
+        let replay_ms = replay_start.elapsed().as_millis();
+        let from_log = match oss.evaluate(&replayed, &request()) {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("replay evaluate: {error:?}");
+                if ephemeral {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
+                return ExitCode::from(1);
+            }
+        };
+        drop(replayed);
+        (replay_ms, from_log, true)
+    } else {
+        (0, from_sidecar.clone(), false)
     };
-    let replay_ms = replay_start.elapsed().as_millis();
-    let from_log = match oss.evaluate(&replayed, &request()) {
-        Ok(response) => response,
-        Err(error) => {
-            eprintln!("replay evaluate: {error:?}");
-            let _ = std::fs::remove_dir_all(&dir);
-            return ExitCode::from(1);
-        }
-    };
-    drop(replayed);
 
     let dual_read = live.two_hop_count == from_sidecar.two_hop_count
         && live.sum_amount == from_sidecar.sum_amount
@@ -257,6 +328,7 @@ fn main() -> ExitCode {
     println!("objects={}", scale.total());
     println!("ingest_ms={ingest_ms}");
     println!("ingest_rss_bytes={ingest_rss}");
+    println!("peak_rss_bytes={peak_rss}");
     println!("log_bytes={object_log_bytes}");
     println!("join_bytes={join_bytes}");
     println!("live_query_ms={live_query_ms}");
@@ -264,11 +336,15 @@ fn main() -> ExitCode {
     println!("open_rss_bytes={open_rss}");
     println!("sidecar_query_ms={sidecar_query_ms}");
     println!("replay_ms={replay_ms}");
+    println!("oracle={oracle}");
+    println!("replayed_oracle={replayed_oracle}");
     println!("two_hop_count={}", from_sidecar.two_hop_count);
     println!("sum_amount={}", from_sidecar.sum_amount);
     println!("dual_read_hold={dual_read}");
 
-    let _ = std::fs::remove_dir_all(&dir);
+    if ephemeral {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     if dual_read {
         ExitCode::SUCCESS
     } else {
@@ -276,18 +352,91 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse_objects(mut args: impl Iterator<Item = String>) -> Option<i64> {
+fn refuse_existing_run(log: &Path, ephemeral: bool) -> Result<(), String> {
+    if !ephemeral && log.exists() {
+        return Err("refusing to overwrite existing objects.mikura".into());
+    }
+    Ok(())
+}
+
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut parsed = Args {
+        objects: 10_000,
+        dir: None,
+        keep: false,
+        oracle: Oracle::Full,
+    };
+    let mut args = args.peekable();
     while let Some(arg) = args.next() {
-        if arg == "--objects" {
-            return args.next()?.parse().ok();
+        match arg.as_str() {
+            "--objects" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing --objects value".to_string())?;
+                parsed.objects = value
+                    .parse()
+                    .map_err(|_| format!("invalid --objects {value}"))?;
+            }
+            "--dir" => {
+                let value = args.next().ok_or_else(|| "missing --dir value".to_string())?;
+                parsed.dir = Some(PathBuf::from(value));
+                parsed.keep = true;
+            }
+            "--keep" => parsed.keep = true,
+            "--oracle" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing --oracle value".to_string())?;
+                parsed.oracle = match value.as_str() {
+                    "full" => Oracle::Full,
+                    "sidecar" => Oracle::Sidecar,
+                    other => return Err(format!("unknown --oracle {other}")),
+                };
+            }
+            other => return Err(format!("unknown argument {other}")),
         }
     }
-    None
+    Ok(parsed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keep_dir_refuses_existing_log() {
+        let dir = std::env::temp_dir().join("mikura-envelope-keep-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("objects.mikura");
+        std::fs::write(&log, b"keep").unwrap();
+        let error = refuse_existing_run(&log, false).unwrap_err();
+        assert_eq!(error, "refusing to overwrite existing objects.mikura");
+        assert_eq!(std::fs::read(&log).unwrap(), b"keep");
+        assert!(refuse_existing_run(&log, true).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_dir_keep_and_sidecar_oracle() {
+        let args = parse_args(
+            [
+                "--objects",
+                "1000",
+                "--dir",
+                "data/envelope",
+                "--oracle",
+                "sidecar",
+            ]
+            .into_iter()
+            .map(String::from),
+        )
+        .unwrap();
+        assert_eq!(args.objects, 1_000);
+        assert_eq!(args.dir.as_deref(), Some(Path::new("data/envelope")));
+        assert!(args.keep);
+        assert_eq!(args.oracle, Oracle::Sidecar);
+    }
 
     #[test]
     fn small_fixture_dual_read_holds_and_hidden_out() {

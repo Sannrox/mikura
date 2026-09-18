@@ -35,10 +35,12 @@ application is complete.
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs) | Explicit trusted-caller boundary and complete enforcement across supported operations |
 | Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests | Capacity limits, operational visibility, representative workload budgets |
 
-The [existing roadmap](../../ROADMAP.md) records a 10⁷ query miss and an
-unfinished 10⁸ ingest. The scale Issues [10⁹](https://github.com/Sannrox/mikura/issues/54) and
-[10¹⁰](https://github.com/Sannrox/mikura/issues/55) stay blocked. Those are
-long-horizon research, not the next application milestone.
+The [existing roadmap](../../ROADMAP.md) records a 10⁷ query miss, a
+finished 10⁸ ingest, and a 10⁹ close that does not need a finished
+billion-object run ([#54](https://github.com/Sannrox/mikura/issues/54)).
+[10¹⁰](https://github.com/Sannrox/mikura/issues/55) waits until a
+consumer names that envelope. Those are long-horizon research, not the
+next application milestone.
 
 ## First application contract
 
@@ -196,11 +198,12 @@ numbers are reserved by this proposal, and no issues are published by it.
 
 ## Deferred work and scale gates
 
-Keep [#54](https://github.com/Sannrox/mikura/issues/54) and
-[#55](https://github.com/Sannrox/mikura/issues/55) blocked until their existing
-prerequisites hold. Measure the application's actual scale first. Diagnose
-the unfinished 10⁸ run before attempting larger envelopes; no run is needed
-to justify the next application milestone.
+[#54](https://github.com/Sannrox/mikura/issues/54) is closed: the hop
+budget already misses at 10⁷. Keep
+[#55](https://github.com/Sannrox/mikura/issues/55) blocked until a
+consumer names 10¹⁰. Measure the application's actual scale first. No
+larger synthetic envelope is needed to justify the next application
+milestone.
 
 Defer full text, vector/geospatial search, group-by and extra aggregates,
 multi-source mappings, general schema-edit migration, SDK generation,

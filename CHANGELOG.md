@@ -20,6 +20,10 @@ window.
 
 ### Added
 
+- Spike 011 remasure: 10⁹ hop count+sum is a query miss already known
+  at 10⁷. A 77 M sample does not justify finishing a billion-object
+  ingest. No engine pick
+  ([#54](https://github.com/Sannrox/mikura/issues/54)).
 - Spike 011 remasure: 10⁸ ingest completes after bounded join persist
   (~2.8 h, 100 × 1 M chunks). 10⁸ query/open were not reached. 10⁷
   query still misses 500 ms
