@@ -35,8 +35,16 @@ today evaluate is hop + count/sum.
 Identity is `(kind, key)`. A later append replaces the live record.
 
 Records may store an optional Action id. They do not store a principal.
-Schema descriptors, when present, are ordinary objects of kind
-`mikura.schema` ([ADR 0008](decisions/0008-type-link-delete.md)).
+Schema descriptors persist as ordinary objects of kind `mikura.schema`
+with key equal to the described kind. The descriptor body uses string
+properties `properties` (comma-separated closed set), optional `required`,
+and optional `links` (`name:far_kind:out|in:0..1`). Consumer kinds must
+not use `mikura.schema`. A visible descriptor validates later visible
+writes of that kind and `Store::load_with_schema`. `Store::load` still
+returns historical rows that predate the descriptor. Hidden instance
+writes skip validation (tombstones). Hidden schema rows are treated as
+absent. No schema row means today's unvalidated strings.
+[ADR 0008](decisions/0008-type-link-delete.md).
 [ADR 0006](decisions/0006-action-provenance.md).
 
 ## Object log

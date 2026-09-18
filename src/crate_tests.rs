@@ -902,3 +902,178 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn product_loop_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
+    (
+        SchemaDescriptor {
+            kind: "component".into(),
+            properties: vec!["name".into(), "tier".into()],
+            required: vec!["name".into(), "tier".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "incident".into(),
+                outgoing: false,
+            }],
+        },
+        SchemaDescriptor {
+            kind: "incident".into(),
+            properties: vec!["affects".into(), "name".into()],
+            required: vec!["name".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "component".into(),
+                outgoing: true,
+            }],
+        },
+    )
+}
+
+#[test]
+fn committed_schema_validates_writes_and_rebuilds() {
+    let (dir, log) = temp_log("schema-validate");
+    let mut store = Store::create(&log).unwrap();
+    store
+        .append(rec(
+            "component",
+            "legacy",
+            false,
+            &[("alias", "pre-schema")],
+        ))
+        .unwrap();
+    let (component_schema, incident_schema) = product_loop_schemas();
+    store.append(component_schema.to_record().unwrap()).unwrap();
+    store.append(incident_schema.to_record().unwrap()).unwrap();
+    store
+        .append(rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ))
+        .unwrap();
+    store
+        .append(rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ))
+        .unwrap();
+
+    let missing = store
+        .append(rec("component", "svc-web", false, &[("name", "web")]))
+        .unwrap_err();
+    assert!(missing.contains("missing required"), "{missing}");
+    let extra = store
+        .append(rec(
+            "incident",
+            "inc-2",
+            false,
+            &[("name", "n"), ("affects", "svc-api"), ("note", "acked")],
+        ))
+        .unwrap_err();
+    assert!(extra.contains("unknown property"), "{extra}");
+    assert!(store
+        .load("component", "svc-web", &PropertyAcl::allow_all())
+        .is_err());
+
+    let historical = store
+        .load("component", "legacy", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        historical.props.get("alias").map(String::as_str),
+        Some("pre-schema")
+    );
+    let checked = store
+        .load_with_schema(
+            "component",
+            "svc-api",
+            &PropertyAcl::allow_all(),
+            &component_schema,
+        )
+        .unwrap();
+    assert_eq!(checked.props.get("tier").map(String::as_str), Some("prod"));
+    let historical_check = store
+        .load_with_schema(
+            "component",
+            "legacy",
+            &PropertyAcl::allow_all(),
+            &component_schema,
+        )
+        .unwrap_err();
+    assert!(
+        historical_check.contains("unknown property"),
+        "{historical_check}"
+    );
+
+    store.append(rec("incident", "inc-1", true, &[])).unwrap();
+    let hidden = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert!(!store.joins().is_visible("incident", "inc-1"));
+
+    store
+        .append(rec(
+            "incident",
+            "inc-3",
+            false,
+            &[("name", "disk full"), ("affects", "svc-api")],
+        ))
+        .unwrap();
+    let incoming = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![Hop {
+            far_kind: "component".into(),
+            join_property: "affects".into(),
+            incoming: true,
+        }],
+        sum_kind: "component".into(),
+        sum_property: "tier".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+    };
+    let hopped = ObjectSet::new(LocalCompute)
+        .evaluate(&store, &incoming)
+        .unwrap();
+    assert_eq!(hopped.two_hop_count, 1);
+    drop(store);
+
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(
+        reopened.schema("component").unwrap().unwrap().kind,
+        "component"
+    );
+    assert_eq!(
+        reopened
+            .load("component", "svc-api", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("name")
+            .map(String::as_str),
+        Some("billing-api")
+    );
+    assert!(
+        reopened
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .hidden
+    );
+    drop(reopened);
+
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let replayed = Store::open(&log).unwrap();
+    assert_eq!(
+        replayed.schema("incident").unwrap().unwrap(),
+        incident_schema
+    );
+    let rebuilt = replayed
+        .load("component", "legacy", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        rebuilt.props.get("alias").map(String::as_str),
+        Some("pre-schema")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

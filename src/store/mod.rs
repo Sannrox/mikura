@@ -6,6 +6,7 @@ use crate::acl::PropertyAcl;
 use crate::actions::Action;
 use crate::joins::{JoinMaps, LiveMeta};
 use crate::log::{read_records, LogWriter, SyncPolicy};
+use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod sidecar;
 
@@ -153,6 +154,35 @@ impl Store {
         })
     }
 
+    /// Last visible `mikura.schema` row for `kind`, or `None` when absent or hidden.
+    pub fn schema(&self, kind: &str) -> Result<Option<SchemaDescriptor>, String> {
+        let id = (SCHEMA_KIND.to_string(), kind.to_string());
+        let Some(meta) = self.identity.get(&id) else {
+            return Ok(None);
+        };
+        if meta.hidden {
+            return Ok(None);
+        }
+        let record = self.load(SCHEMA_KIND, kind, &PropertyAcl::allow_all())?;
+        SchemaDescriptor::from_record(&record).map(Some)
+    }
+
+    /// [`Self::load`] then fail closed if the record violates `schema`.
+    ///
+    /// A deny list that omits a required property fails closed. Historical
+    /// rows written before a descriptor still return from [`Self::load`].
+    pub fn load_with_schema(
+        &self,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+        schema: &SchemaDescriptor,
+    ) -> Result<ObjectRecord, String> {
+        let record = self.load(kind, key, acl)?;
+        schema.validate(&record)?;
+        Ok(record)
+    }
+
     pub fn append(&mut self, record: ObjectRecord) -> Result<(), String> {
         self.append_uncommitted(record)?;
         self.commit()
@@ -169,6 +199,13 @@ impl Store {
     pub fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
         if matches!(record.action_id.as_deref(), Some("")) {
             return Err("empty action id".into());
+        }
+        if record.kind == SCHEMA_KIND {
+            SchemaDescriptor::from_record(&record)?;
+        } else if !record.hidden {
+            if let Some(schema) = self.schema(&record.kind)? {
+                schema.validate(&record)?;
+            }
         }
         let id = (record.kind.clone(), record.key.clone());
         if let Some(existing) = self.identity.get(&id) {

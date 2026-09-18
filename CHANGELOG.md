@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- Supplied-schema validation: a committed `mikura.schema/<kind>` row
+  fails closed on unknown properties, missing required keys, or an empty
+  outgoing link. Historical unvalidated strings still `load`.
+  `Store::load_with_schema` applies a clerk-supplied descriptor.
+  ([#115](https://github.com/Sannrox/mikura/issues/115)).
 - [ADR 0008](docs/decisions/0008-type-link-delete.md): product-loop values
   stay strings; `affects` is a property-backed many-to-one link; `hidden`
   is the evaluate tombstone; supplied schema persists as `mikura.schema`
