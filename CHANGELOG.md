@@ -20,6 +20,11 @@ window.
 
 ### Added
 
+- Join persist rewrites the interned checkpoint and deletes
+  `{log}.joins.delta` when that dirty-set file exceeds
+  `JOIN_DELTA_COMPACT_BYTES` (64 MiB), not only when dirty rows are a
+  quarter of identity. Dual-read still holds
+  ([#149](https://github.com/Sannrox/mikura/issues/149)).
 - Spike 011 remasure: 10⁹ hop count+sum is a query miss already known
   at 10⁷. A 77 M sample does not justify finishing a billion-object
   ingest. No engine pick
