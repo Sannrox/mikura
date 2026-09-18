@@ -412,21 +412,27 @@ enum ServeRead {
 }
 
 fn read_request_line(stream: &mut TcpStream, bound: usize) -> Result<String, ServeRead> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
+    if bound == 0 {
+        return Err(ServeRead::Bound { bound: 0, bytes: 1 });
+    }
+    let mut buf = Vec::with_capacity(bound);
+    let mut slab = [0u8; 8192];
     loop {
-        match stream.read(&mut byte) {
+        match stream.read(&mut slab) {
             Ok(0) => return Err(ServeRead::Disconnect),
-            Ok(_) => {
-                if byte[0] == b'\n' {
-                    return String::from_utf8(buf).map_err(|err| ServeRead::Io(err.to_string()));
-                }
-                buf.push(byte[0]);
-                if buf.len() > bound {
-                    return Err(ServeRead::Bound {
-                        bound,
-                        bytes: buf.len(),
-                    });
+            Ok(n) => {
+                for &b in &slab[..n] {
+                    if b == b'\n' {
+                        return String::from_utf8(buf)
+                            .map_err(|err| ServeRead::Io(err.to_string()));
+                    }
+                    if buf.len() >= bound {
+                        return Err(ServeRead::Bound {
+                            bound,
+                            bytes: bound + 1,
+                        });
+                    }
+                    buf.push(b);
                 }
             }
             Err(err)
