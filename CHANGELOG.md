@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- Product-loop write visibility stays last-generation `load` after a
+  committed host op and after reopen. No public commit-position waiter;
+  source offsets stay with the clerk
+  ([#123](https://github.com/Sannrox/mikura/issues/123)).
 - Product-loop evaluate stays one exact match, one hop, and a fail-closed
   object bound. Sort, composed filters, and cursors wait for a fixture
   whose expected answers are ambiguous without them

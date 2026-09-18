@@ -82,7 +82,7 @@ disappear. Immediate `load` of `inc-1` shows `note=acked` and
 | Source refresh | Re-ingest the same seed after the edit | `apply_overlay` then `ingest_batch` keeps overlay keys (`note`) and the overlay Action id. `apply_action` then `ingest_batch` still replaces the whole record. |
 | Delete | Source delete of an identity should hide it from evaluate and keep `load` defined | No delete RPC. `ChangelogIngest` hide exists only in `mikura-ingest`. `load` still returns hidden records; evaluate excludes them. |
 | Retry | Repeating the same admitted edit must not invent a second effect | `apply_action` with the same Action id appends another generation. There is no idempotency key. |
-| Read-after-write | The next `load` / `evaluate` on the same host sees the last committed generation | Supported in-process. After process exit, `Host::open` / `Store::open` rebuilds from the log and returns the last generation. |
+| Read-after-write | The next `load` / `evaluate` on the same host sees the last committed generation | Supported in-process. After process exit, `Host::open` / `Store::open` rebuilds from the log and returns the last generation. No public commit-position waiter ([#123](https://github.com/Sannrox/mikura/issues/123)). |
 | Object visibility | Does this fixture need object-level hiding in addition to property denies? | No. The seed has two objects and no per-caller hide. Request property denies remain. Principals and policy stay in the clerk. |
 
 The accepted rule is [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md):
@@ -131,4 +131,6 @@ The M1 contract is [ADR 0008](../decisions/0008-type-link-delete.md)
 ([#110](https://github.com/Sannrox/mikura/issues/110)). Do not publish
 M2–M5 from this page. `#54` and `#55` stay blocked. Remaining M2
 operators wait for a fixture that names them
-([#122](https://github.com/Sannrox/mikura/issues/122)).
+([#122](https://github.com/Sannrox/mikura/issues/122)). A public
+commit-position waiter is not required for this fixture
+([#123](https://github.com/Sannrox/mikura/issues/123)).
