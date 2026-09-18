@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- M4 hosted-pilot contract: one process, JSON `v=1`, deny-closed access,
+  overload, backup/restore of the log, graceful shutdown, and reopen
+  after a binary replace. Follow-ups are #125 / #126 / #127. Leftover M2
+  operators and a commit-position waiter are not prerequisites
+  ([#121](https://github.com/Sannrox/mikura/issues/121)).
 - Product-loop write visibility stays last-generation `load` after a
   committed host op and after reopen. No public commit-position waiter;
   source offsets stay with the clerk

@@ -128,9 +128,11 @@ A miss is a note, not an engine pick.
 ## Follow-up
 
 The M1 contract is [ADR 0008](../decisions/0008-type-link-delete.md)
-([#110](https://github.com/Sannrox/mikura/issues/110)). Do not publish
-M2–M5 from this page. `#54` and `#55` stay blocked. Remaining M2
-operators wait for a fixture that names them
+([#110](https://github.com/Sannrox/mikura/issues/110)). The M4 host
+contract is [m4-hosted-pilot-contract.md](m4-hosted-pilot-contract.md)
+([#121](https://github.com/Sannrox/mikura/issues/121)). Do not publish
+further milestones from this page. `#54` and `#55` stay blocked.
+Remaining M2 operators wait for a fixture that names them
 ([#122](https://github.com/Sannrox/mikura/issues/122)). A public
 commit-position waiter is not required for this fixture
 ([#123](https://github.com/Sannrox/mikura/issues/123)).
