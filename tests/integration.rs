@@ -5,7 +5,7 @@
 
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, PropertyAcl, Store,
+    ObjectRecord, ObjectSet, PropertyAcl, SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -523,4 +523,112 @@ fn exact_match_filter_on_evaluate() {
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), response);
+}
+
+#[test]
+fn schema_validates_product_loop_writes_and_rebuilds() {
+    let tmp = TempLog::new("schema");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "component",
+            "legacy",
+            false,
+            &[("alias", "pre-schema")],
+        )],
+    )
+    .unwrap();
+    let component_schema = SchemaDescriptor {
+        kind: "component".into(),
+        properties: vec!["name".into(), "tier".into()],
+        required: vec!["name".into(), "tier".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "incident".into(),
+            outgoing: false,
+        }],
+    };
+    let incident_schema = SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec!["affects".into(), "name".into()],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+    };
+    BatchIngest::run(
+        &mut store,
+        vec![
+            component_schema.to_record().unwrap(),
+            incident_schema.to_record().unwrap(),
+            rec(
+                "component",
+                "svc-api",
+                false,
+                &[("name", "billing-api"), ("tier", "prod")],
+            ),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[("name", "elevated latency"), ("affects", "svc-api")],
+            ),
+        ],
+    )
+    .unwrap();
+
+    let invalid = BatchIngest::run(
+        &mut store,
+        vec![rec("component", "svc-web", false, &[("name", "web")])],
+    )
+    .unwrap_err();
+    assert!(invalid.contains("missing required"), "{invalid}");
+    assert_eq!(
+        store
+            .load("component", "legacy", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("alias")
+            .map(String::as_str),
+        Some("pre-schema")
+    );
+    assert_eq!(
+        store
+            .load_with_schema(
+                "incident",
+                "inc-1",
+                &PropertyAcl::allow_all(),
+                &incident_schema,
+            )
+            .unwrap()
+            .props
+            .get("affects")
+            .map(String::as_str),
+        Some("svc-api")
+    );
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        reopened.schema("component").unwrap().unwrap(),
+        component_schema
+    );
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        replayed
+            .load("component", "svc-api", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("tier")
+            .map(String::as_str),
+        Some("prod")
+    );
+    assert_eq!(
+        replayed.schema("incident").unwrap().unwrap(),
+        incident_schema
+    );
 }

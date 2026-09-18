@@ -4,7 +4,8 @@
 //! `cargo test --workspace --locked`. Distinct from `tests/integration.rs`.
 
 use mikura::{
-    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl, Store,
+    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,
+    SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_host::HostResponse;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -654,4 +655,91 @@ fn process_product_loop_baseline() {
         Some("elevated latency")
     );
     assert!(!incident.props.contains_key("note"));
+}
+
+fn product_loop_schema_records() -> Vec<ObjectRecord> {
+    vec![
+        SchemaDescriptor {
+            kind: "component".into(),
+            properties: vec!["name".into(), "tier".into()],
+            required: vec!["name".into(), "tier".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "incident".into(),
+                outgoing: false,
+            }],
+        }
+        .to_record()
+        .unwrap(),
+        SchemaDescriptor {
+            kind: "incident".into(),
+            properties: vec!["affects".into(), "name".into()],
+            required: vec!["name".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "component".into(),
+                outgoing: true,
+            }],
+        }
+        .to_record()
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn process_product_loop_with_committed_schema() {
+    let tmp = TempLog::new("product-loop-schema");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let mut records = product_loop_schema_records();
+    records.extend(product_loop_source());
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": records,
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "component",
+        "key": "svc-api"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let svc = loaded.load.expect("load payload");
+    assert_eq!(svc.props.get("tier").map(String::as_str), Some("prod"));
+
+    let schema = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "mikura.schema",
+        "key": "incident"
+    }));
+    assert!(schema.ok, "{schema:?}");
+    let schema = schema.load.expect("schema payload");
+    assert_eq!(
+        schema.props.get("links").map(String::as_str),
+        Some("affects:component:out:0..1")
+    );
+
+    let invalid = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec("component", "svc-web", false, &[("name", "web")])]
+    }));
+    assert!(!invalid.ok, "{invalid:?}");
+    assert!(
+        invalid
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("missing required"),
+        "{invalid:?}"
+    );
+    drop(host);
+
+    let store = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        store.schema("component").unwrap().unwrap().kind,
+        "component"
+    );
+    assert!(store
+        .load("component", "svc-web", &PropertyAcl::allow_all())
+        .is_err());
 }

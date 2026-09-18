@@ -21,6 +21,7 @@ and for contributing to the kernel. Not a production hosted store.
 | Loopback ingest/evaluate host ([ADR 0003](docs/decisions/0003-hosted-service.md)) | |
 | Object-set hop / count / sum from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Cluster compute |
 | Property deny-list (fail closed) | |
+| Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | Non-string scalars; listing matching objects |
 
 Spikes 001–011 are throwaway evidence under [`spikes/`](spikes/README.md).
 
@@ -74,6 +75,8 @@ let response = ObjectSet::new(LocalCompute).evaluate(
 Hidden objects are excluded from evaluate. A denied aggregate property
 returns `AclError::Denied` rather than a guessed value. `Store::load`
 takes the same deny list and omits those keys from the returned object.
+A committed `mikura.schema/<kind>` descriptor validates later writes of
+that kind; `Store::load` still returns historical unvalidated rows.
 Default hops find `far_kind` rows that point at the frontier key;
 `Hop.incoming` follows `props[join_property]` to `far_kind`.
 

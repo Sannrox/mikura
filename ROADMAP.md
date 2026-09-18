@@ -50,27 +50,25 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v10 tag | A git tag is enough for the first consumer; crates.io stays `publish = false` until a human authorizes it ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut the tag with prepare-release, not from this research. |
 | M0 contract | Sekai product-loop fixture is the first application contract; host baseline recorded ([#107](https://github.com/Sannrox/mikura/issues/107), [m0-application-contract.md](docs/plans/m0-application-contract.md)). |
 | M1 contract | Strings, property-backed `affects`, `hidden` tombstone, supplied schema as log objects ([#110](https://github.com/Sannrox/mikura/issues/110), [ADR 0008](docs/decisions/0008-type-link-delete.md)). |
+| M1 schema | Validate writes against committed `mikura.schema/<kind>` descriptors; historical strings still load ([#115](https://github.com/Sannrox/mikura/issues/115)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
-M0 and the M1 contract are accepted. Remaining items:
+M0 and M1 are accepted. Remaining items:
 
-1. **M1 — typed objects and links:** implement supplied-schema validation
-   and persist `mikura.schema` objects under [ADR 0008](docs/decisions/0008-type-link-delete.md).
-2. **M2 — application queries:** return matching objects with bounded pages,
+1. **M2 — application queries:** return matching objects with bounded pages,
    sorting, composed filters, and the workflow's traversal and aggregates.
-3. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
+2. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
    writes, retry safety, ingest progress, and a defined commit contract.
-4. **M4 — hosted pilot:** integrate the real consumer, then prove access
+3. **M4 — hosted pilot:** integrate the real consumer, then prove access
    enforcement, overload behavior, backup/restore, and upgrades against budgets.
-5. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+4. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
-or published Issues. Implement ADR 0008 before treating M2/M3 as
-implementation-ready.
+or published Issues.
 
 Scale and the log remain gated research:
 
