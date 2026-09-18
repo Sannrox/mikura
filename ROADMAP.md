@@ -56,17 +56,17 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M3 contract | Property overlay on the log, `hidden` delete, expected-generation stale write ([#112](https://github.com/Sannrox/mikura/issues/112), [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)). |
 | M3 overlay | Persist `mikura.overlay`, merge on source ingest, stale generation fails closed ([#119](https://github.com/Sannrox/mikura/issues/119)). |
 | M3 commit visibility | Read-after-write on committed host ops plus reopen is enough. No public commit-position waiter; source offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)). |
+| M4 contract | Pilot is this one-process host: JSON `v=1`, deny-closed, overload, backup/restore, shutdown, binary replace + reopen ([#121](https://github.com/Sannrox/mikura/issues/121), [m4-hosted-pilot-contract.md](docs/plans/m4-hosted-pilot-contract.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 and M1 are accepted. Remaining items:
 
-1. **M4 — hosted pilot:** decide and prove the one-process contract
-   ([#121](https://github.com/Sannrox/mikura/issues/121)). Leftover M2
-   operators and a public commit-position waiter are not prerequisites
-   ([#122](https://github.com/Sannrox/mikura/issues/122),
-   [#123](https://github.com/Sannrox/mikura/issues/123)).
+1. **M4 — hosted pilot:** prove overload ([#125](https://github.com/Sannrox/mikura/issues/125)),
+   backup/restore ([#126](https://github.com/Sannrox/mikura/issues/126)), and
+   shutdown/upgrade ([#127](https://github.com/Sannrox/mikura/issues/127))
+   against [the accepted contract](docs/plans/m4-hosted-pilot-contract.md).
 2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
@@ -76,7 +76,7 @@ or published Issues.
 
 Scale and the log remain gated research:
 
-1. 10⁹ envelope ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
+1. Diagnose the unfinished 10⁸ ingest ([#124](https://github.com/Sannrox/mikura/issues/124)), then 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
 
 Measure the application's workload first. Diagnose the unfinished 10⁸ run
 before larger envelopes; they do not block defining and delivering the pilot.
