@@ -1,6 +1,6 @@
 use crate::acl::PropertyAcl;
 use crate::compute::{ComputeBackend, ComputeError};
-use crate::store::Store;
+use crate::store::{ObjectRecord, Store};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Aggregate {
@@ -34,6 +34,10 @@ pub struct EvaluateRequest {
     pub acl: PropertyAcl,
     /// When set, only visible roots whose `props[property] == value` survive.
     pub filter: Option<ExactMatch>,
+    /// When greater than zero, return distinct result objects up to this
+    /// many identities. Exceeding the bound fails closed. Zero keeps today's
+    /// count/sum-only response.
+    pub object_bound: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +46,9 @@ pub struct EvaluateResponse {
     /// hop count is `EvaluateRequest.hops.len()`, which may be zero.
     pub two_hop_count: usize,
     pub sum_amount: i64,
+    /// Distinct current objects of the last hop's `far_kind`, or of
+    /// `root_kind` when there are no hops. Empty when `object_bound` is 0.
+    pub objects: Vec<ObjectRecord>,
 }
 
 pub struct ObjectSet<B> {

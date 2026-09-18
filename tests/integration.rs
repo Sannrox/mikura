@@ -97,6 +97,7 @@ fn shipment_request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        object_bound: 0,
     }
 }
 
@@ -113,6 +114,7 @@ fn asset_request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        object_bound: 0,
     }
 }
 
@@ -423,6 +425,7 @@ fn incoming_hop_follows_join_property() {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        object_bound: 0,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -630,5 +633,152 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
     assert_eq!(
         replayed.schema("incident").unwrap().unwrap(),
         incident_schema
+    );
+}
+
+#[test]
+fn evaluate_lists_product_loop_objects_and_enforces_bound() {
+    let tmp = TempLog::new("evaluate-objects");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            rec(
+                "component",
+                "svc-api",
+                false,
+                &[("name", "billing-api"), ("tier", "prod")],
+            ),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[("name", "elevated latency"), ("affects", "svc-api")],
+            ),
+        ],
+    )
+    .unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let listed = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "component".into(),
+                hops: vec![],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: Some(ExactMatch {
+                    property: "tier".into(),
+                    value: "prod".into(),
+                }),
+                object_bound: 8,
+            },
+        )
+        .unwrap();
+    assert_eq!(listed.objects.len(), 1);
+    assert_eq!(listed.objects[0].key, "svc-api");
+
+    let hopped = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "incident".into(),
+                hops: vec![Hop {
+                    far_kind: "component".into(),
+                    join_property: "affects".into(),
+                    incoming: true,
+                }],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: None,
+                object_bound: 8,
+            },
+        )
+        .unwrap();
+    assert_eq!(hopped.objects[0].key, "svc-api");
+
+    store
+        .append(rec(
+            "component",
+            "svc-web",
+            false,
+            &[("name", "web"), ("tier", "prod")],
+        ))
+        .unwrap();
+    let overflow = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "component".into(),
+                hops: vec![],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: Some(ExactMatch {
+                    property: "tier".into(),
+                    value: "prod".into(),
+                }),
+                object_bound: 1,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        overflow,
+        ComputeError::ObjectBound { bound: 1, count: 2 }
+    ));
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        oss.evaluate(
+            &reopened,
+            &EvaluateRequest {
+                root_kind: "incident".into(),
+                hops: vec![Hop {
+                    far_kind: "component".into(),
+                    join_property: "affects".into(),
+                    incoming: true,
+                }],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: None,
+                object_bound: 8,
+            },
+        )
+        .unwrap()
+        .objects[0]
+            .key,
+        "svc-api"
+    );
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        oss.evaluate(
+            &replayed,
+            &EvaluateRequest {
+                root_kind: "component".into(),
+                hops: vec![],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: Some(ExactMatch {
+                    property: "tier".into(),
+                    value: "prod".into(),
+                }),
+                object_bound: 8,
+            },
+        )
+        .unwrap()
+        .objects
+        .len(),
+        2
     );
 }

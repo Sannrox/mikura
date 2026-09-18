@@ -241,6 +241,30 @@ impl CountScratch {
             )
         }
     }
+
+    fn collect_leaves(
+        &mut self,
+        maps: &JoinMaps,
+        roots: &HashSet<u32>,
+        hops: &[(&str, &str, bool)],
+        root_kind: &str,
+    ) -> Vec<u32> {
+        self.paths.clear();
+        self.paths.extend(roots.iter().map(|&key| (key, key)));
+        let mut frontier_kind = root_kind;
+        for hop in hops {
+            self.apply_hop(maps, frontier_kind, *hop);
+            frontier_kind = hop.0;
+        }
+        let mut seen = HashSet::new();
+        let mut leaves = Vec::new();
+        for &(_, leaf) in &self.paths {
+            if seen.insert(leaf) {
+                leaves.push(leaf);
+            }
+        }
+        leaves
+    }
 }
 
 pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN03";
@@ -352,6 +376,42 @@ impl JoinMaps {
                 sum_kind,
                 sum_property,
             )
+        })
+    }
+
+    /// Distinct visible keys of the last hop's `far_kind`, or of `root_kind`
+    /// when `hops` is empty. Order is intern-string sorted.
+    pub fn result_keys(
+        &self,
+        root_kind: &str,
+        hops: &[(&str, &str, bool)],
+        filter: Option<(&str, &str)>,
+    ) -> Vec<String> {
+        let roots = match filter {
+            None => {
+                let Some(&root_kind_id) = self.intern_ix.get(root_kind) else {
+                    return Vec::new();
+                };
+                match self.by_kind.get(&root_kind_id) {
+                    Some(roots) => roots.clone(),
+                    None => return Vec::new(),
+                }
+            }
+            Some((property, value)) => self.matching_root_ids(root_kind, property, value),
+        };
+        if roots.is_empty() {
+            return Vec::new();
+        }
+        COUNT_SCRATCH.with(|scratch| {
+            let ids = scratch
+                .borrow_mut()
+                .collect_leaves(self, &roots, hops, root_kind);
+            let mut keys: Vec<String> = ids
+                .into_iter()
+                .filter_map(|id| self.intern_get(id).map(str::to_string))
+                .collect();
+            keys.sort();
+            keys
         })
     }
 

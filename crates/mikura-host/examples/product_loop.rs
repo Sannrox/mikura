@@ -145,7 +145,8 @@ fn main() -> Result<(), String> {
                 "hops": [],
                 "sum_kind": "component",
                 "sum_property": "tier",
-                "filter": {"property": "tier", "value": "prod"}
+                "filter": {"property": "tier", "value": "prod"},
+                "object_bound": 8
             }
         }))?,
     )?
@@ -153,6 +154,8 @@ fn main() -> Result<(), String> {
     .expect("evaluate payload");
     assert_eq!(filtered.two_hop_count, 1);
     assert_eq!(filtered.sum_amount, 0);
+    assert_eq!(filtered.objects.len(), 1);
+    assert_eq!(filtered.objects[0].key, "svc-api");
 
     let hopped = require_ok(
         "evaluate hop incident → component on affects",
@@ -166,7 +169,8 @@ fn main() -> Result<(), String> {
                     "incoming": true
                 }],
                 "sum_kind": "component",
-                "sum_property": "tier"
+                "sum_property": "tier",
+                "object_bound": 8
             }
         }))?,
     )?
@@ -174,6 +178,8 @@ fn main() -> Result<(), String> {
     .expect("evaluate payload");
     assert_eq!(hopped.two_hop_count, 1);
     assert_eq!(hopped.sum_amount, 0);
+    assert_eq!(hopped.objects.len(), 1);
+    assert_eq!(hopped.objects[0].key, "svc-api");
 
     require_ok(
         "apply_action inc-1",
@@ -256,12 +262,12 @@ fn main() -> Result<(), String> {
     println!("ingest seed\tingest_batch\tsupported");
     println!("load svc-api\tload\tsupported (component/svc-api, name=billing-api, tier=prod)");
     println!(
-        "filter component tier=prod\tevaluate\tmissing objects; workaround count={}",
-        filtered.two_hop_count
+        "filter component tier=prod\tevaluate\tsupported ({} object)",
+        filtered.objects[0].key
     );
     println!(
-        "hop incident → component on affects\tevaluate\tmissing objects; workaround count={}",
-        hopped.two_hop_count
+        "hop incident → component on affects\tevaluate\tsupported ({} object)",
+        hopped.objects[0].key
     );
     println!("edit inc-1\tapply_action\tsupported (whole-record replace, action_id stored)");
     println!("refresh source\tingest_batch\tsupported as overwrite; edit note discarded");

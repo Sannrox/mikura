@@ -49,6 +49,9 @@ pub struct WireEvaluate {
     pub deny: Vec<WireDeny>,
     #[serde(default)]
     pub filter: Option<WireFilter>,
+    /// Distinct result objects to return. Omit or `0` keeps count/sum only.
+    #[serde(default)]
+    pub object_bound: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,6 +108,8 @@ pub struct HostResponse {
 pub struct EvaluateWire {
     pub two_hop_count: usize,
     pub sum_amount: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<ObjectRecord>,
 }
 
 pub struct Host {
@@ -209,6 +214,7 @@ impl Host {
                     evaluate: Some(EvaluateWire {
                         two_hop_count: response.two_hop_count,
                         sum_amount: response.sum_amount,
+                        objects: response.objects,
                     }),
                     load: None,
                 },
@@ -372,6 +378,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             property: filter.property,
             value: filter.value,
         }),
+        object_bound: request.object_bound,
     };
     ObjectSet::new(LocalCompute)
         .evaluate(store, &request)

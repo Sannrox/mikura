@@ -185,6 +185,7 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                object_bound: 0,
             },
         )
         .unwrap();
@@ -575,13 +576,16 @@ fn process_product_loop_baseline() {
             "hops": [],
             "sum_kind": "component",
             "sum_property": "tier",
-            "filter": {"property": "tier", "value": "prod"}
+            "filter": {"property": "tier", "value": "prod"},
+            "object_bound": 8
         }
     }));
     assert!(filtered.ok, "{filtered:?}");
     let filtered = filtered.evaluate.expect("evaluate payload");
     assert_eq!(filtered.two_hop_count, 1);
     assert_eq!(filtered.sum_amount, 0);
+    assert_eq!(filtered.objects.len(), 1);
+    assert_eq!(filtered.objects[0].key, "svc-api");
 
     let hopped = host.rpc(&serde_json::json!({
         "op": "evaluate",
@@ -593,13 +597,16 @@ fn process_product_loop_baseline() {
                 "incoming": true
             }],
             "sum_kind": "component",
-            "sum_property": "tier"
+            "sum_property": "tier",
+            "object_bound": 8
         }
     }));
     assert!(hopped.ok, "{hopped:?}");
     let hopped = hopped.evaluate.expect("evaluate payload");
     assert_eq!(hopped.two_hop_count, 1);
     assert_eq!(hopped.sum_amount, 0);
+    assert_eq!(hopped.objects.len(), 1);
+    assert_eq!(hopped.objects[0].key, "svc-api");
 
     let edited = host.rpc(&serde_json::json!({
         "op": "apply_action",
@@ -742,4 +749,38 @@ fn process_product_loop_with_committed_schema() {
     assert!(store
         .load("component", "svc-web", &PropertyAcl::allow_all())
         .is_err());
+}
+
+#[test]
+fn process_evaluate_object_bound_fails_closed() {
+    let tmp = TempLog::new("evaluate-bound");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            rec("component", "svc-api", false, &[("name", "billing-api"), ("tier", "prod")]),
+            rec("component", "svc-web", false, &[("name", "web"), ("tier", "prod")]),
+        ],
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overflow = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "component",
+            "hops": [],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "filter": {"property": "tier", "value": "prod"},
+            "object_bound": 1
+        }
+    }));
+    assert!(!overflow.ok, "{overflow:?}");
+    assert!(
+        overflow
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("ObjectBound"),
+        "{overflow:?}"
+    );
 }

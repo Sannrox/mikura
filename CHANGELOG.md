@@ -9,6 +9,12 @@ window.
 
 ### Added
 
+- Evaluate can return matching objects: `EvaluateRequest.object_bound`
+  greater than zero loads distinct result identities (last hop, or roots
+  when hops are empty). Overflow fails closed. Host `evaluate` accepts
+  the same field under wire `v=1`. Product-loop list and hop queries
+  return `component/svc-api`
+  ([#113](https://github.com/Sannrox/mikura/issues/113)).
 - Supplied-schema validation: a committed `mikura.schema/<kind>` row
   fails closed on unknown properties, missing required keys, or an empty
   outgoing link. Historical unvalidated strings still `load`.

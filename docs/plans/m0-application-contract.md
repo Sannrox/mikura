@@ -57,10 +57,11 @@ input; mikura does not load it.
 | 2 | Services in `tier=prod` | The matching objects: `{component/svc-api}` | `evaluate` root `component`, empty hops, `filter.property=tier` `filter.value=prod` |
 | 3 | Incidents that affect a Service | `incident/inc-1` follows `affects` to `component/svc-api` | `evaluate` root `incident`, one incoming hop `far_kind=component` `join_property=affects` |
 
-Evaluate still returns only `two_hop_count` and `sum_amount`. For this
-seed those numbers are `count=1` and `sum=0` on both query 2 (no numeric
-property) and query 3 (the hop reaches one root; `tier` is not numeric).
-The application answer is the objects, not the aggregate.
+Evaluate returns `two_hop_count` and `sum_amount`. With `object_bound` > 0
+it also returns the distinct matching objects (query 2: `component/svc-api`;
+query 3: `component/svc-api` via `affects`). For this seed the aggregates
+are `count=1` and `sum=0`. Exceeding `object_bound` fails closed. Omit or
+`0` keeps count/sum only. Wire `v` stays 1; `objects` is additive.
 
 ## One admitted edit
 
