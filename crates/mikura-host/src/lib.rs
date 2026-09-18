@@ -341,16 +341,36 @@ impl Host {
         write_response(&mut stream, self.handle_line(line.trim()))
     }
 
-    /// Accept connections until the listener closes.
+    /// Accept connections until the listener fails.
     ///
     /// A single client disconnect, timeout, or bound rejection does not stop
-    /// the host. Listener accept errors still fail closed.
+    /// the host. Listener accept errors still fail closed. The process binary
+    /// stops by closing stdin; that path uses [`Self::serve_while`] and does
+    /// not flush the stream buffer.
     pub fn serve(&mut self, listener: TcpListener) -> Result<(), String> {
+        self.serve_while(listener, || true)
+    }
+
+    /// Accept connections while `keep_going` is true.
+    ///
+    /// Returning because `keep_going` is false does not flush uncommitted
+    /// stream pushes. A blocked accept still needs one wakeup connect after
+    /// the flag flips.
+    pub fn serve_while<F>(&mut self, listener: TcpListener, keep_going: F) -> Result<(), String>
+    where
+        F: Fn() -> bool,
+    {
         self.refuse_unauthenticated_routable(
             listener.local_addr().map_err(|err| err.to_string())?,
         )?;
-        for incoming in listener.incoming() {
-            let stream = incoming.map_err(|err| err.to_string())?;
+        while keep_going() {
+            let stream = match listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(err) => return Err(err.to_string()),
+            };
+            if !keep_going() {
+                return Ok(());
+            }
             let _ = self.serve_one(stream);
         }
         Ok(())

@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- Closing host stdin stops the listener without flushing uncommitted
+  stream pushes. A replacement process on the same files answers the
+  product-loop load, list, hop, and overlay. Wire `v` other than omit/`1`
+  stays a typed error. No `MIKURAV1` change
+  ([#127](https://github.com/Sannrox/mikura/issues/127)).
 - Backup is a copy of the object log plus optional `{log}.joins`. A fresh
   host on the copy answers the product-loop load, list, hop, and overlay.
   Deleting the copied sidecar still rebuilds from the log. No backup RPC

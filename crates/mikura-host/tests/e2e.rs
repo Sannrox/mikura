@@ -11,8 +11,8 @@ use mikura_host::HostResponse;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::{Duration, Instant};
 
 struct TempLog {
     dir: PathBuf,
@@ -43,6 +43,7 @@ impl Drop for TempLog {
 struct HostProcess {
     child: Child,
     addr: SocketAddr,
+    stdin: Option<ChildStdin>,
 }
 
 impl HostProcess {
@@ -76,6 +77,7 @@ impl HostProcess {
         args.extend(extra.iter().map(|flag| (*flag).to_string()));
         let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
             .args(&args)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -97,7 +99,31 @@ impl HostProcess {
                 });
                 panic!("expected listening address, got {line:?}, stderr={stderr:?}");
             });
-        Self { child, addr }
+        let stdin = child.stdin.take();
+        Self { child, addr, stdin }
+    }
+
+    /// Close stdin and wait for a clean exit. Does not flush the stream.
+    fn stop(mut self) {
+        drop(self.stdin.take());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match self.child.try_wait().expect("wait host") {
+                Some(status) => {
+                    assert!(
+                        status.success(),
+                        "expected graceful host exit, got {status}"
+                    );
+                    return;
+                }
+                None if Instant::now() >= deadline => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    panic!("host did not exit after stdin close");
+                }
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
     }
 
     fn rpc(&self, body: &serde_json::Value) -> HostResponse {
@@ -941,6 +967,80 @@ fn process_backup_restore_product_loop() {
     }
     let rebuilt = HostProcess::spawn(dst.path(), "127.0.0.1:0", 8);
     assert_eq!(product_loop_overlay_view(&rebuilt), live);
+}
+
+#[test]
+fn process_product_loop_survives_shutdown_and_reopen() {
+    let tmp = TempLog::new("shutdown-reopen");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"},
+        "expected_gen": 1
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let live = product_loop_overlay_view(&host);
+    assert_eq!(live.0.key, "svc-api");
+    assert_eq!(live.0.props.get("tier").map(String::as_str), Some("prod"));
+    assert_eq!(live.1.props.get("note").map(String::as_str), Some("acked"));
+    assert_eq!(live.2.props.get("note").map(String::as_str), Some("acked"));
+    assert_eq!(live.3, vec!["svc-api".to_string()]);
+    assert_eq!(live.4, vec!["svc-api".to_string()]);
+    host.stop();
+
+    let upgraded = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_overlay_view(&upgraded), live);
+}
+
+#[test]
+fn process_uncommitted_stream_push_invisible_after_reopen() {
+    let tmp = TempLog::new("uncommitted-tail");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let push = host.rpc(&serde_json::json!({
+        "op": "ingest_stream_push",
+        "record": rec(
+            "incident",
+            "inc-uncommitted",
+            false,
+            &[("name", "tail"), ("affects", "svc-api")],
+        ),
+    }));
+    assert!(push.ok, "{push:?}");
+    let live = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-uncommitted"
+    }));
+    assert!(live.ok, "{live:?}");
+    assert_eq!(live.load.expect("live tail").key, "inc-uncommitted");
+    host.stop();
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let missing = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-uncommitted"
+    }));
+    assert!(!missing.ok, "{missing:?}");
+    assert!(missing.load.is_none());
+    let committed = load_object(&reopened, "component", "svc-api");
+    assert_eq!(
+        committed.props.get("tier").map(String::as_str),
+        Some("prod")
+    );
 }
 
 #[test]
