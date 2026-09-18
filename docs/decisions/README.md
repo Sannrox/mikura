@@ -13,6 +13,7 @@ a new ADR. Allocate the next number and list it here.
 | [0006](0006-action-provenance.md) | Action provenance on the object log | accepted |
 | [0007](0007-host-bearer.md) | Clerk bearer on non-loopback bind | accepted |
 | [0008](0008-type-link-delete.md) | Type, link, and deletion contract | accepted |
+| [0009](0009-refresh-safe-edit-overlay.md) | Refresh-safe source and edit overlay | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

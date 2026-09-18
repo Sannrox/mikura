@@ -134,7 +134,10 @@ edits by `(kind, key)` for one write cycle. Within each input the last record
 for an identity wins; edits then replace source, including `hidden`. Hidden
 source rows stay hidden unless an edit unhides them. `MergeIngest::run` appends
 that merged list through `BatchIngest`. The merge list is not authority; rebuild
-reads only the committed log.
+reads only the committed log. [ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)
+accepts a property overlay recovered as `mikura.overlay` objects; that merge
+is not implemented yet. A source `ingest_batch` after `apply_action` still
+replaces the whole record.
 
 `mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
 changed `props`/`hidden`/`action_id` emit the current row; keys that disappear emit a hide
