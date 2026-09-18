@@ -6,8 +6,10 @@ compute. This repository stays independent.
 The selected next direction is an application-led object database: typed
 objects and links, usable object-set queries, refresh-safe edits, and
 reliable hosting. The [roadmap proposal](docs/plans/application-roadmap.md)
-defines milestones and exit checks. Its detailed contracts remain draft
-until the first consumer workflow is chosen; existing ADRs still apply.
+defines milestones and exit checks. The first consumer workflow is the
+public Sekai product-loop fixture
+([M0 contract](docs/plans/m0-application-contract.md), [#107](https://github.com/Sannrox/mikura/issues/107)).
+Later milestone contracts remain draft; existing ADRs still apply.
 
 Rationale: [VISION.md](VISION.md). How v1 actually works:
 [docs/architecture.md](docs/architecture.md).
@@ -46,28 +48,28 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v9 log compact | No compact/checkpoint until a later envelope misses on disk or `Store::open` because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)) |
 | v10 one process | One process remains the hosted form; split waits for a miss one process cannot fix ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 | v10 tag | A git tag is enough for the first consumer; crates.io stays `publish = false` until a human authorizes it ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut the tag with prepare-release, not from this research. |
+| M0 contract | Sekai product-loop fixture is the first application contract; host baseline recorded ([#107](https://github.com/Sannrox/mikura/issues/107), [m0-application-contract.md](docs/plans/m0-application-contract.md)). |
 
 ## Next (this repository, in order)
 
-Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md):
+Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
+M0 is accepted. Remaining items:
 
-1. **M0 — application contract:** choose the consumer, fixture, expected
-   answers, access boundary, and workload budgets; measure the current baseline.
-2. **M1 — typed objects and links:** minimal value types, supplied schema
+1. **M1 — typed objects and links:** minimal value types, supplied schema
    validation, link and deletion semantics, and compatible recovery.
-3. **M2 — application queries:** return matching objects with bounded pages,
+2. **M2 — application queries:** return matching objects with bounded pages,
    sorting, composed filters, and the workflow's traversal and aggregates.
-4. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
+3. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
    writes, retry safety, ingest progress, and a defined commit contract.
-5. **M4 — hosted pilot:** integrate the real consumer, then prove access
+4. **M4 — hosted pilot:** integrate the real consumer, then prove access
    enforcement, overload behavior, backup/restore, and upgrades against budgets.
-6. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+5. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
-or published Issues. Choose the M0 workflow before treating later work as
-implementation-ready.
+or published Issues. Shape the M1 type/link/delete ADR before treating
+later work as implementation-ready.
 
 Scale and the log remain gated research:
 

@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- M0 application contract: the public Sekai product-loop fixture
+  (`component` / `incident`, `affects`) is the first consumer workflow.
+  Thin loopback client: `cargo run -p mikura-host --example product_loop`.
+  See [docs/plans/m0-application-contract.md](docs/plans/m0-application-contract.md).
 - `mikura-host` process binary and named e2e suite
   (`cargo test -p mikura-host --test e2e --locked`) that spawn the process
   on loopback, drive JSON-line ingest/evaluate/load, and fail closed on ACL

@@ -8,6 +8,7 @@ the job.
 | [../VISION.md](../VISION.md) | Explanation | Why mikura exists and what is out of scope |
 | [../ROADMAP.md](../ROADMAP.md) | Explanation | What to build next |
 | [plans/application-roadmap.md](plans/application-roadmap.md) | Proposal | Application-led object database milestones and open decisions |
+| [plans/m0-application-contract.md](plans/m0-application-contract.md) | Reference | Accepted first-application fixture, queries, and host baseline |
 | [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
 | [glossary.md](glossary.md) | Reference | Project terms |
 | [decisions/](decisions/README.md) | Reference | Accepted ADRs |

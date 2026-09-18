@@ -524,3 +524,134 @@ fn process_rejects_unknown_wire_v_and_accepts_omit_or_one() {
         "{unknown:?}"
     );
 }
+
+fn product_loop_source() -> Vec<ObjectRecord> {
+    vec![
+        rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ),
+        rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ),
+    ]
+}
+
+#[test]
+fn process_product_loop_baseline() {
+    let tmp = TempLog::new("product-loop");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "component",
+        "key": "svc-api"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let svc = loaded.load.expect("load payload");
+    assert_eq!(svc.kind, "component");
+    assert_eq!(svc.key, "svc-api");
+    assert_eq!(
+        svc.props.get("name").map(String::as_str),
+        Some("billing-api")
+    );
+    assert_eq!(svc.props.get("tier").map(String::as_str), Some("prod"));
+
+    let filtered = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "component",
+            "hops": [],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "filter": {"property": "tier", "value": "prod"}
+        }
+    }));
+    assert!(filtered.ok, "{filtered:?}");
+    let filtered = filtered.evaluate.expect("evaluate payload");
+    assert_eq!(filtered.two_hop_count, 1);
+    assert_eq!(filtered.sum_amount, 0);
+
+    let hopped = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{
+                "far_kind": "component",
+                "join_property": "affects",
+                "incoming": true
+            }],
+            "sum_kind": "component",
+            "sum_property": "tier"
+        }
+    }));
+    assert!(hopped.ok, "{hopped:?}");
+    let hopped = hopped.evaluate.expect("evaluate payload");
+    assert_eq!(hopped.two_hop_count, 1);
+    assert_eq!(hopped.sum_amount, 0);
+
+    let edited = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "acked"
+        }
+    }));
+    assert!(edited.ok, "{edited:?}");
+    let after_edit = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(after_edit.ok, "{after_edit:?}");
+    let after_edit = after_edit.load.expect("load payload");
+    assert_eq!(after_edit.action_id.as_deref(), Some("act-inc-1-note"));
+    assert_eq!(
+        after_edit.props.get("note").map(String::as_str),
+        Some("acked")
+    );
+
+    let refresh = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(refresh.ok, "{refresh:?}");
+    let after_refresh = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(after_refresh.ok, "{after_refresh:?}");
+    let after_refresh = after_refresh.load.expect("load payload");
+    assert_eq!(after_refresh.action_id, None);
+    assert!(!after_refresh.props.contains_key("note"));
+    drop(host);
+
+    let store = Store::open(tmp.path()).unwrap();
+    let reopened = store
+        .load("component", "svc-api", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(reopened.props.get("tier").map(String::as_str), Some("prod"));
+    let incident = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        incident.props.get("name").map(String::as_str),
+        Some("elevated latency")
+    );
+    assert!(!incident.props.contains_key("note"));
+}
