@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- Property overlay: `Store::apply_overlay` persists `mikura.overlay/{kind}/{key}`
+  and rematerializes the instance. Later visible source writes merge the
+  patch. Stale `expected_gen` fails closed. Hide of the instance hides the
+  overlay. Host JSON `apply_overlay`
+  ([#119](https://github.com/Sannrox/mikura/issues/119)).
 - [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md): admitted
   property overlays persist as `mikura.overlay` objects; source refresh
   keeps those keys; hide and expected-generation stay on the existing

@@ -21,6 +21,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
 | `src/store/` | Identity, sidecar persist/load, append/commit |
 | `src/schema.rs` | Clerk-supplied descriptors; write-time validation ([ADR 0008](docs/decisions/0008-type-link-delete.md)) |
+| `src/overlay.rs` | Clerk-admitted property overlay; merge on later source writes ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
 | `crates/mikura-host/` | Loopback ingest/evaluate/load host over `Store`, plus `mikura-host` binary |
 | `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |

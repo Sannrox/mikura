@@ -14,7 +14,7 @@ use std::path::Path;
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, PropertyAcl, Store,
+    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -70,6 +70,17 @@ pub enum HostRequest {
         key: String,
         #[serde(default)]
         props: HashMap<String, String>,
+    },
+    ApplyOverlay {
+        id: String,
+        kind: String,
+        key: String,
+        #[serde(default)]
+        props: HashMap<String, String>,
+        #[serde(default)]
+        cleared: Vec<String>,
+        #[serde(default)]
+        expected_gen: Option<u64>,
     },
     Evaluate {
         request: WireEvaluate,
@@ -203,6 +214,27 @@ impl Host {
                 key,
                 props,
             }) {
+                Ok(()) => ok(),
+                Err(error) => fail(error),
+            },
+            HostRequest::ApplyOverlay {
+                id,
+                kind,
+                key,
+                props,
+                cleared,
+                expected_gen,
+            } => match self.store.apply_overlay(
+                OverlayPatch {
+                    kind,
+                    key,
+                    props,
+                    cleared,
+                    action_id: None,
+                },
+                id,
+                expected_gen,
+            ) {
                 Ok(()) => ok(),
                 Err(error) => fail(error),
             },

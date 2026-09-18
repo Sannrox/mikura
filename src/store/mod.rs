@@ -6,6 +6,7 @@ use crate::acl::PropertyAcl;
 use crate::actions::Action;
 use crate::joins::{JoinMaps, LiveMeta};
 use crate::log::{read_records, LogWriter, SyncPolicy};
+use crate::overlay::{OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod sidecar;
@@ -167,6 +168,73 @@ impl Store {
         SchemaDescriptor::from_record(&record).map(Some)
     }
 
+    /// Last visible `mikura.overlay` row for `(kind, key)`, or `None` when absent or hidden.
+    pub fn overlay(&self, kind: &str, key: &str) -> Result<Option<OverlayPatch>, String> {
+        let overlay_key = OverlayPatch::identity_key(kind, key);
+        let id = (OVERLAY_KIND.to_string(), overlay_key.clone());
+        let Some(meta) = self.identity.get(&id) else {
+            return Ok(None);
+        };
+        if meta.hidden {
+            return Ok(None);
+        }
+        let record = self.load(OVERLAY_KIND, &overlay_key, &PropertyAcl::allow_all())?;
+        OverlayPatch::from_record(&record).map(Some)
+    }
+
+    /// Admit a property overlay and rematerialize a visible instance.
+    ///
+    /// `expected_gen` is the live instance generation the clerk read. Mismatch
+    /// fails closed. Hidden instances stay hidden; recreate does not apply a
+    /// prior overlay.
+    pub fn apply_overlay(
+        &mut self,
+        mut patch: OverlayPatch,
+        action_id: String,
+        expected_gen: Option<u64>,
+    ) -> Result<(), String> {
+        if action_id.is_empty() {
+            return Err("action id required".into());
+        }
+        let id = (patch.kind.clone(), patch.key.clone());
+        if let Some(expected) = expected_gen {
+            match self.identity.get(&id) {
+                Some(meta) if meta.gen != expected => {
+                    return Err(format!(
+                        "stale generation: expected {expected}, live {}",
+                        meta.gen
+                    ));
+                }
+                None if expected != 0 => {
+                    return Err(format!("stale generation: expected {expected}, live none"));
+                }
+                _ => {}
+            }
+        }
+        patch.action_id = Some(action_id.clone());
+        let instance_hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
+        let instance_exists = self.identity.contains_key(&id);
+        self.append_uncommitted(patch.to_record()?)?;
+        if !instance_hidden {
+            let source = if instance_exists {
+                self.load(&patch.kind, &patch.key, &PropertyAcl::allow_all())?
+                    .props
+            } else {
+                HashMap::new()
+            };
+            let props = patch.apply(source);
+            self.append_uncommitted(ObjectRecord {
+                gen: 0,
+                kind: patch.kind,
+                key: patch.key,
+                hidden: false,
+                action_id: Some(action_id),
+                props,
+            })?;
+        }
+        self.commit()
+    }
+
     /// [`Self::load`] then fail closed if the record violates `schema`.
     ///
     /// A deny list that omits a required property fails closed. Historical
@@ -202,11 +270,32 @@ impl Store {
         }
         if record.kind == SCHEMA_KIND {
             SchemaDescriptor::from_record(&record)?;
+        } else if record.kind == OVERLAY_KIND {
+            OverlayPatch::from_record(&record)?;
         } else if !record.hidden {
+            let was_hidden = self
+                .identity
+                .get(&(record.kind.clone(), record.key.clone()))
+                .is_some_and(|meta| meta.hidden);
+            if !was_hidden {
+                if let Some(overlay) = self.overlay(&record.kind, &record.key)? {
+                    record.props = overlay.apply(std::mem::take(&mut record.props));
+                    if record.action_id.is_none() {
+                        record.action_id = overlay.action_id;
+                    }
+                }
+            }
             if let Some(schema) = self.schema(&record.kind)? {
                 schema.validate(&record)?;
             }
         }
+        let hide_overlay =
+            record.hidden && record.kind != OVERLAY_KIND && record.kind != SCHEMA_KIND;
+        let overlay_target = if hide_overlay {
+            Some((record.kind.clone(), record.key.clone()))
+        } else {
+            None
+        };
         let id = (record.kind.clone(), record.key.clone());
         if let Some(existing) = self.identity.get(&id) {
             record.gen = existing.gen.max(1) + 1;
@@ -215,6 +304,20 @@ impl Store {
         }
         self.writer.append_record(&record)?;
         self.apply_record(record);
+        if let Some((kind, key)) = overlay_target {
+            if self.overlay(&kind, &key)?.is_some() {
+                let mut hide = OverlayPatch {
+                    kind,
+                    key,
+                    props: HashMap::new(),
+                    cleared: Vec::new(),
+                    action_id: None,
+                }
+                .to_record()?;
+                hide.hidden = true;
+                self.append_uncommitted(hide)?;
+            }
+        }
         Ok(())
     }
 
