@@ -129,8 +129,15 @@ fn flush_if_full(
 ) -> Result<(), String> {
     if batch.len() >= chunk {
         let n = batch.len();
+        let fsync_before = store.log_fsync_count();
+        let t = Instant::now();
         BatchIngest::run(store, std::mem::take(batch))?;
-        eprintln!("ingested_chunk={n} rss_bytes={}", rss_bytes());
+        eprintln!(
+            "ingested_chunk={n} commit_ms={} fsync_delta={} rss_bytes={}",
+            t.elapsed().as_millis(),
+            store.log_fsync_count() - fsync_before,
+            rss_bytes()
+        );
     }
     Ok(())
 }

@@ -259,3 +259,46 @@ that did not finish. Do not start 10⁹ or 10¹⁰ until 10⁸ ingest completes.
 Follow-up: no-action on a new engine. Next object-set work is incoming hops
 ([#50](https://github.com/Sannrox/mikura/issues/50)), not another envelope.
 Spark stays unsupported.
+
+## Addendum (2026-09-18): why 10⁸ ingest stopped (#124)
+
+Question: why did 10⁸ ingest stop at 29 M / 10.7 h, and what is the single
+next measurement or fix? Same fixture family and machine class as the
+2026-09-17 addendum: Apple M2 Pro, 32 GiB, Darwin arm64. `rustc` 1.96.1.
+HEAD `7c8bdec` (after overlay and the hosted-pilot proofs). No hostnames.
+
+This addendum does **not** re-run 10⁷ or 10⁸. It times 1 M group-commit
+chunks at 10⁶ and 4×10⁶ so later chunks can be compared while identity
+grows.
+
+```text
+cargo run --release -- --objects 1000000
+cargo run --release -- --objects 4000000
+```
+
+| objects | ingest | 1 M chunk `commit_ms` | `fsync_delta` | RSS | log | sidecar | query | `Store::open` | dual-read |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 10⁶ | 12.0 s | 11620 | 920 | 1.0 GiB | 58 MiB | 47 MiB | **49 ms** | 1.4 s | hold |
+| 4×10⁶ | 64.0 s | 11668, 15575, 19619, 15000 | 866–974 | 1.8 GiB | 236 MiB | 141 MiB | **352 ms** | 8.2 s | hold |
+
+`fsync_delta` stays ~900 per million-record chunk (group-commit cost is
+flat). Chunk `commit_ms` climbs as identity grows. `Store::commit` is
+log `flush` then `persist_projection`. Compact rewrites the full
+checkpoint when `dirty.len() * 4 > identity.len()`;
+`persist_delta` does not clear `dirty`, so later ingest keeps paying a
+growing sidecar write.
+
+That matches the unfinished 10⁸ run: time, not OOM; ingest never reached
+query. Overlay and schema on this HEAD are not a second named miss —
+they are not on the hop-count path, and 10⁶ query still holds 500 ms.
+
+## Verdict: PERSIST STEP
+
+- **Named step:** join-map persist on each 1 M chunk, not log fsync.
+- **10⁷ ingest after overlay** was not re-run; 4×10⁶ already shows
+  superlinear chunk cost.
+- **Do not start 10⁹ or 10¹⁰.** The 10⁸ ingest gate is unchanged.
+- **No engine pick.** Spark stays unsupported.
+
+Follow-up: [#134](https://github.com/Sannrox/mikura/issues/134) keep join
+persist bounded as identity grows. Do not open #54 from this addendum.
