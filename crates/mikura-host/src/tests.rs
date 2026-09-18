@@ -1,6 +1,7 @@
 use super::*;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::time::Duration;
 
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
@@ -311,6 +312,29 @@ fn evaluate_acl_fails_closed() {
         denied.error.as_deref().unwrap_or("").contains("Denied"),
         "{denied:?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn oversize_line_fails_closed() {
+    let (dir, log) = temp_log("request-bound");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.set_request_limits(16, Duration::from_millis(200))
+        .unwrap();
+    let denied = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(!denied.ok);
+    assert!(
+        denied
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("RequestBound"),
+        "{denied:?}"
+    );
+    host.set_request_limits(DEFAULT_REQUEST_BOUND, Duration::from_secs(5))
+        .unwrap();
+    let accepted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
+    assert!(accepted.ok, "{accepted:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

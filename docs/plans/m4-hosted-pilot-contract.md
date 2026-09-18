@@ -44,12 +44,12 @@ gRPC stays ask-first.
 | Bearer equality, not a principal | `process_non_loopback_bearer_accepts_matching_token` |
 | Wire `v` omit or `1`; other `v` fails closed | `process_rejects_unknown_wire_v_and_accepts_omit_or_one` |
 | Same-binary reopen | `Host::open` / `Store::open` after process exit |
+| Bound request work; disconnect fail closed | `process_oversize_request_fails_closed`, `process_disconnect_then_next_request_serves` |
 
 ## Still required
 
 | Check | Follow-up | Rule |
 | --- | --- | --- |
-| Bound request work; overload and disconnect fail closed | [#125](https://github.com/Sannrox/mikura/issues/125) | A large or overtime request returns a typed error. A second client must not grow work without bound. Product-loop e2e still passes. |
 | Backup and restore | [#126](https://github.com/Sannrox/mikura/issues/126) | Backup is the object log plus optional join sidecar. Restore onto a fresh host answers the same load, list, hop, and overlay. Delete the copied sidecar; rebuild from the log. Corrupt committed pages still fail closed. |
 | Shutdown and upgrade | [#127](https://github.com/Sannrox/mikura/issues/127) | Stop leaves only the committed range durable. A current host opens that log and completes the product-loop. Envelope mismatch (`v` other than omit/`1`) fails closed. No `MIKURAV1` magic change. |
 
@@ -83,7 +83,6 @@ Ops already on the wire: `ingest_batch`, `ingest_stream_push`,
 
 ## Follow-up
 
-Implement only [#125](https://github.com/Sannrox/mikura/issues/125),
-[#126](https://github.com/Sannrox/mikura/issues/126), and
-[#127](https://github.com/Sannrox/mikura/issues/127) from this page.
+Implement remaining [#126](https://github.com/Sannrox/mikura/issues/126)
+and [#127](https://github.com/Sannrox/mikura/issues/127) from this page.
 Do not publish M5 or consumer-repo Issues from this contract.

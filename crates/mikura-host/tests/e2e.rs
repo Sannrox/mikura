@@ -51,6 +51,16 @@ impl HostProcess {
     }
 
     fn spawn_with(log: &Path, bind: &str, stream_bound: usize, bearer: Option<&str>) -> Self {
+        Self::spawn_args(log, bind, stream_bound, bearer, &[])
+    }
+
+    fn spawn_args(
+        log: &Path,
+        bind: &str,
+        stream_bound: usize,
+        bearer: Option<&str>,
+        extra: &[&str],
+    ) -> Self {
         let mut args = vec![
             "--log".to_string(),
             log.to_str().expect("utf-8 log path").to_string(),
@@ -63,6 +73,7 @@ impl HostProcess {
             args.push("--bearer".into());
             args.push(token.into());
         }
+        args.extend(extra.iter().map(|flag| (*flag).to_string()));
         let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
             .args(&args)
             .stdout(Stdio::piped())
@@ -104,6 +115,29 @@ impl HostProcess {
         let line = serde_json::to_string(body).unwrap();
         client.write_all(line.as_bytes()).unwrap();
         client.write_all(b"\n").unwrap();
+        let mut buf = String::new();
+        client.read_to_string(&mut buf).unwrap();
+        serde_json::from_str(buf.trim()).expect("host JSON response")
+    }
+
+    fn connect(&self) -> TcpStream {
+        let mut addr = self.addr;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        let client = TcpStream::connect(addr).expect("connect host");
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+    }
+
+    fn rpc_raw(&self, bytes: &[u8]) -> HostResponse {
+        let mut client = self.connect();
+        client.write_all(bytes).unwrap();
         let mut buf = String::new();
         client.read_to_string(&mut buf).unwrap();
         serde_json::from_str(buf.trim()).expect("host JSON response")
@@ -837,4 +871,56 @@ fn process_overlay_refresh_keeps_note() {
             .contains("stale generation"),
         "{stale:?}"
     );
+}
+
+#[test]
+fn process_oversize_request_fails_closed() {
+    let tmp = TempLog::new("request-bound");
+    let host = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--request-bound", "48"],
+    );
+    let overflow = host.rpc_raw(&[b'x'; 64]);
+    assert!(!overflow.ok, "{overflow:?}");
+    assert!(
+        overflow
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("RequestBound"),
+        "{overflow:?}"
+    );
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [],
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+}
+
+#[test]
+fn process_disconnect_then_next_request_serves() {
+    let tmp = TempLog::new("disconnect");
+    let host = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--request-timeout-ms", "200"],
+    );
+    drop(host.connect());
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "component",
+        "key": "svc-api"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    assert_eq!(loaded.load.expect("load payload").key, "svc-api");
 }
