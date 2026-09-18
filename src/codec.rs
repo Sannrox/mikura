@@ -25,6 +25,10 @@ pub(crate) fn read_u64(cur: &mut &[u8]) -> Result<u64, String> {
     Ok(u64::from_le_bytes(take::<8>(cur)?.try_into().unwrap()))
 }
 
+pub(crate) fn read_i64(cur: &mut &[u8]) -> Result<i64, String> {
+    Ok(i64::from_le_bytes(take::<8>(cur)?.try_into().unwrap()))
+}
+
 pub(crate) fn take<'a, const N: usize>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
     if cur.len() < N {
         return Err("short body".into());

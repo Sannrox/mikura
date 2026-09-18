@@ -14,6 +14,7 @@
 //! published envelope says otherwise.
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
+//! Optional `sums` on that descriptor persist last-hop parent rollups.
 //! A committed [`OverlayPatch`] (`mikura.overlay/{kind}/{key}`) merges
 //! named properties onto later source writes of that identity.
 //!
@@ -38,6 +39,7 @@ pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Ho
 pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
 pub use schema::{
     SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
+    SCHEMA_SUMS,
 };
 pub use store::{ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES};
 

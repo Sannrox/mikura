@@ -67,16 +67,13 @@ The object log stays authority. No `MIKURAV1` change.
 
 ## Consequences
 
-- Evaluate still leaf-walks until [#151](https://github.com/Sannrox/mikura/issues/151)
-  persists the columns. This ADR does not change `MKJOIN03` / `MKJOIN3D`.
-- When #151 lands, the sidecar takes new magic `MKJOIN04` and a matching
-  delta. Old sidecars fail closed until deleted; rebuild from the log
-  recovers. Do not land that magic bump in this research PR.
+- [#151](https://github.com/Sannrox/mikura/issues/151) persists the
+  columns. Sidecar magic is `MKJOIN04` / `MKJOIN4D`. Old `MKJOIN03`
+  sidecars fail closed until deleted; rebuild from the log recovers.
 - Public evaluate request shape stays
   `(sum_kind, sum_property, Aggregate::CountAndSum)`.
-- Schema descriptors gain one closed-set field for declared sum
-  properties. Unknown schema keys remain fail-closed until that field
-  exists.
+- Schema descriptors use optional `sums` for declared sum properties.
+  Historical descriptors without that field still load.
 - Cluster compute, other aggregates, and a query language stay out.
 
 ## Validation

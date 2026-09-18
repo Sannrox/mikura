@@ -102,6 +102,20 @@ pub(super) fn temp_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, log)
 }
 
+pub(super) fn shipment_sum_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "Shipment".into(),
+        properties: vec!["amount".into(), "order_id".into()],
+        required: Vec::new(),
+        links: vec![SchemaLink {
+            name: "order_id".into(),
+            far_kind: "Order".into(),
+            outgoing: true,
+        }],
+        sums: vec!["amount".into()],
+    }
+}
+
 pub(super) fn append_all(store: &mut Store, records: Vec<ObjectRecord>) {
     for record in records {
         store.append(record).unwrap();
@@ -119,6 +133,7 @@ pub(super) fn product_loop_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
                 far_kind: "incident".into(),
                 outgoing: false,
             }],
+            sums: Vec::new(),
         },
         SchemaDescriptor {
             kind: "incident".into(),
@@ -129,6 +144,7 @@ pub(super) fn product_loop_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
                 far_kind: "component".into(),
                 outgoing: true,
             }],
+            sums: Vec::new(),
         },
     )
 }

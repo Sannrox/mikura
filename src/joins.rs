@@ -85,6 +85,42 @@ impl CountScratch {
         }
     }
 
+    fn fold_rollups(
+        &mut self,
+        maps: &JoinMaps,
+        leaf_kind: &str,
+        join_property: &str,
+        sum_property: &str,
+    ) -> (usize, i64) {
+        let words = maps.intern.len().div_ceil(64);
+        if self.reachable.len() < words {
+            self.reachable.resize(words, 0);
+        } else {
+            self.reachable[..words].fill(0);
+        }
+        let Some(rollup) = maps.measure_table(leaf_kind, join_property, sum_property) else {
+            return (0, 0);
+        };
+        let mut reachable = 0usize;
+        let mut total = 0i64;
+        for &(root, parent) in &self.paths {
+            let Some(&(count, sum)) = rollup.get(&parent) else {
+                continue;
+            };
+            if count == 0 {
+                continue;
+            }
+            let word = root as usize / 64;
+            let bit = 1u64 << (root % 64);
+            if self.reachable[word] & bit == 0 {
+                self.reachable[word] |= bit;
+                reachable += 1;
+            }
+            total += sum;
+        }
+        (reachable, total)
+    }
+
     fn fold_leaves(
         &mut self,
         maps: &JoinMaps,
@@ -231,6 +267,8 @@ impl CountScratch {
         }
         if last.2 {
             self.fold_follow(maps, frontier_kind, last.1, last.0, sum_kind, sum_property)
+        } else if maps.has_declared_sum(sum_kind, sum_property) && last.0 == sum_kind {
+            self.fold_rollups(maps, last.0, last.1, sum_property)
         } else {
             self.fold_leaves(
                 maps,
@@ -267,9 +305,12 @@ impl CountScratch {
     }
 }
 
-pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN03";
-pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN3D";
+pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN04";
+pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN4D";
 pub(crate) const ACTION_NONE: u32 = u32::MAX;
+
+type MeasureKey = (u32, u32, u32);
+type MeasureTable = HashMap<u32, (u32, i64)>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct LiveMeta {
@@ -291,6 +332,10 @@ pub struct JoinMaps {
     by_kind: HashMap<u32, HashSet<u32>>,
     by_prop: HashMap<(u32, u32), HashMap<u32, Vec<u32>>>,
     amounts: HashMap<(u32, u32), HashMap<u32, i64>>,
+    /// Declared `(leaf_kind, sum_property)` intern ids from `mikura.schema`.
+    declared_sums: HashSet<(u32, u32)>,
+    /// Last-hop parent → `(count, sum)` for `(leaf_kind, join_property, sum_property)`.
+    rollups: HashMap<MeasureKey, MeasureTable>,
     pub(crate) owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
 }
 
@@ -494,6 +539,8 @@ impl JoinMaps {
         }
         self.insert_visible_ids(kind_id, key_id, owned)
             .expect("interned ids are valid");
+        self.add_leaf_contribution(kind_id, key_id);
+        self.restore_parent_rollups(key_id);
     }
 
     pub(crate) fn index(
@@ -519,6 +566,8 @@ impl JoinMaps {
         let Some(owned) = self.owned.remove(&(kind_id, key_id)) else {
             return;
         };
+        self.sub_leaf_contribution(kind_id, &owned);
+        self.drop_parent_rollups(key_id);
         if let Some(keys) = self.by_kind.get_mut(&kind_id) {
             keys.remove(&key_id);
             if keys.is_empty() {
@@ -566,6 +615,283 @@ impl JoinMaps {
             return HashMap::new();
         };
         crate::acl::PropertyAcl::omit_owned(&self.intern, kind_id, owned, denied)
+    }
+
+    pub(crate) fn has_declared_sum(&self, leaf_kind: &str, sum_property: &str) -> bool {
+        let (Some(&kind_id), Some(&prop_id)) = (
+            self.intern_ix.get(leaf_kind),
+            self.intern_ix.get(sum_property),
+        ) else {
+            return false;
+        };
+        self.declared_sums.contains(&(kind_id, prop_id))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_hop_measure(
+        &self,
+        leaf_kind: &str,
+        join_property: &str,
+        sum_property: &str,
+        parent: &str,
+    ) -> Option<(u32, i64)> {
+        let parent_id = self.intern_existing(parent)?;
+        self.measure_table(leaf_kind, join_property, sum_property)
+            .and_then(|table| table.get(&parent_id).copied())
+    }
+
+    fn measure_table(
+        &self,
+        leaf_kind: &str,
+        join_property: &str,
+        sum_property: &str,
+    ) -> Option<&HashMap<u32, (u32, i64)>> {
+        let kind_id = *self.intern_ix.get(leaf_kind)?;
+        let join_id = *self.intern_ix.get(join_property)?;
+        let sum_id = *self.intern_ix.get(sum_property)?;
+        self.rollups.get(&(kind_id, join_id, sum_id))
+    }
+
+    pub(crate) fn set_declared_sums(&mut self, leaf_kind: &str, sums: &[String]) {
+        let kind_id = self.intern(leaf_kind);
+        self.declared_sums.retain(|(kind, _)| *kind != kind_id);
+        self.rollups.retain(|(kind, _, _), _| *kind != kind_id);
+        for name in sums {
+            let prop_id = self.intern(name);
+            self.declared_sums.insert((kind_id, prop_id));
+        }
+        self.rebuild_leaf_rollups(kind_id);
+    }
+
+    pub(crate) fn clear_declared_sums(&mut self, leaf_kind: &str) {
+        let Some(kind_id) = self.intern_existing(leaf_kind) else {
+            return;
+        };
+        self.declared_sums.retain(|(kind, _)| *kind != kind_id);
+        self.rollups.retain(|(kind, _, _), _| *kind != kind_id);
+    }
+
+    pub(crate) fn adopt_declared_sums(&mut self, leaf_kind: &str, sums: &[String]) {
+        let kind_id = self.intern(leaf_kind);
+        self.declared_sums.retain(|(kind, _)| *kind != kind_id);
+        for name in sums {
+            let prop_id = self.intern(name);
+            self.declared_sums.insert((kind_id, prop_id));
+        }
+    }
+
+    fn key_is_visible(&self, key_id: u32) -> bool {
+        self.by_kind.values().any(|keys| keys.contains(&key_id))
+    }
+
+    fn leaf_sum_ids(&self, kind_id: u32) -> Vec<u32> {
+        self.declared_sums
+            .iter()
+            .filter(|(kind, _)| *kind == kind_id)
+            .map(|(_, prop)| *prop)
+            .collect()
+    }
+
+    fn owned_amount(intern: &[String], owned: &[(u32, u32)], sum_prop: u32) -> i64 {
+        for &(prop_id, value_id) in owned {
+            if prop_id == sum_prop {
+                return intern
+                    .get(value_id as usize)
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+            }
+        }
+        0
+    }
+
+    fn bump_rollup(&mut self, table: (u32, u32, u32), parent: u32, dcount: i32, dsum: i64) {
+        let parents = self.rollups.entry(table).or_default();
+        let entry = parents.entry(parent).or_insert((0, 0));
+        let next = i64::from(entry.0) + i64::from(dcount);
+        if next <= 0 {
+            parents.remove(&parent);
+            if parents.is_empty() {
+                self.rollups.remove(&table);
+            }
+            return;
+        }
+        entry.0 = next as u32;
+        entry.1 += dsum;
+    }
+
+    fn add_leaf_contribution(&mut self, kind_id: u32, key_id: u32) {
+        let sums = self.leaf_sum_ids(kind_id);
+        if sums.is_empty() {
+            return;
+        }
+        let Some(owned) = self.owned.get(&(kind_id, key_id)).cloned() else {
+            return;
+        };
+        for sum_prop in sums {
+            let amount = Self::owned_amount(&self.intern, &owned, sum_prop);
+            for &(prop_id, parent_id) in &owned {
+                if prop_id == sum_prop || !self.key_is_visible(parent_id) {
+                    continue;
+                }
+                self.bump_rollup((kind_id, prop_id, sum_prop), parent_id, 1, amount);
+            }
+        }
+    }
+
+    fn sub_leaf_contribution(&mut self, kind_id: u32, owned: &[(u32, u32)]) {
+        let sums = self.leaf_sum_ids(kind_id);
+        if sums.is_empty() {
+            return;
+        }
+        for sum_prop in sums {
+            let amount = Self::owned_amount(&self.intern, owned, sum_prop);
+            for &(prop_id, parent_id) in owned {
+                if prop_id == sum_prop {
+                    continue;
+                }
+                self.bump_rollup((kind_id, prop_id, sum_prop), parent_id, -1, -amount);
+            }
+        }
+    }
+
+    fn drop_parent_rollups(&mut self, parent_id: u32) {
+        let mut empty = Vec::new();
+        for (table, parents) in &mut self.rollups {
+            parents.remove(&parent_id);
+            if parents.is_empty() {
+                empty.push(*table);
+            }
+        }
+        for table in empty {
+            self.rollups.remove(&table);
+        }
+    }
+
+    fn restore_parent_rollups(&mut self, parent_id: u32) {
+        let declared: Vec<(u32, u32)> = self.declared_sums.iter().copied().collect();
+        for (leaf_id, sum_prop) in declared {
+            let joins: Vec<u32> = self
+                .by_prop
+                .keys()
+                .filter(|(kind, join)| *kind == leaf_id && *join != sum_prop)
+                .map(|(_, join)| *join)
+                .collect();
+            for join_id in joins {
+                let Some(children) = self
+                    .by_prop
+                    .get(&(leaf_id, join_id))
+                    .and_then(|by_val| by_val.get(&parent_id))
+                    .cloned()
+                else {
+                    continue;
+                };
+                if children.is_empty() {
+                    continue;
+                }
+                let amounts = self.amounts.get(&(leaf_id, sum_prop));
+                let mut count = 0u32;
+                let mut total = 0i64;
+                for child in children {
+                    count += 1;
+                    if let Some(amount) = amounts.and_then(|map| map.get(&child)) {
+                        total += *amount;
+                    }
+                }
+                self.rollups
+                    .entry((leaf_id, join_id, sum_prop))
+                    .or_default()
+                    .insert(parent_id, (count, total));
+            }
+        }
+    }
+
+    fn rebuild_leaf_rollups(&mut self, leaf_id: u32) {
+        self.rollups.retain(|(kind, _, _), _| *kind != leaf_id);
+        let sums = self.leaf_sum_ids(leaf_id);
+        if sums.is_empty() {
+            return;
+        }
+        let joins: Vec<(u32, HashMap<u32, Vec<u32>>)> = self
+            .by_prop
+            .iter()
+            .filter(|((kind, _), _)| *kind == leaf_id)
+            .map(|((_, join), by_val)| (*join, by_val.clone()))
+            .collect();
+        for sum_prop in sums {
+            let amounts = self.amounts.get(&(leaf_id, sum_prop)).cloned();
+            for (join_id, by_val) in &joins {
+                if *join_id == sum_prop {
+                    continue;
+                }
+                for (parent_id, children) in by_val {
+                    if children.is_empty() || !self.key_is_visible(*parent_id) {
+                        continue;
+                    }
+                    let mut total = 0i64;
+                    for child in children {
+                        if let Some(amount) = amounts.as_ref().and_then(|map| map.get(child)) {
+                            total += *amount;
+                        }
+                    }
+                    self.rollups
+                        .entry((leaf_id, *join_id, sum_prop))
+                        .or_default()
+                        .insert(*parent_id, (children.len() as u32, total));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn write_measures(&self, body: &mut Vec<u8>) -> Result<(), String> {
+        let mut tables: Vec<_> = self.rollups.iter().collect();
+        tables.sort_by_key(|(key, _)| *key);
+        let n = u32::try_from(tables.len()).map_err(|_| "too many measure tables".to_string())?;
+        body.extend_from_slice(&n.to_le_bytes());
+        for ((leaf, join, sum), parents) in tables {
+            body.extend_from_slice(&leaf.to_le_bytes());
+            body.extend_from_slice(&join.to_le_bytes());
+            body.extend_from_slice(&sum.to_le_bytes());
+            let mut rows: Vec<_> = parents.iter().collect();
+            rows.sort_by_key(|(parent, _)| *parent);
+            let pn =
+                u32::try_from(rows.len()).map_err(|_| "too many measure parents".to_string())?;
+            body.extend_from_slice(&pn.to_le_bytes());
+            for (parent, (count, total)) in rows {
+                body.extend_from_slice(&parent.to_le_bytes());
+                body.extend_from_slice(&count.to_le_bytes());
+                body.extend_from_slice(&total.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn read_measures(&mut self, cur: &mut &[u8]) -> Result<(), String> {
+        let n = crate::codec::read_u32(cur)? as usize;
+        self.rollups.clear();
+        for _ in 0..n {
+            let leaf = crate::codec::read_u32(cur)?;
+            let join = crate::codec::read_u32(cur)?;
+            let sum = crate::codec::read_u32(cur)?;
+            if self.intern.get(leaf as usize).is_none()
+                || self.intern.get(join as usize).is_none()
+                || self.intern.get(sum as usize).is_none()
+            {
+                return Err("bad intern measure".into());
+            }
+            let pn = crate::codec::read_u32(cur)? as usize;
+            let mut parents = HashMap::with_capacity(pn);
+            for _ in 0..pn {
+                let parent = crate::codec::read_u32(cur)?;
+                let count = crate::codec::read_u32(cur)?;
+                let total = crate::codec::read_i64(cur)?;
+                if self.intern.get(parent as usize).is_none() {
+                    return Err("bad intern measure parent".into());
+                }
+                parents.insert(parent, (count, total));
+            }
+            self.rollups.insert((leaf, join, sum), parents);
+        }
+        Ok(())
     }
 }
 

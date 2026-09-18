@@ -3,7 +3,8 @@
 //! Spark stays unsupported.
 
 use mikura::{
-    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl, Store,
+    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,
+    SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_ingest::BatchIngest;
 use std::env;
@@ -446,6 +447,23 @@ mod tests {
         let log = dir.join("objects.mikura");
         let scale = Scale::from_objects(1_000).unwrap();
         let mut store = Store::create(&log).unwrap();
+        store
+            .append(
+                SchemaDescriptor {
+                    kind: "Shipment".into(),
+                    properties: vec!["amount".into(), "order_id".into()],
+                    required: Vec::new(),
+                    links: vec![SchemaLink {
+                        name: "order_id".into(),
+                        far_kind: "Order".into(),
+                        outgoing: true,
+                    }],
+                    sums: vec!["amount".into()],
+                }
+                .to_record()
+                .unwrap(),
+            )
+            .unwrap();
         ingest(&mut store, &scale, 200).unwrap();
         assert!(!store.joins().is_visible("Customer", "c0"));
         assert!(!store.joins().is_visible("Order", "o0"));
