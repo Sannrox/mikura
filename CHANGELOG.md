@@ -108,6 +108,9 @@ window.
 
 ### Fixed
 
+- Host request-line timeout is a wall-clock budget from accept, not an
+  idle gap between bytes. A drip still fails closed with `RequestTimeout`
+  ([#139](https://github.com/Sannrox/mikura/issues/139)).
 - Host request-line read uses a bounded buffer and a slab, and refuses
   before a byte would pass `--request-bound`
   ([#138](https://github.com/Sannrox/mikura/issues/138)).
