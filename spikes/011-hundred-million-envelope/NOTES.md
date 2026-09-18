@@ -391,3 +391,58 @@ was already ~60 s; the join delta grew with the log (~3.8 GiB each at
 - **No follow-up Issue.** Further scale envelopes wait until a consumer
   names that size with a fixture. Do not start 10¹⁰
   ([#55](https://github.com/Sannrox/mikura/issues/55)) from this note.
+
+## Addendum (2026-09-18): remasure after last-hop measures (#152)
+
+Question: after [#151](https://github.com/Sannrox/mikura/issues/151) /
+[ADR 0010](../../docs/decisions/0010-last-hop-measures.md), does hop
+count+sum hold ≤ 500 ms at 10⁷ on the schema-named rollup path? Dual-read
+must hold. A miss is a note, not an engine pick.
+
+Budgets stated before this run (same envelopes as prior addenda: Apple M2
+Pro, 32 GiB, Darwin arm64; `rustc` 1.96.1; no hostnames):
+
+| Metric | Budget |
+| --- | ---: |
+| Hop count + sum query | **≤ 500 ms** |
+| Dual-read vs sidecar (sampled; full replay only if cheap) | **hold** |
+| Fit in 32 GiB | **hold** |
+
+The harness commits the smallest `mikura.schema` objects so
+`Shipment.amount` is a declared sum measure. Evaluate must read parent
+rollups, not the undeclared leaf walk. Same Customer→Order→Shipment
+fixture, hidden every 100th key, same ratios. `--oracle sidecar` keeps
+full log replay from dominating; live vs sidecar still dual-reads.
+Do not run 10⁸ or 10⁹. Do not start
+[#55](https://github.com/Sannrox/mikura/issues/55).
+
+```text
+cargo test --manifest-path spikes/011-hundred-million-envelope/Cargo.toml --locked
+cargo run --release --manifest-path spikes/011-hundred-million-envelope/Cargo.toml --locked -- --objects 10000000 --oracle sidecar --dir data/envelope-152
+```
+
+Measured after [#151](https://github.com/Sannrox/mikura/issues/151) (`MKJOIN04`
+parent rollups). Harness at the #151 merge plus this addendum's schema
+commit. `declared_sum=Shipment.amount`. Same fixture family and machine
+class. `rustc` 1.96.1. No hostnames.
+
+| objects | ingest | RSS | log | sidecar | **query** | `Store::open` | oracle | two-hop | sum | dual-read |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| **10⁷** | 149 s | 7.1 GiB | 593 MiB | 442 MiB | **40 ms** | 12.0 s | sidecar | 99_000 | 226_861_000 | **hold** |
+
+`live_query_ms=40`. `sidecar_query_ms=42`. `ingest_ms=149363`. Peak RSS
+`7592509440`. Log `622170112`. Sidecar `463607114`. `open_ms=12016`.
+Count and sum match the published 10⁷ leaf-walk oracle. Dual-read is live
+versus sidecar after `Store::open`. Full log replay was not required.
+
+## Verdict: HOLD
+
+- **Query** holds ≤ 500 ms at 10⁷: **40 ms** on the schema-named rollup
+  path (prior leaf-walk miss was 1252–2117 ms).
+- **Dual-read holds** (live vs sidecar).
+- **RAM** at 10⁷ is 7.1 GiB on 32 GiB. Fit holds.
+- **`Store::open`** is 12.0 s. Restart is still a load cost, not this
+  remasure's miss. No new persist ticket.
+- **No engine pick.** Spark stays unsupported.
+- **No follow-up Issue.** Do not start
+  [#55](https://github.com/Sannrox/mikura/issues/55) from this hold.

@@ -20,6 +20,10 @@ window.
 
 ### Added
 
+- Spike 011 remasure: after last-hop measures, 10⁷ hop count+sum
+  **40 ms hold** vs 500 ms on the schema-named rollup path. Dual-read
+  holds. No engine pick
+  ([#152](https://github.com/Sannrox/mikura/issues/152)).
 - Schema-named last-hop sums persist as parent `(count, sum)` rollups on
   `MKJOIN04` / `MKJOIN4D`. Evaluate of a declared `(sum_kind, sum_property)`
   reads those columns. Undeclared pairs keep the leaf walk. Old `MKJOIN03`

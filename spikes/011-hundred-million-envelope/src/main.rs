@@ -99,7 +99,29 @@ fn rss_bytes() -> u64 {
         .unwrap_or(0)
 }
 
+fn shipment_sum_schema() -> Result<ObjectRecord, String> {
+    SchemaDescriptor {
+        kind: "Shipment".into(),
+        properties: vec!["amount".into(), "order_id".into()],
+        required: Vec::new(),
+        links: vec![SchemaLink {
+            name: "order_id".into(),
+            far_kind: "Order".into(),
+            outgoing: true,
+        }],
+        sums: vec!["amount".into()],
+    }
+    .to_record()
+}
+
+fn commit_declared_measures(store: &mut Store) -> Result<(), String> {
+    store.append(shipment_sum_schema()?)?;
+    eprintln!("declared_sum=Shipment.amount");
+    Ok(())
+}
+
 fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<u64, String> {
+    commit_declared_measures(store)?;
     let mut batch = Vec::with_capacity(chunk);
     let mut peak_rss = rss_bytes();
     for id in 0..scale.customers {
@@ -379,7 +401,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                     .map_err(|_| format!("invalid --objects {value}"))?;
             }
             "--dir" => {
-                let value = args.next().ok_or_else(|| "missing --dir value".to_string())?;
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing --dir value".to_string())?;
                 parsed.dir = Some(PathBuf::from(value));
                 parsed.keep = true;
             }
@@ -419,6 +443,14 @@ mod tests {
     }
 
     #[test]
+    fn shipment_schema_declares_amount_sum() {
+        let record = shipment_sum_schema().unwrap();
+        let schema = SchemaDescriptor::from_record(&record).unwrap();
+        assert_eq!(schema.kind, "Shipment");
+        assert_eq!(schema.sums, vec!["amount".to_string()]);
+    }
+
+    #[test]
     fn parse_dir_keep_and_sidecar_oracle() {
         let args = parse_args(
             [
@@ -447,24 +479,12 @@ mod tests {
         let log = dir.join("objects.mikura");
         let scale = Scale::from_objects(1_000).unwrap();
         let mut store = Store::create(&log).unwrap();
-        store
-            .append(
-                SchemaDescriptor {
-                    kind: "Shipment".into(),
-                    properties: vec!["amount".into(), "order_id".into()],
-                    required: Vec::new(),
-                    links: vec![SchemaLink {
-                        name: "order_id".into(),
-                        far_kind: "Order".into(),
-                        outgoing: true,
-                    }],
-                    sums: vec!["amount".into()],
-                }
-                .to_record()
-                .unwrap(),
-            )
-            .unwrap();
         ingest(&mut store, &scale, 200).unwrap();
+        let schema = store
+            .schema("Shipment")
+            .unwrap()
+            .expect("declared Shipment schema");
+        assert_eq!(schema.sums, vec!["amount".to_string()]);
         assert!(!store.joins().is_visible("Customer", "c0"));
         assert!(!store.joins().is_visible("Order", "o0"));
         assert!(!store.joins().is_visible("Shipment", "s0"));
