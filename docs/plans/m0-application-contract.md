@@ -62,6 +62,9 @@ it also returns the distinct matching objects (query 2: `component/svc-api`;
 query 3: `component/svc-api` via `affects`). For this seed the aggregates
 are `count=1` and `sum=0`. Exceeding `object_bound` fails closed. Omit or
 `0` keeps count/sum only. Wire `v` stays 1; `objects` is additive.
+Sort, a second predicate, and a page token are not required: each
+expected set is one identity, and the bound cannot hide a member on
+this seed ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 ## One admitted edit
 
@@ -126,5 +129,6 @@ A miss is a note, not an engine pick.
 
 The M1 contract is [ADR 0008](../decisions/0008-type-link-delete.md)
 ([#110](https://github.com/Sannrox/mikura/issues/110)). Do not publish
-M2–M5 from this page. `#54` and `#55` stay blocked. Implementation of
-supplied-schema validation is a separate feature Issue.
+M2–M5 from this page. `#54` and `#55` stay blocked. Remaining M2
+operators wait for a fixture that names them
+([#122](https://github.com/Sannrox/mikura/issues/122)).

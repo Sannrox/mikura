@@ -179,7 +179,10 @@ uncommitted tail; rebuild reads only committed pages.
    the last hop's `far_kind` (or `root_kind` if there are no hops), `load`
    each with the request ACL, and return them as `EvaluateResponse.objects`.
    More identities than the bound fails closed. `object_bound == 0` leaves
-   `objects` empty.
+   `objects` empty. Result-key order is intern-string sorted; that is not
+   a product sort operator. Sort keys, composed predicates, and cursors
+   stay out until a consumer fixture's expected answers are ambiguous
+   without them.
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
 a filter is present, on `(root_kind, filter.property)`. Denied properties
