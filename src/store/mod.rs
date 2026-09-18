@@ -11,6 +11,11 @@ use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod sidecar;
 
+/// Rewrite `{log}.joins` and delete `{log}.joins.delta` when the dirty-set
+/// file exceeds this many bytes. Compact still also runs when there is no
+/// checkpoint or dirty rows exceed a quarter of identity.
+pub const JOIN_DELTA_COMPACT_BYTES: u64 = 64 * 1024 * 1024;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {
     pub gen: u64,
@@ -31,6 +36,7 @@ pub struct Store {
     dirty: HashSet<(String, String)>,
     has_checkpoint: bool,
     delta_bytes: u64,
+    delta_compact_bytes: u64,
 }
 
 impl Store {
@@ -64,6 +70,7 @@ impl Store {
             dirty: HashSet::new(),
             has_checkpoint: false,
             delta_bytes: 0,
+            delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
         })
     }
 
@@ -81,9 +88,17 @@ impl Store {
             dirty: HashSet::new(),
             has_checkpoint: false,
             delta_bytes: 0,
+            delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
         };
         store.install_projection()?;
         Ok(store)
+    }
+
+    /// Use a tiny compact bound in tests so a few dirty-set frames can exceed
+    /// it without writing `JOIN_DELTA_COMPACT_BYTES` of delta.
+    #[cfg(test)]
+    pub(crate) fn set_join_delta_compact_bytes(&mut self, bytes: u64) {
+        self.delta_compact_bytes = bytes;
     }
 
     fn install_live(

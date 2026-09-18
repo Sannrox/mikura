@@ -120,7 +120,9 @@ After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. A successful delta persist clears
 that dirty set so later ingest chunks do not accumulate until every
 commit rewrites the checkpoint; later chunks append only the new dirty
-rows. Compact when dirty rows exceed a quarter of identity.
+rows. Compact when dirty rows exceed a quarter of identity, or when the
+delta file exceeds `JOIN_DELTA_COMPACT_BYTES` (64 MiB). Compact rewrites
+the interned checkpoint and deletes the delta.
 
 `JoinMaps` is generic over kind and property name. Strings are interned.
 Join children are packed identity lists. Hidden records are absent from

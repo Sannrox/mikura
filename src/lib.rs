@@ -39,7 +39,7 @@ pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
 pub use schema::{
     SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
 };
-pub use store::{ObjectRecord, Store};
+pub use store::{ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES};
 
 #[cfg(test)]
 mod crate_tests;

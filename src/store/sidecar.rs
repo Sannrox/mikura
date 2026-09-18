@@ -15,15 +15,22 @@ impl Store {
         let compact =
             !self.has_checkpoint || self.dirty.len().saturating_mul(4) > self.identity.len().max(1);
         if compact {
-            self.persist_checkpoint(pages)?;
-            let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
-            self.dirty.clear();
-            self.has_checkpoint = true;
-            self.delta_bytes = 0;
-            return Ok(());
+            return self.rewrite_checkpoint(pages);
         }
         self.persist_delta(pages)?;
         self.dirty.clear();
+        if self.delta_bytes > self.delta_compact_bytes {
+            return self.rewrite_checkpoint(pages);
+        }
+        Ok(())
+    }
+
+    fn rewrite_checkpoint(&mut self, pages: u32) -> Result<(), String> {
+        self.persist_checkpoint(pages)?;
+        let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
+        self.dirty.clear();
+        self.has_checkpoint = true;
+        self.delta_bytes = 0;
         Ok(())
     }
 
