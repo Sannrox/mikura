@@ -108,6 +108,9 @@ window.
 
 ### Fixed
 
+- After `RequestBound`, leftover-input discard stops at the request
+  wall-clock deadline instead of resetting idle timeout on every chunk
+  ([#140](https://github.com/Sannrox/mikura/issues/140)).
 - Host request-line timeout is a wall-clock budget from accept, not an
   idle gap between bytes. A drip still fails closed with `RequestTimeout`
   ([#139](https://github.com/Sannrox/mikura/issues/139)).

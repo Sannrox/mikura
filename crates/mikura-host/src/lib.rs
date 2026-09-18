@@ -328,10 +328,11 @@ impl Host {
                 return write_fail_closed(
                     &mut stream,
                     fail(format!("RequestBound {{ bound: {bound}, bytes: {bytes} }}")),
+                    deadline,
                 );
             }
             Err(ServeRead::Timeout) => {
-                return write_fail_closed(&mut stream, fail("RequestTimeout"));
+                return write_fail_closed(&mut stream, fail("RequestTimeout"), deadline);
             }
             Err(ServeRead::Disconnect) => return Err("client disconnect".into()),
             Err(ServeRead::Io(error)) => return Err(error),
@@ -470,11 +471,23 @@ fn write_response(stream: &mut TcpStream, response: HostResponse) -> Result<(), 
 
 /// Reply, then FIN the write side and discard leftover input so a client that
 /// already sent past the bound can still read the typed error instead of RST.
-fn write_fail_closed(stream: &mut TcpStream, response: HostResponse) -> Result<(), String> {
+/// Discard is the remaining request wall-clock budget, not a fresh idle
+/// timeout on every chunk.
+fn write_fail_closed(
+    stream: &mut TcpStream,
+    response: HostResponse,
+    deadline: Instant,
+) -> Result<(), String> {
     write_response(stream, response)?;
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let mut discard = [0u8; 256];
     loop {
+        let Ok(remaining) = remaining_until(deadline) else {
+            return Ok(());
+        };
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|err| err.to_string())?;
         match stream.read(&mut discard) {
             Ok(0) => return Ok(()),
             Ok(_) => continue,

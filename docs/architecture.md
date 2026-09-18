@@ -265,8 +265,9 @@ clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
 A JSON line larger than `--request-bound` (default 1 MiB) fails closed
 with `RequestBound`. Assembling that line is a wall-clock budget of
 `--request-timeout-ms` (default 5 s), not an idle gap between bytes;
-overtime is `RequestTimeout`. One disconnect does not stop the
-listener. No tenants, policy compile, receipts, or principals.
+overtime is `RequestTimeout`. Leftover-input discard after that reply
+uses the same wall-clock deadline, not a fresh idle timeout per chunk.
+One disconnect does not stop the listener. No tenants, policy compile, receipts, or principals.
 
 Backup is a file copy of the object log plus the optional `{log}.joins`
 sidecar. Copy those files next to a fresh `Host::open`. There is no backup
