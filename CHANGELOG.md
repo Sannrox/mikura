@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- [ADR 0008](docs/decisions/0008-type-link-delete.md): product-loop values
+  stay strings; `affects` is a property-backed many-to-one link; `hidden`
+  is the evaluate tombstone; supplied schema persists as `mikura.schema`
+  objects. No `MIKURAV1` bump
+  ([#110](https://github.com/Sannrox/mikura/issues/110)).
 - M0 application contract: the public Sekai product-loop fixture
   (`component` / `incident`, `affects`) is the first consumer workflow.
   Thin loopback client: `cargo run -p mikura-host --example product_loop`.

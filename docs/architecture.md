@@ -34,8 +34,10 @@ today evaluate is hop + count/sum.
 
 Identity is `(kind, key)`. A later append replaces the live record.
 
-Records may store an optional Action id. They do not store a principal or
-schema version. [ADR 0006](decisions/0006-action-provenance.md).
+Records may store an optional Action id. They do not store a principal.
+Schema descriptors, when present, are ordinary objects of kind
+`mikura.schema` ([ADR 0008](decisions/0008-type-link-delete.md)).
+[ADR 0006](decisions/0006-action-provenance.md).
 
 ## Object log
 

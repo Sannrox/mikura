@@ -11,7 +11,7 @@ the job.
 | [plans/m0-application-contract.md](plans/m0-application-contract.md) | Reference | Accepted first-application fixture, queries, and host baseline |
 | [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
 | [glossary.md](glossary.md) | Reference | Project terms |
-| [decisions/](decisions/README.md) | Reference | Accepted ADRs |
+| [decisions/](decisions/README.md) | Reference | Accepted ADRs ([0008](decisions/0008-type-link-delete.md) is the M1 type/link/delete contract) |
 | [../spikes/README.md](../spikes/README.md) | Reference | Historical measurements |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Guide | How to change the code |
 | [../AGENTS.md](../AGENTS.md) | Governance | How agents work in this tree |
