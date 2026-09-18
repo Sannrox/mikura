@@ -57,16 +57,18 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M3 overlay | Persist `mikura.overlay`, merge on source ingest, stale generation fails closed ([#119](https://github.com/Sannrox/mikura/issues/119)). |
 | M3 commit visibility | Read-after-write on committed host ops plus reopen is enough. No public commit-position waiter; source offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)). |
 | M4 contract | Pilot is this one-process host: JSON `v=1`, deny-closed, overload, backup/restore, shutdown, binary replace + reopen ([#121](https://github.com/Sannrox/mikura/issues/121), [m4-hosted-pilot-contract.md](docs/plans/m4-hosted-pilot-contract.md)). |
+| M4 overload | Host request-byte bound and socket timeout fail closed; disconnect does not stop the listener ([#125](https://github.com/Sannrox/mikura/issues/125)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 and M1 are accepted. Remaining items:
 
-1. **M4 — hosted pilot:** prove overload ([#125](https://github.com/Sannrox/mikura/issues/125)),
-   backup/restore ([#126](https://github.com/Sannrox/mikura/issues/126)), and
+1. **M4 — hosted pilot:** prove backup/restore
+   ([#126](https://github.com/Sannrox/mikura/issues/126)) and
    shutdown/upgrade ([#127](https://github.com/Sannrox/mikura/issues/127))
    against [the accepted contract](docs/plans/m4-hosted-pilot-contract.md).
+   Overload admission is implemented ([#125](https://github.com/Sannrox/mikura/issues/125)).
 2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 

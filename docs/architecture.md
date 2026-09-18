@@ -260,7 +260,10 @@ must carry a matching `token`. Non-loopback bind still requires `--bearer`.
 also refuses a non-loopback listener unless `require_bearer` has been
 called. `open` plus `handle` without a stored bearer stays the in-process
 clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
-No tenants, policy compile, receipts, or principals.
+A JSON line larger than `--request-bound` (default 1 MiB) or a socket that
+exceeds `--request-timeout-ms` (default 5 s) fails closed with
+`RequestBound` / `RequestTimeout`. One disconnect does not stop the
+listener. No tenants, policy compile, receipts, or principals.
 
 ## What v1 does not do
 

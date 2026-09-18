@@ -9,8 +9,10 @@
 //! This crate does not know tenants, policy, receipts, or principals.
 
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
+use std::time::Duration;
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
@@ -94,6 +96,10 @@ pub enum HostRequest {
 }
 
 pub const WIRE_V: u32 = 1;
+/// Default max JSON-line bytes for one RPC. Oversized lines fail closed.
+pub const DEFAULT_REQUEST_BOUND: usize = 1 << 20;
+/// Default socket read/write budget for one RPC.
+pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, Deserialize)]
 struct HostEnvelope {
@@ -127,6 +133,8 @@ pub struct Host {
     store: Store,
     stream: StreamIngest,
     bearer: Option<String>,
+    request_bound: usize,
+    request_timeout: Duration,
 }
 
 impl Host {
@@ -140,7 +148,23 @@ impl Host {
             store,
             stream: StreamIngest::new(stream_bound)?,
             bearer: None,
+            request_bound: DEFAULT_REQUEST_BOUND,
+            request_timeout: Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
         })
+    }
+
+    /// Fail closed when a JSON line exceeds `bound` bytes or a socket
+    /// exceeds `timeout`. Bound must be greater than zero.
+    pub fn set_request_limits(&mut self, bound: usize, timeout: Duration) -> Result<(), String> {
+        if bound == 0 {
+            return Err("request bound must be greater than zero".into());
+        }
+        if timeout.is_zero() {
+            return Err("request timeout must be greater than zero".into());
+        }
+        self.request_bound = bound;
+        self.request_timeout = timeout;
+        Ok(())
     }
 
     /// Require a matching token on every JSON-line RPC.
@@ -268,6 +292,13 @@ impl Host {
     }
 
     pub fn handle_line(&mut self, line: &str) -> HostResponse {
+        if line.len() > self.request_bound {
+            return fail(format!(
+                "RequestBound {{ bound: {}, bytes: {} }}",
+                self.request_bound,
+                line.len()
+            ));
+        }
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(error) => return fail(error.to_string()),
@@ -286,27 +317,41 @@ impl Host {
     }
 
     pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
-        use std::io::{BufRead, BufReader, Write};
         self.refuse_unauthenticated_routable(stream.local_addr().map_err(|err| err.to_string())?)?;
-        let mut reader = BufReader::new(stream.try_clone().map_err(|err| err.to_string())?);
-        let mut line = String::new();
-        reader.read_line(&mut line).map_err(|err| err.to_string())?;
-        let response = self.handle_line(line.trim());
-        let body = serde_json::to_string(&response).map_err(|err| err.to_string())?;
         stream
-            .write_all(body.as_bytes())
+            .set_read_timeout(Some(self.request_timeout))
             .map_err(|err| err.to_string())?;
-        stream.write_all(b"\n").map_err(|err| err.to_string())?;
-        Ok(())
+        stream
+            .set_write_timeout(Some(self.request_timeout))
+            .map_err(|err| err.to_string())?;
+        let line = match read_request_line(&mut stream, self.request_bound) {
+            Ok(line) => line,
+            Err(ServeRead::Bound { bound, bytes }) => {
+                return write_fail_closed(
+                    &mut stream,
+                    fail(format!("RequestBound {{ bound: {bound}, bytes: {bytes} }}")),
+                );
+            }
+            Err(ServeRead::Timeout) => {
+                return write_fail_closed(&mut stream, fail("RequestTimeout"));
+            }
+            Err(ServeRead::Disconnect) => return Err("client disconnect".into()),
+            Err(ServeRead::Io(error)) => return Err(error),
+        };
+        write_response(&mut stream, self.handle_line(line.trim()))
     }
 
-    /// Accept connections until the listener closes or an I/O error occurs.
+    /// Accept connections until the listener closes.
+    ///
+    /// A single client disconnect, timeout, or bound rejection does not stop
+    /// the host. Listener accept errors still fail closed.
     pub fn serve(&mut self, listener: TcpListener) -> Result<(), String> {
         self.refuse_unauthenticated_routable(
             listener.local_addr().map_err(|err| err.to_string())?,
         )?;
         for incoming in listener.incoming() {
-            self.serve_one(incoming.map_err(|err| err.to_string())?)?;
+            let stream = incoming.map_err(|err| err.to_string())?;
+            let _ = self.serve_one(stream);
         }
         Ok(())
     }
@@ -336,6 +381,71 @@ fn fail(error: impl ToString) -> HostResponse {
         error: Some(error.to_string()),
         evaluate: None,
         load: None,
+    }
+}
+
+enum ServeRead {
+    Bound { bound: usize, bytes: usize },
+    Timeout,
+    Disconnect,
+    Io(String),
+}
+
+fn read_request_line(stream: &mut TcpStream, bound: usize) -> Result<String, ServeRead> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => return Err(ServeRead::Disconnect),
+            Ok(_) => {
+                if byte[0] == b'\n' {
+                    return String::from_utf8(buf).map_err(|err| ServeRead::Io(err.to_string()));
+                }
+                buf.push(byte[0]);
+                if buf.len() > bound {
+                    return Err(ServeRead::Bound {
+                        bound,
+                        bytes: buf.len(),
+                    });
+                }
+            }
+            Err(err)
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                return Err(ServeRead::Timeout);
+            }
+            Err(err) => return Err(ServeRead::Io(err.to_string())),
+        }
+    }
+}
+
+fn write_response(stream: &mut TcpStream, response: HostResponse) -> Result<(), String> {
+    let body = serde_json::to_string(&response).map_err(|err| err.to_string())?;
+    stream
+        .write_all(body.as_bytes())
+        .map_err(|err| err.to_string())?;
+    stream.write_all(b"\n").map_err(|err| err.to_string())
+}
+
+/// Reply, then FIN the write side and discard leftover input so a client that
+/// already sent past the bound can still read the typed error instead of RST.
+fn write_fail_closed(stream: &mut TcpStream, response: HostResponse) -> Result<(), String> {
+    write_response(stream, response)?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut discard = [0u8; 256];
+    loop {
+        match stream.read(&mut discard) {
+            Ok(0) => return Ok(()),
+            Ok(_) => continue,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                return Ok(());
+            }
+            Err(_) => return Ok(()),
+        }
     }
 }
 

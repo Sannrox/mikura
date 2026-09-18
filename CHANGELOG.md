@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- Host request admission: a JSON line over `--request-bound` or a socket
+  past `--request-timeout-ms` fails closed. A client disconnect does not
+  stop the listener
+  ([#125](https://github.com/Sannrox/mikura/issues/125)).
 - M4 hosted-pilot contract: one process, JSON `v=1`, deny-closed access,
   overload, backup/restore of the log, graceful shutdown, and reopen
   after a binary replace. Follow-ups are #125 / #126 / #127. Leftover M2
