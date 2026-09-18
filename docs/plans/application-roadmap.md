@@ -1,9 +1,9 @@
 # Roadmap proposal: an application-led object database
 
-Status: draft for discussion, 2026-09-17. The selected direction is an
-object database driven by one real application. The application, budgets,
-and detailed semantics remain to be chosen. This proposal does not accept
-a new storage format or supersede an ADR.
+Status: selected direction, 2026-09-17. The M0 consumer and fixture are
+accepted in [m0-application-contract.md](m0-application-contract.md)
+(2026-09-18). Remaining milestone semantics stay draft until their ADRs.
+This proposal does not accept a new storage format or supersede an ADR.
 
 ## Destination
 
@@ -36,37 +36,24 @@ application is complete.
 | Recovery and scale | CRC log, sidecar rebuild, integration and host-process tests | Restore drills, capacity limits, operational visibility, representative workload budgets |
 
 The [existing roadmap](../../ROADMAP.md) records a 10⁷ query miss and an
-unfinished 10⁸ ingest. The only open GitHub issues inspected on 2026-09-17
-were the blocked [10⁹](https://github.com/Sannrox/mikura/issues/54) and
-[10¹⁰](https://github.com/Sannrox/mikura/issues/55) envelopes. Those are
+unfinished 10⁸ ingest. The scale Issues [10⁹](https://github.com/Sannrox/mikura/issues/54) and
+[10¹⁰](https://github.com/Sannrox/mikura/issues/55) stay blocked. Those are
 long-horizon research, not the next application milestone.
 
 ## First application contract
 
-Choose an actual consumer and one complete workflow before fixing the
-feature list. Until then, use this provisional fixture to make the plan
-reviewable: customers, orders, and shipments; list delayed orders; follow
-their shipments; correct a shipment status; refresh the source; reopen the
-store; verify the correction and permitted query results.
+The accepted M0 contract is the public Sekai product-loop fixture: kinds
+`component` and `incident`; link Incident `affects` Service; load
+`svc-api`; exact-filter `component` `tier=prod`; hop `incident` →
+`component` on `affects`; one admitted edit to `inc-1`; refresh source;
+reopen. Details, expected answers, and the baseline table live in
+[m0-application-contract.md](m0-application-contract.md).
 
-This fixture is a proposal, not a claim about the selected application's
-needs. The consumer owns its UI and policy decisions; mikura owns the tested
-storage and query contract.
-
-Record:
-
-- Object/link types, required value types, three representative queries,
-  and one edit workflow.
-- Source refresh/delete behavior, edit precedence, retry behavior, and
-  required read-after-write visibility.
-- Trusted backend and access rules, including which operations need object
-  visibility filtering in addition to property restrictions.
-- Initial and expected object counts, link fanout, property sizes, update
-  rate, concurrent clients, and budgets for p95 reads, edit visibility,
-  ingest, memory, disk, reopen, and restore.
-
-Choose numerical budgets from the consumer's requirements before measuring.
-Calendar estimates wait for this scope and contributor capacity.
+The consumer owns its UI and policy decisions; mikura owns the tested
+storage and query contract. The contract records types, queries, the one
+edit, refresh/delete/retry/visibility, the access boundary, and that
+workload budgets stay unset until the consumer publishes numbers for this
+fixture.
 
 ## Delivery sequence
 
@@ -76,7 +63,7 @@ checks pass.
 
 | Milestone | Deliverable | Exit check |
 | --- | --- | --- |
-| M0 — application contract | Named consumer, fixture, expected answers, budgets, and a thin client exercising the existing host | Baseline report separates supported behavior from each missing capability; no invented performance claim |
+| M0 — application contract (accepted) | Named consumer, fixture, expected answers, budgets, and a thin client exercising the existing host | Baseline report separates supported behavior from each missing capability; no invented performance claim. See [m0-application-contract.md](m0-application-contract.md) |
 | M1 — typed objects and links | Minimal required scalar types; explicit null/absent rules; supplied schema descriptors; relation direction/cardinality; deletion visibility | Invalid values fail deterministically; objects and required links survive restart and projection deletion; old-data compatibility follows an accepted ADR |
 | M2 — application queries | Load batches; list matching objects; deterministic sort and bounded cursor pages; composed filters and typed ranges; required traversal; existing count/sum | The application's queries return the fixture's expected objects/results; duplicate and null semantics are explicit; pagination has documented behavior under writes; permission checks apply to every used property/link |
 | M3 — refresh-safe edits | Durable source state plus property edit overlay; explicit create/delete/recreate behavior; conditional writes; idempotent retry; durable ingest progress and visible commit position | Edit → source refresh → retry → crash/reopen → projection rebuild preserves the defined result; stale writes fail; acknowledged writes satisfy the documented durability/visibility contract |
@@ -182,7 +169,7 @@ pages, uncommitted tails, absent/stale projections, and acknowledged edits.
 
 ## Smallest initial work items
 
-1. Capture the consumer workflow and budgets; run a baseline with current APIs.
+1. Capture the consumer workflow and budgets; run a baseline with current APIs. Done: [m0-application-contract.md](m0-application-contract.md).
 2. Decide the minimal type/link/delete contract and log compatibility in an ADR.
 3. Implement typed ingest/load and reconstruction through public APIs and host e2e.
 4. Implement bounded object listing, then the fixture's filters and traversal.
