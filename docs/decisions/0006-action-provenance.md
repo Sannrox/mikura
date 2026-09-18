@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#77](https://github.com/Sannrox/mikura/issues/77), [#80](https://github.com/Sannrox/mikura/issues/80), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
+- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#77](https://github.com/Sannrox/mikura/issues/77), [#80](https://github.com/Sannrox/mikura/issues/80), [#106](https://github.com/Sannrox/mikura/issues/106), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -37,12 +37,14 @@ pairs, the record body may end (historical records) or continue with one
 length-prefixed Action id string. That optional trailer is the
 `MIKURAV1` body discriminator: EOF after props means `None`; one string
 then EOF is the Action id; anything further fail-closes. Empty string
-means `None`. New writes always emit the field. Rebuild from
+means `None`. New writes omit the field when the generation has no
+Action id, so readers that reject trailing body bytes can dual-read
+source ingest. Writes that store an id emit the field. Rebuild from
 `1..=committed_pages` recovers the id. Old binaries that reject trailing
-body bytes fail closed mid-decode on new records; an early superblock
-magic bump would also reject historical pages that this binary must
-still read in place. A second trailing field requires `MIKURAV2` (or
-equivalent) so `Store::open` can refuse before decode.
+body bytes fail closed mid-decode on provenance-bearing records; an
+early superblock magic bump would also reject historical pages that this
+binary must still read in place. A second trailing field requires
+`MIKURAV2` (or equivalent) so `Store::open` can refuse before decode.
 
 **Write path.** `ObjectRecord` carries `action_id: Option<String>`. Source
 ingest and changelog/merge may omit it (those rows are not governed
@@ -78,8 +80,9 @@ journal to this crate.
 - Existing logs remain readable. Existing `MKJOIN02` sidecars fail closed
   on open; delete the sidecar to rebuild from the log.
 - Implementation landed ([#64](https://github.com/Sannrox/mikura/issues/64)).
-  Codecs emit the trailing Action id and `MKJOIN03` / `MKJOIN3D` sidecar
-  magic.
+  Codecs emit the trailing Action id only when the generation has one
+  ([#106](https://github.com/Sannrox/mikura/issues/106)) and use
+  `MKJOIN03` / `MKJOIN3D` sidecar magic.
 
 ## Validation
 

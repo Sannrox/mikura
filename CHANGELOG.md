@@ -48,6 +48,11 @@ window.
 
 ### Fixed
 
+- Source ingest no longer writes an empty `MIKURAV1` Action-id trailer.
+  Bodies without an id match the historical shape, so a v0.1.0 decoder
+  that rejects trailing bytes can dual-read those logs. Provenance-bearing
+  generations still emit the field
+  ([#106](https://github.com/Sannrox/mikura/issues/106)).
 - Host JSON lines are envelope `v=1`: omit means v1, unknown `v` fails
   closed, `token` stays a top-level sibling of `op`, and `filter` stays
   under evaluate `request`

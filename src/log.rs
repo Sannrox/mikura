@@ -256,9 +256,13 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, &key)?;
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
-    // MIKURAV1 body discriminator: one optional trailing string. A second
-    // field requires a superblock magic bump (ADR 0006).
-    write_str(&mut body, record.action_id.as_deref().unwrap_or(""))?;
+    // MIKURAV1 body discriminator: one optional trailing string, present
+    // only when the generation has an Action id. Absent and empty both
+    // decode as None. A second field requires a superblock magic bump
+    // (ADR 0006).
+    if let Some(action_id) = record.action_id.as_deref().filter(|id| !id.is_empty()) {
+        write_str(&mut body, action_id)?;
+    }
     Ok(body)
 }
 
@@ -366,6 +370,64 @@ mod tests {
         assert_eq!(record.action_id, None);
         assert_eq!(record.kind, "Customer");
         assert_eq!(record.key, "c1");
+    }
+
+    /// Tagged v0.1.0 `decode_body`: any bytes after properties fail closed.
+    fn decode_body_reject_trailing(body: &[u8]) -> Result<ObjectRecord, String> {
+        let mut cur = body;
+        let gen = u64::from_le_bytes(take::<8>(&mut cur)?.try_into().unwrap());
+        let hidden = take::<1>(&mut cur)?[0] != 0;
+        let kind = read_str(&mut cur)?;
+        let key = read_str(&mut cur)?;
+        let nprops = u16::from_le_bytes(take::<2>(&mut cur)?.try_into().unwrap()) as usize;
+        let mut props = HashMap::new();
+        for _ in 0..nprops {
+            let k = read_str(&mut cur)?;
+            let v = read_str(&mut cur)?;
+            props.insert(k, v);
+        }
+        if !cur.is_empty() {
+            return Err("trailing body bytes".into());
+        }
+        Ok(ObjectRecord {
+            gen,
+            kind,
+            key,
+            hidden,
+            action_id: None,
+            props,
+        })
+    }
+
+    #[test]
+    fn none_action_id_omits_trailer_so_trailing_reject_readers_hold() {
+        let none = ObjectRecord {
+            gen: 1,
+            kind: "Customer".into(),
+            key: "c1".into(),
+            hidden: false,
+            action_id: None,
+            props: HashMap::from([("region".into(), "eu".into())]),
+        };
+        let encoded = encode_body(&none).unwrap();
+        let current = decode_body(&encoded).unwrap();
+        assert_eq!(current.action_id, None);
+        let pinned = decode_body_reject_trailing(&encoded).unwrap();
+        assert_eq!(pinned.kind, "Customer");
+        assert_eq!(pinned.key, "c1");
+        assert_eq!(pinned.props.get("region").map(String::as_str), Some("eu"));
+
+        let some = ObjectRecord {
+            action_id: Some("act-1".into()),
+            ..none
+        };
+        let encoded = encode_body(&some).unwrap();
+        assert_eq!(
+            decode_body(&encoded).unwrap().action_id.as_deref(),
+            Some("act-1")
+        );
+        let err = decode_body_reject_trailing(&encoded).unwrap_err();
+        assert!(err.contains("trailing"), "{err}");
     }
 
     #[test]
