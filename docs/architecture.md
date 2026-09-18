@@ -116,8 +116,10 @@ Checksum mismatch, truncation, or bad magic (`MKJOIN01` and `MKJOIN02`
 included) fails closed; deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
-instead of rewriting the whole sidecar. Compact when dirty rows exceed a
-quarter of identity.
+instead of rewriting the whole sidecar. A successful delta persist clears
+that dirty set so later ingest chunks do not accumulate until every
+commit rewrites the checkpoint; later chunks append only the new dirty
+rows. Compact when dirty rows exceed a quarter of identity.
 
 `JoinMaps` is generic over kind and property name. Strings are interned.
 Join children are packed identity lists. Hidden records are absent from

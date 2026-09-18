@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::joins::{
-    read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta, ACTION_NONE,
-    JOIN_DELTA_MAGIC, JOIN_MAGIC,
+    append_checksummed, read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta,
+    ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_MAGIC,
 };
 
 use super::Store;
@@ -19,9 +19,11 @@ impl Store {
             let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
             self.dirty.clear();
             self.has_checkpoint = true;
+            self.delta_bytes = 0;
             return Ok(());
         }
         self.persist_delta(pages)?;
+        self.dirty.clear();
         Ok(())
     }
 
@@ -77,7 +79,7 @@ impl Store {
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
-    fn persist_delta(&self, pages: u32) -> Result<(), String> {
+    fn persist_delta(&mut self, pages: u32) -> Result<(), String> {
         let mut body = Vec::new();
         body.extend_from_slice(JOIN_DELTA_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
@@ -124,7 +126,23 @@ impl Store {
                     .unwrap_or(""),
             )?;
         }
-        write_checksummed(&Self::join_delta_path(&self.log), &body)
+        let path = Self::join_delta_path(&self.log);
+        if path.exists() {
+            let len = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+            if len > self.delta_bytes {
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .map_err(|e| e.to_string())?;
+                file.set_len(self.delta_bytes).map_err(|e| e.to_string())?;
+                file.sync_data().map_err(|e| e.to_string())?;
+            }
+        } else {
+            self.delta_bytes = 0;
+        }
+        append_checksummed(&path, &body)?;
+        self.delta_bytes = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+        Ok(())
     }
 
     fn load_checkpoint(path: &Path) -> Result<Checkpoint, String> {
@@ -202,7 +220,29 @@ impl Store {
     }
 
     fn apply_delta(&mut self, path: &Path) -> Result<u32, String> {
-        let body = read_checksummed(path)?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        if bytes.len() < 12 {
+            return Err("join sidecar too short".into());
+        }
+        let mut cur = bytes.as_slice();
+        let mut pages = None;
+        let mut good = 0usize;
+        while !cur.is_empty() {
+            let before = cur.len();
+            match take_delta_frame(&mut cur) {
+                Ok(body) => {
+                    pages = Some(self.apply_delta_body(body)?);
+                    good += before - cur.len();
+                }
+                Err(err) if pages.is_some() && is_torn_tail(&err) => break,
+                Err(err) => return Err(err),
+            }
+        }
+        self.delta_bytes = good as u64;
+        pages.ok_or_else(|| "join sidecar too short".into())
+    }
+
+    fn apply_delta_body(&mut self, body: &[u8]) -> Result<u32, String> {
         if body.len() < 12 || &body[..8] != JOIN_DELTA_MAGIC {
             return Err("bad join magic".into());
         }
@@ -289,6 +329,55 @@ impl Store {
         self.has_checkpoint = false;
         self.persist_projection()
     }
+}
+
+fn is_torn_tail(err: &str) -> bool {
+    err.contains("too short") || err.contains("bad join magic")
+}
+
+fn take_delta_frame<'a>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
+    if cur.len() < 12 {
+        return Err("join sidecar too short".into());
+    }
+    let body_len = delta_frame_body_len(cur)?;
+    let total = body_len
+        .checked_add(4)
+        .ok_or_else(|| "join sidecar too short".to_string())?;
+    if cur.len() < total {
+        return Err("join sidecar too short".into());
+    }
+    let (frame, rest) = cur.split_at(total);
+    let (body, crc_bytes) = frame.split_at(body_len);
+    let expected = u32::from_le_bytes(crc_bytes.try_into().unwrap());
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(body);
+    if hasher.finalize() != expected {
+        return Err("join checksum mismatch".into());
+    }
+    *cur = rest;
+    Ok(body)
+}
+
+fn delta_frame_body_len(bytes: &[u8]) -> Result<usize, String> {
+    if bytes.len() < 16 || &bytes[..8] != JOIN_DELTA_MAGIC {
+        return Err("bad join magic".into());
+    }
+    let mut cur = &bytes[8..];
+    let _pages = read_u32(&mut cur)?;
+    let n = read_u32(&mut cur)? as usize;
+    for _ in 0..n {
+        let _kind = read_str(&mut cur)?;
+        let _key = read_str(&mut cur)?;
+        let _gen = read_u64(&mut cur)?;
+        let _hidden = take::<1>(&mut cur)?;
+        let cn = read_u32(&mut cur)? as usize;
+        for _ in 0..cn {
+            let _name = read_str(&mut cur)?;
+            let _value = read_str(&mut cur)?;
+        }
+        let _action = read_str(&mut cur)?;
+    }
+    Ok(bytes.len() - cur.len())
 }
 
 fn interned_prop_ids(

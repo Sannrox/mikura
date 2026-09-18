@@ -581,6 +581,21 @@ impl JoinMaps {
     }
 }
 
+pub(crate) fn append_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
+    let mut hasher = Crc::new();
+    hasher.update(body);
+    let crc = hasher.finalize();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(body).map_err(|e| e.to_string())?;
+    file.write_all(&crc.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    file.sync_data().map_err(|e| e.to_string())
+}
+
 pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
     let mut hasher = Crc::new();

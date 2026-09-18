@@ -300,5 +300,6 @@ they are not on the hop-count path, and 10⁶ query still holds 500 ms.
 - **Do not start 10⁹ or 10¹⁰.** The 10⁸ ingest gate is unchanged.
 - **No engine pick.** Spark stays unsupported.
 
-Follow-up: [#134](https://github.com/Sannrox/mikura/issues/134) keep join
-persist bounded as identity grows. Do not open #54 from this addendum.
+Follow-up implemented: [#134](https://github.com/Sannrox/mikura/issues/134)
+clears the dirty set after a successful persist_delta. Do not open #54
+from this addendum.
