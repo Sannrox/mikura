@@ -262,9 +262,10 @@ must carry a matching `token`. Non-loopback bind still requires `--bearer`.
 also refuses a non-loopback listener unless `require_bearer` has been
 called. `open` plus `handle` without a stored bearer stays the in-process
 clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
-A JSON line larger than `--request-bound` (default 1 MiB) or a socket that
-exceeds `--request-timeout-ms` (default 5 s) fails closed with
-`RequestBound` / `RequestTimeout`. One disconnect does not stop the
+A JSON line larger than `--request-bound` (default 1 MiB) fails closed
+with `RequestBound`. Assembling that line is a wall-clock budget of
+`--request-timeout-ms` (default 5 s), not an idle gap between bytes;
+overtime is `RequestTimeout`. One disconnect does not stop the
 listener. No tenants, policy compile, receipts, or principals.
 
 Backup is a file copy of the object log plus the optional `{log}.joins`

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
@@ -319,12 +319,10 @@ impl Host {
     pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
         self.refuse_unauthenticated_routable(stream.local_addr().map_err(|err| err.to_string())?)?;
         stream
-            .set_read_timeout(Some(self.request_timeout))
-            .map_err(|err| err.to_string())?;
-        stream
             .set_write_timeout(Some(self.request_timeout))
             .map_err(|err| err.to_string())?;
-        let line = match read_request_line(&mut stream, self.request_bound) {
+        let deadline = Instant::now() + self.request_timeout;
+        let line = match read_request_line(&mut stream, self.request_bound, deadline) {
             Ok(line) => line,
             Err(ServeRead::Bound { bound, bytes }) => {
                 return write_fail_closed(
@@ -411,13 +409,29 @@ enum ServeRead {
     Io(String),
 }
 
-fn read_request_line(stream: &mut TcpStream, bound: usize) -> Result<String, ServeRead> {
+fn remaining_until(deadline: Instant) -> Result<Duration, ServeRead> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(ServeRead::Timeout);
+    }
+    Ok(deadline.saturating_duration_since(now))
+}
+
+fn read_request_line(
+    stream: &mut TcpStream,
+    bound: usize,
+    deadline: Instant,
+) -> Result<String, ServeRead> {
     if bound == 0 {
         return Err(ServeRead::Bound { bound: 0, bytes: 1 });
     }
     let mut buf = Vec::with_capacity(bound);
     let mut slab = [0u8; 8192];
     loop {
+        let remaining = remaining_until(deadline)?;
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|err| ServeRead::Io(err.to_string()))?;
         match stream.read(&mut slab) {
             Ok(0) => return Err(ServeRead::Disconnect),
             Ok(n) => {
