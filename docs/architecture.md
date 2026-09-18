@@ -47,10 +47,11 @@ schema version. [ADR 0006](decisions/0006-action-provenance.md).
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
 - Record body: `gen` `u64`, `hidden` `u8`, kind, key, property count, then
   properties in sorted key order, then an optional length-prefixed Action
-  id. Historical bodies may end after the properties (`None`). New writes
-  always emit the field. Bytes after that field fail closed. A second
-  trailing field requires a superblock magic bump so `Store::open` can
-  refuse before decode ([ADR 0006](decisions/0006-action-provenance.md)).
+  id. Historical bodies and new writes without an Action id end after the
+  properties (`None`). Writes that store an id emit the field. Bytes after
+  that field fail closed. A second trailing field requires a superblock
+  magic bump so `Store::open` can refuse before decode
+  ([ADR 0006](decisions/0006-action-provenance.md)).
 - Rebuild (`read_records`) verifies every page in `1..=committed_pages` and
   ignores bytes after that range.
 - Checksum mismatch or a short committed file returns an error.
