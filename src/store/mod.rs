@@ -30,6 +30,7 @@ pub struct Store {
     joins: JoinMaps,
     dirty: HashSet<(String, String)>,
     has_checkpoint: bool,
+    delta_bytes: u64,
 }
 
 impl Store {
@@ -62,6 +63,7 @@ impl Store {
             joins: JoinMaps::default(),
             dirty: HashSet::new(),
             has_checkpoint: false,
+            delta_bytes: 0,
         })
     }
 
@@ -78,6 +80,7 @@ impl Store {
             joins: JoinMaps::default(),
             dirty: HashSet::new(),
             has_checkpoint: false,
+            delta_bytes: 0,
         };
         store.install_projection()?;
         Ok(store)

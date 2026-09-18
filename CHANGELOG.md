@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- After a successful join dirty-set persist, that set is no longer
+  outstanding. Later ingest chunks append only the new dirty rows instead
+  of accumulating dirty until every commit rewrites the checkpoint.
+  Dual-read still holds
+  ([#134](https://github.com/Sannrox/mikura/issues/134)).
 - Spike 011 addendum: 10⁸ ingest time is join persist growing with
   identity, not log fsync and not OOM. 10⁹ stays blocked
   ([#124](https://github.com/Sannrox/mikura/issues/124)).
