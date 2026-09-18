@@ -108,6 +108,9 @@ window.
 
 ### Fixed
 
+- Host request-line read uses a bounded buffer and a slab, and refuses
+  before a byte would pass `--request-bound`
+  ([#138](https://github.com/Sannrox/mikura/issues/138)).
 - Source ingest no longer writes an empty `MIKURAV1` Action-id trailer.
   Bodies without an id match the historical shape, so a v0.1.0 decoder
   that rejects trailing bytes can dual-read those logs. Provenance-bearing
