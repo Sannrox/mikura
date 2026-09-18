@@ -64,6 +64,7 @@ fn request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        object_bound: 0,
     }
 }
 

@@ -50,6 +50,7 @@ fn eval_req() -> WireEvaluate {
         sum_property: "amount".into(),
         deny: Vec::new(),
         filter: None,
+        object_bound: 0,
     }
 }
 
@@ -255,6 +256,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                object_bound: 0,
             },
         )
         .unwrap();

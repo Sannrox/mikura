@@ -8,6 +8,8 @@
 //! stream ingest live in `mikura-ingest`.
 //! [`LocalCompute`] answers hop / count / sum from those maps, in either
 //! join direction, with an optional exact-match on root properties.
+//! `EvaluateRequest.object_bound` greater than zero also returns the
+//! distinct matching objects and fails closed if the set is larger.
 //! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
 //! published envelope says otherwise.
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later

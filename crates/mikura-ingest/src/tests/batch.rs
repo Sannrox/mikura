@@ -84,6 +84,7 @@ fn batch_ingest_group_commits_fewer_fsyncs_than_one_per_record() {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        object_bound: 0,
     };
     let live = oss.evaluate(&one, &req).unwrap();
     assert_eq!(live.two_hop_count, 400);

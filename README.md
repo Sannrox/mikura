@@ -68,6 +68,8 @@ let response = ObjectSet::new(LocalCompute).evaluate(
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
+        filter: None,
+        object_bound: 0,
     },
 )?;
 ```

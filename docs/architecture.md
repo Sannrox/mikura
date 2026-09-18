@@ -169,9 +169,15 @@ uncommitted tail; rebuild reads only committed pages.
    — the field name is historical; hop count is `request.hops.len()`).
 6. Sum `sum_property` on leaves whose kind is `sum_kind`, once per path
    (fan-out multiplies; a diamond still counts the root once).
+7. When `object_bound` is greater than zero, collect distinct identities of
+   the last hop's `far_kind` (or `root_kind` if there are no hops), `load`
+   each with the request ACL, and return them as `EvaluateResponse.objects`.
+   More identities than the bound fails closed. `object_bound == 0` leaves
+   `objects` empty.
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
-a filter is present, on `(root_kind, filter.property)`.
+a filter is present, on `(root_kind, filter.property)`. Denied properties
+on returned objects are omitted.
 
 `Aggregate` is only `CountAndSum`. Numeric columns already live in the
 interned `amounts` map (values that parse as `i64`). Min/max could walk that
@@ -234,7 +240,8 @@ optional exact-match `filter`. Omit or `null` filter means all visible roots.
 An empty `property` or `value` is a wire error, not a silent empty match.
 `load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. The request ACL deny
-list fails closed on evaluate.
+list fails closed on evaluate. Evaluate `object_bound` greater than zero
+returns matching objects on the same `v=1` envelope; overflow fails closed.
 Loopback bind is unauthenticated unless `--bearer` is set. Presenting
 `--bearer` arms the envelope on any bind, including loopback: every line
 must carry a matching `token`. Non-loopback bind still requires `--bearer`.

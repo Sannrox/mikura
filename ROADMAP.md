@@ -51,14 +51,16 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M0 contract | Sekai product-loop fixture is the first application contract; host baseline recorded ([#107](https://github.com/Sannrox/mikura/issues/107), [m0-application-contract.md](docs/plans/m0-application-contract.md)). |
 | M1 contract | Strings, property-backed `affects`, `hidden` tombstone, supplied schema as log objects ([#110](https://github.com/Sannrox/mikura/issues/110), [ADR 0008](docs/decisions/0008-type-link-delete.md)). |
 | M1 schema | Validate writes against committed `mikura.schema/<kind>` descriptors; historical strings still load ([#115](https://github.com/Sannrox/mikura/issues/115)). |
+| M2 list | Evaluate returns bounded matching objects for the product-loop list and hop queries ([#113](https://github.com/Sannrox/mikura/issues/113)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 and M1 are accepted. Remaining items:
 
-1. **M2 — application queries:** return matching objects with bounded pages,
-   sorting, composed filters, and the workflow's traversal and aggregates.
+1. **M2 — application queries:** sorting, composed filters, cursors, and
+   remaining traversal/aggregate work. Product-loop list and hop already
+   return objects ([#113](https://github.com/Sannrox/mikura/issues/113)).
 2. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
    writes, retry safety, ingest progress, and a defined commit contract.
 3. **M4 — hosted pilot:** integrate the real consumer, then prove access

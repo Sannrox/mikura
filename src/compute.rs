@@ -2,8 +2,8 @@ use crate::acl::AclError;
 use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse};
 use crate::store::Store;
 
-fn evaluate_local(store: &Store, request: &EvaluateRequest) -> EvaluateResponse {
-    let hops: Vec<(&str, &str, bool)> = request
+fn hop_triples(request: &EvaluateRequest) -> Vec<(&str, &str, bool)> {
+    request
         .hops
         .iter()
         .map(|hop| {
@@ -13,7 +13,22 @@ fn evaluate_local(store: &Store, request: &EvaluateRequest) -> EvaluateResponse 
                 hop.incoming,
             )
         })
-        .collect();
+        .collect()
+}
+
+fn result_kind(request: &EvaluateRequest) -> &str {
+    request
+        .hops
+        .last()
+        .map(|hop| hop.far_kind.as_str())
+        .unwrap_or(request.root_kind.as_str())
+}
+
+fn evaluate_local(
+    store: &Store,
+    request: &EvaluateRequest,
+) -> Result<EvaluateResponse, ComputeError> {
+    let hops = hop_triples(request);
     let (two_hop_count, sum_amount) = match &request.filter {
         None => store.joins().count_and_sum(
             &request.root_kind,
@@ -30,16 +45,44 @@ fn evaluate_local(store: &Store, request: &EvaluateRequest) -> EvaluateResponse 
             &filter.value,
         ),
     };
-    EvaluateResponse {
+    let objects = if request.object_bound == 0 {
+        Vec::new()
+    } else {
+        let filter = request
+            .filter
+            .as_ref()
+            .map(|filter| (filter.property.as_str(), filter.value.as_str()));
+        let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
+        if keys.len() > request.object_bound {
+            return Err(ComputeError::ObjectBound {
+                bound: request.object_bound,
+                count: keys.len(),
+            });
+        }
+        let kind = result_kind(request);
+        let mut objects = Vec::with_capacity(keys.len());
+        for key in keys {
+            objects.push(
+                store
+                    .load(kind, &key, &request.acl)
+                    .map_err(ComputeError::Load)?,
+            );
+        }
+        objects
+    };
+    Ok(EvaluateResponse {
         two_hop_count,
         sum_amount,
-    }
+        objects,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComputeError {
     Acl(AclError),
     UnsupportedBackend { name: &'static str },
+    ObjectBound { bound: usize, count: usize },
+    Load(String),
 }
 
 pub trait ComputeBackend {
@@ -76,7 +119,7 @@ impl ComputeBackend for LocalCompute {
                         .check(&request.root_kind, &filter.property)
                         .map_err(ComputeError::Acl)?;
                 }
-                Ok(evaluate_local(store, request))
+                evaluate_local(store, request)
             }
         }
     }
