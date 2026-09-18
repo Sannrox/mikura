@@ -104,14 +104,15 @@ duplicate, deletion, and dangling-reference contract.
 
 ### Source data and edits
 
-Proposed first rule: an edit overrides only the properties it changes;
-unedited properties continue to follow the source. Preserve source state,
-edits, deletions, and any metadata needed to reproduce that merge in the
-authoritative log. A projection must never be the sole copy of edit state.
+Decided in [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md) and
+implemented: an overlay overrides only the properties it changes;
+unedited properties continue to follow the source. Overlay state lives on
+the log as `mikura.overlay`. A projection must never be the sole copy of
+edit state.
 
-This addresses a real difference from today's per-cycle whole-record merge.
-Choose and test an explicit contract for edited-property precedence and
-distinct delete versus recreate behavior.
+Remaining open items are idempotency-key scope and multi-object
+transactions. Distinct delete versus recreate stays the hide/recreate
+rule from [ADR 0008](../decisions/0008-type-link-delete.md).
 
 Define patch versus replace, clearing an override versus setting null, source
 deletion versus user deletion, and whether recreation starts a new lifetime.
@@ -169,8 +170,8 @@ assumed requirements. gRPC remains ask-first.
 | Surface | Evidence found | Required change/check | Risk if missed |
 | --- | --- | --- | --- |
 | Log / projection | Log is authority; joins are reconstructible | Recover types, source/edit merge, deduplication and ingest progress with projections removed | Correct live behavior becomes incorrect after recovery |
-| Rust and host API | String values, single-object load, aggregate-shaped evaluate | Version contracts and cover old/new clients; reject incompatible inputs explicitly | Silent conversion or client breakage |
-| Ingest / writeback | Whole-record merge and replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
+| Rust and host API | String values, single-object load, hop/count/sum plus bounded listing, overlay | Version contracts and cover old/new clients; reject incompatible inputs explicitly | Silent conversion or client breakage |
+| Ingest / writeback | Overlay merge on source ingest; replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
 | Access boundary | Caller-provided property denies and process bearer | Trusted-gateway contract; integration/e2e tests across every operation | Restricted values affect observable results or edits bypass admission |
 | Hosting | Single process, request bounds, stdin-close stop, copy-the-log restore | Representative workload baseline and operational visibility | One client stalls service or resources grow without bound |
 | Scale | Existing synthetic misses and incomplete large ingest | Representative workload baseline and one targeted bottleneck investigation at a time | Optimizing a workload the application does not need |
@@ -184,10 +185,10 @@ pages, uncommitted tails, absent/stale projections, and acknowledged edits.
 
 1. Capture the consumer workflow and budgets; run a baseline with current APIs. Done: [m0-application-contract.md](m0-application-contract.md).
 2. Decide the minimal type/link/delete contract and log compatibility in an ADR. Done: [ADR 0008](../decisions/0008-type-link-delete.md).
-3. Implement typed ingest/load and reconstruction through public APIs and host e2e.
+3. Implement schema validate on ingest/load and reconstruction through public APIs and host e2e. Done: [#115](https://github.com/Sannrox/mikura/issues/115). Typed scalars still out.
 4. Implement bounded object listing, then the fixture's filters and traversal. Done: [#113](https://github.com/Sannrox/mikura/issues/113). Further operators wait ([#122](https://github.com/Sannrox/mikura/issues/122)).
-5. Decide durable source/edit merge, retry, concurrency, and commit semantics.
-6. Implement those contracts in separate persistence, ingest, and host increments.
+5. Decide durable source/edit merge, retry, concurrency, and commit semantics. Overlay merge decided: [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md). Idempotency key and multi-object txn remain open.
+6. Implement overlay merge in persistence, ingest, and host. Done: [#119](https://github.com/Sannrox/mikura/issues/119).
 7. Integrate the consumer and complete the operational pilot checks.
 
 Shape focused GitHub issues after the consumer contract is agreed. No issue

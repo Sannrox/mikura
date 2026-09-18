@@ -45,9 +45,10 @@ exact-match token. `affects` is a foreign key string. No boolean,
 integer, timestamp, decimal, array, or structured value is required to
 answer the three queries or apply the one edit.
 
-Schema validation, relation cardinality, and dangling-link behavior are
-not in the current public API. The domain file is consumer catalog
-input; mikura does not load it.
+`SchemaDescriptor` / `Store::schema` / write-time validate /
+`Store::load_with_schema` are public. Relation cardinality is encoded on
+the descriptor; dangling-link behavior is still clerk-owned. The domain
+file is consumer catalog input; mikura does not load it.
 
 ## Queries and expected answers
 
@@ -112,15 +113,15 @@ memory, disk, or reopen budgets.
 | --- | --- | --- | --- |
 | Ingest seed | `ingest_batch` | **supported** | Two identities committed |
 | Load `svc-api` | `load` | **supported** | Returns `component/svc-api` with `name` and `tier` |
-| Filter `component` `tier=prod` | `evaluate` | **missing** objects; **workaround** `two_hop_count=1` | Does not return `{svc-api}` |
-| Hop `incident` → `component` on `affects` | `evaluate` | **missing** objects; **workaround** `two_hop_count=1` | Incoming hop counts the incident root; does not return the path |
+| Filter `component` `tier=prod` | `evaluate` | **supported** with `object_bound` | Returns `{component/svc-api}` |
+| Hop `incident` → `component` on `affects` | `evaluate` | **supported** with `object_bound` | Incoming hop returns `{component/svc-api}` |
 | Edit `inc-1` | `apply_action` | **supported** | Whole-record replace; Action id stored; must resend `name` and `affects` |
-| Refresh source | `ingest_batch` | **supported as overwrite** | Edit discarded. **missing** refresh-safe overlay |
+| Refresh source | `ingest_batch` | **supported** after `apply_overlay` | Overlay keys (`note`) and the overlay Action id survive refresh |
 | Reopen | `load` after `Host::open` | **supported** | Last generation survives process exit |
 | Delete | none | **unsupported** | No host hide/delete |
 | Retry same Action | `apply_action` | **unsupported** | Same id is not idempotent |
 | Object-visibility filter | none | **not required** for this fixture | Property deny remains available |
-| Typed values / schema validate | none | **unsupported** | Strings only; domain file not loaded |
+| Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** | Strings only; domain file not loaded |
 | Named relation metadata | property `affects` | **workaround** | Direction is encoded by the clerk; no cardinality check |
 
 A miss is a note, not an engine pick.

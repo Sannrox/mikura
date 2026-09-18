@@ -278,10 +278,12 @@ pub(crate) struct LiveMeta {
     pub(crate) action_id: Option<u32>,
 }
 
-/// Rebuildable hop/join projection. Hidden records are absent.
+/// Rebuildable hop/join projection.
+///
 /// Strings are interned once; hop/sum walks `u32` ids. Join children are
-/// packed identity lists. Sidecar stores interned join keys and sum columns,
-/// not a second full-string object map.
+/// packed identity lists. Hidden records are absent from hop/sum indexes.
+/// The checkpoint stores interned owned property pairs for every identity
+/// (hidden props sit on the identity row) plus interned Action ids.
 #[derive(Clone, Debug, Default)]
 pub struct JoinMaps {
     pub(crate) intern: Vec<String>,
@@ -486,26 +488,12 @@ impl JoinMaps {
         self.remove(kind, key);
         let kind_id = self.intern(kind);
         let key_id = self.intern(key);
-        self.by_kind.entry(kind_id).or_default().insert(key_id);
         let mut owned = Vec::with_capacity(props.len());
         for (prop, value) in &props {
-            let prop_id = self.intern(prop);
-            let value_id = self.intern(value);
-            self.by_prop
-                .entry((kind_id, prop_id))
-                .or_default()
-                .entry(value_id)
-                .or_default()
-                .push(key_id);
-            if let Ok(amount) = value.parse::<i64>() {
-                self.amounts
-                    .entry((kind_id, prop_id))
-                    .or_default()
-                    .insert(key_id, amount);
-            }
-            owned.push((prop_id, value_id));
+            owned.push((self.intern(prop), self.intern(value)));
         }
-        self.owned.insert((kind_id, key_id), owned);
+        self.insert_visible_ids(kind_id, key_id, owned)
+            .expect("interned ids are valid");
     }
 
     pub(crate) fn index(
@@ -581,30 +569,40 @@ impl JoinMaps {
     }
 }
 
-pub(crate) fn append_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
+pub(crate) fn crc32(body: &[u8]) -> u32 {
     let mut hasher = Crc::new();
     hasher.update(body);
-    let crc = hasher.finalize();
+    hasher.finalize()
+}
+
+pub(crate) fn check_join_crc(body: &[u8], expected: u32) -> Result<(), String> {
+    if crc32(body) != expected {
+        Err("join checksum mismatch".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn write_body_and_crc(file: &mut impl Write, body: &[u8]) -> Result<(), String> {
+    file.write_all(body).map_err(|e| e.to_string())?;
+    file.write_all(&crc32(body).to_le_bytes())
+        .map_err(|e| e.to_string())
+}
+
+pub(crate) fn append_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|e| e.to_string())?;
-    file.write_all(body).map_err(|e| e.to_string())?;
-    file.write_all(&crc.to_le_bytes())
-        .map_err(|e| e.to_string())?;
+    write_body_and_crc(&mut file, body)?;
     file.sync_data().map_err(|e| e.to_string())
 }
 
 pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    let mut hasher = Crc::new();
-    hasher.update(body);
-    let crc = hasher.finalize();
     let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
-    file.write_all(body).map_err(|e| e.to_string())?;
-    file.write_all(&crc.to_le_bytes())
-        .map_err(|e| e.to_string())?;
+    write_body_and_crc(&mut file, body)?;
     file.sync_data().map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
@@ -616,11 +614,7 @@ pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
     }
     let (body, crc_bytes) = bytes.split_at(bytes.len() - 4);
     let expected = u32::from_le_bytes(crc_bytes.try_into().unwrap());
-    let mut hasher = Crc::new();
-    hasher.update(body);
-    if hasher.finalize() != expected {
-        return Err("join checksum mismatch".into());
-    }
+    check_join_crc(body, expected)?;
     Ok(body.to_vec())
 }
 

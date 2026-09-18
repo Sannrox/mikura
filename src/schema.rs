@@ -190,22 +190,9 @@ fn optional_csv(record: &ObjectRecord, name: &str) -> Result<Vec<String>, String
 }
 
 fn split_csv(raw: &str) -> Result<Vec<String>, String> {
-    if raw.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for part in raw.split(',') {
-        let token = part.trim();
-        if token.is_empty() {
-            return Err("empty schema list entry".into());
-        }
-        if !seen.insert(token) {
-            return Err(format!("duplicate schema list entry {token}"));
-        }
-        out.push(token.to_string());
-    }
-    Ok(out)
+    crate::codec::split_unique_csv(raw, "empty schema list entry", |token| {
+        format!("duplicate schema list entry {token}")
+    })
 }
 
 fn join_csv(parts: &[String]) -> String {

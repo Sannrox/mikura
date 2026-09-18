@@ -24,8 +24,8 @@ Agent instructions: [AGENTS.md](AGENTS.md).
 
 ## Development setup
 
-1. Install a stable Rust toolchain with edition 2021 (see
-   `rust-toolchain.toml`).
+1. Install a stable Rust toolchain (`rust-toolchain.toml` pins `stable`
+   plus rustfmt/clippy). Edition 2021 is set in `Cargo.toml`.
 2. Clone this repository.
 3. From the repo root:
 
@@ -48,7 +48,7 @@ when measuring, from that directory, and record results in that spike's
 The default suite has three layers. All stay offline and fail closed.
 
 - **Unit / crate tests** live next to the changed module, in
-  `src/crate_tests.rs`, or in a crate's `src/tests.rs`. They may use
+  `src/crate_tests/`, or in a crate's `src/tests.rs`. They may use
   crate-private helpers.
 - **Integration** is the named public-API suite in `tests/integration.rs`.
   Run it with `cargo test --test integration --locked`, or as part of
@@ -59,8 +59,9 @@ The default suite has three layers. All stay offline and fail closed.
   `crates/mikura-host/tests/e2e.rs`. Run it with
   `cargo test -p mikura-host --test e2e --locked`, or as part of
   `cargo test --workspace --locked`. It starts a `mikura-host` process on
-  loopback and drives JSON-line ingest, evaluate (including filter), and load
-  over the wire.
+  loopback and drives JSON-line ingest, evaluate (including filter and
+  `object_bound`), load, overlay, bearer, request bound/timeout, backup,
+  and stdin-stop over the wire.
 
 - Use a temp directory for object logs. Clean it up in the test.
 - Do not require a network, PostgreSQL, Spark, or credentials.
@@ -83,7 +84,7 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 - Keep the change one coherent outcome.
 - Use a short imperative subject (`feat: persist join maps in Store`).
 - Describe behavior, tests run, and any log-format or API impact.
-- Do not commit `target/`, `*.mikura`, `*.mikura.joins`, `*.joins.delta`, `*.joins.tmp`, SQLite files, or secrets.
+- Do not commit `target/`, `*.mikura`, `*.mikura.joins`, `*.joins.delta`, `*.joins.tmp`, `*.mikura.tmp`, SQLite files, or secrets.
 - Do not put hostnames, home paths, or other private environment details in
   public pull request or issue text.
 

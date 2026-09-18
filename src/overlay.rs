@@ -118,22 +118,9 @@ fn split_identity_key(raw: &str) -> Result<(String, String), String> {
 }
 
 fn split_csv(raw: &str) -> Result<Vec<String>, String> {
-    if raw.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for part in raw.split(',') {
-        let token = part.trim();
-        if token.is_empty() {
-            return Err("empty overlay cleared entry".into());
-        }
-        if !seen.insert(token) {
-            return Err(format!("duplicate overlay cleared entry {token}"));
-        }
-        out.push(token.to_string());
-    }
-    Ok(out)
+    crate::codec::split_unique_csv(raw, "empty overlay cleared entry", |token| {
+        format!("duplicate overlay cleared entry {token}")
+    })
 }
 
 #[cfg(test)]

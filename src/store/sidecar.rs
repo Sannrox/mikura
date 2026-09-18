@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::joins::{
-    append_checksummed, read_checksummed, write_checksummed, Checkpoint, JoinMaps, LiveMeta,
-    ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_MAGIC,
+    append_checksummed, check_join_crc, read_checksummed, write_checksummed, Checkpoint, JoinMaps,
+    LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_MAGIC,
 };
 
 use super::Store;
@@ -247,50 +247,17 @@ impl Store {
             return Err("bad join magic".into());
         }
         let mut cur = &body[8..];
-        let pages = read_u32(&mut cur)?;
-        let n = read_u32(&mut cur)? as usize;
-        for _ in 0..n {
-            let kind = read_str(&mut cur)?;
-            let key = read_str(&mut cur)?;
-            let gen = read_u64(&mut cur)?;
-            let hidden = take::<1>(&mut cur)?[0] != 0;
-            let cn = read_u32(&mut cur)? as usize;
-            let mut props = HashMap::with_capacity(cn);
-            for _ in 0..cn {
-                let name = read_str(&mut cur)?;
-                let value = read_str(&mut cur)?;
-                props.insert(name, value);
-            }
-            let action_id = read_str(&mut cur)?;
-            let action_id = if action_id.is_empty() {
-                None
-            } else {
-                Some(self.joins.intern(&action_id))
-            };
-            self.joins.remove(&kind, &key);
-            self.identity.insert(
-                (kind.clone(), key.clone()),
-                LiveMeta {
-                    gen,
-                    hidden,
-                    action_id,
-                },
-            );
-            if hidden {
-                for (name, value) in &props {
-                    self.joins.intern(name);
-                    self.joins.intern(value);
-                }
-                self.joins.intern(&kind);
-                self.joins.intern(&key);
-                self.hidden_props.insert((kind, key), props);
-            } else {
-                self.hidden_props.remove(&(kind.clone(), key.clone()));
-                self.joins.insert_visible(&kind, &key, props);
-            }
-        }
+        let (pages, rows) = read_delta_rows(&mut cur)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
+        }
+        for row in rows {
+            let action_id = if row.action.is_empty() {
+                None
+            } else {
+                Some(self.joins.intern(&row.action))
+            };
+            self.install_live(row.kind, row.key, row.gen, row.hidden, action_id, row.props);
         }
         Ok(pages)
     }
@@ -302,23 +269,18 @@ impl Store {
         if sidecar.exists() {
             let loaded = Self::load_checkpoint(&sidecar)?;
             if loaded.pages == pages && !delta.exists() {
-                self.joins = loaded.joins;
-                self.identity = loaded.identity;
-                self.hidden_props = loaded.hidden_props;
-                self.has_checkpoint = true;
+                self.adopt_checkpoint(loaded);
                 return Ok(());
             }
             if loaded.pages <= pages {
-                self.joins = loaded.joins;
-                self.identity = loaded.identity;
-                self.hidden_props = loaded.hidden_props;
-                self.has_checkpoint = true;
+                let loaded_pages = loaded.pages;
+                self.adopt_checkpoint(loaded);
                 if delta.exists() {
                     let delta_pages = self.apply_delta(&delta)?;
                     if delta_pages == pages {
                         return Ok(());
                     }
-                } else if loaded.pages == pages {
+                } else if loaded_pages == pages {
                     return Ok(());
                 }
             }
@@ -328,6 +290,13 @@ impl Store {
         self.replay_from_log()?;
         self.has_checkpoint = false;
         self.persist_projection()
+    }
+
+    fn adopt_checkpoint(&mut self, loaded: Checkpoint) {
+        self.joins = loaded.joins;
+        self.identity = loaded.identity;
+        self.hidden_props = loaded.hidden_props;
+        self.has_checkpoint = true;
     }
 }
 
@@ -349,11 +318,7 @@ fn take_delta_frame<'a>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
     let (frame, rest) = cur.split_at(total);
     let (body, crc_bytes) = frame.split_at(body_len);
     let expected = u32::from_le_bytes(crc_bytes.try_into().unwrap());
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(body);
-    if hasher.finalize() != expected {
-        return Err("join checksum mismatch".into());
-    }
+    check_join_crc(body, expected)?;
     *cur = rest;
     Ok(body)
 }
@@ -363,21 +328,64 @@ fn delta_frame_body_len(bytes: &[u8]) -> Result<usize, String> {
         return Err("bad join magic".into());
     }
     let mut cur = &bytes[8..];
-    let _pages = read_u32(&mut cur)?;
-    let n = read_u32(&mut cur)? as usize;
-    for _ in 0..n {
-        let _kind = read_str(&mut cur)?;
-        let _key = read_str(&mut cur)?;
-        let _gen = read_u64(&mut cur)?;
-        let _hidden = take::<1>(&mut cur)?;
-        let cn = read_u32(&mut cur)? as usize;
-        for _ in 0..cn {
-            let _name = read_str(&mut cur)?;
-            let _value = read_str(&mut cur)?;
-        }
-        let _action = read_str(&mut cur)?;
-    }
+    skip_delta_rows(&mut cur)?;
     Ok(bytes.len() - cur.len())
+}
+
+fn skip_delta_rows(cur: &mut &[u8]) -> Result<u32, String> {
+    let pages = read_u32(cur)?;
+    let n = read_u32(cur)? as usize;
+    for _ in 0..n {
+        let _kind = read_str(cur)?;
+        let _key = read_str(cur)?;
+        let _gen = read_u64(cur)?;
+        let _hidden = take::<1>(cur)?;
+        let cn = read_u32(cur)? as usize;
+        for _ in 0..cn {
+            let _name = read_str(cur)?;
+            let _value = read_str(cur)?;
+        }
+        let _action = read_str(cur)?;
+    }
+    Ok(pages)
+}
+
+struct DeltaRow {
+    kind: String,
+    key: String,
+    gen: u64,
+    hidden: bool,
+    props: HashMap<String, String>,
+    action: String,
+}
+
+fn read_delta_rows(cur: &mut &[u8]) -> Result<(u32, Vec<DeltaRow>), String> {
+    let pages = read_u32(cur)?;
+    let n = read_u32(cur)? as usize;
+    let mut rows = Vec::with_capacity(n);
+    for _ in 0..n {
+        let kind = read_str(cur)?;
+        let key = read_str(cur)?;
+        let gen = read_u64(cur)?;
+        let hidden = take::<1>(cur)?[0] != 0;
+        let cn = read_u32(cur)? as usize;
+        let mut props = HashMap::with_capacity(cn);
+        for _ in 0..cn {
+            let name = read_str(cur)?;
+            let value = read_str(cur)?;
+            props.insert(name, value);
+        }
+        let action = read_str(cur)?;
+        rows.push(DeltaRow {
+            kind,
+            key,
+            gen,
+            hidden,
+            props,
+            action,
+        });
+    }
+    Ok((pages, rows))
 }
 
 fn interned_prop_ids(
