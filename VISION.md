@@ -30,8 +30,10 @@ in-process graph: slim identity and generic join maps persist as a sidecar.
 `Store::load` returns the current object after restart, including the optional
 Action id, and omits properties on the request deny list. Evaluate hops
 either from a parent key to pointing children or by following a join
-property, then count/sum, plus optional exact-match on root properties.
-The deny list is not a principal; policy stays in the clerk.
+property, then count/sum, plus optional exact-match on root properties and
+bounded object listing. A committed `mikura.schema` descriptor validates
+later writes; a committed `mikura.overlay` merges clerk edits onto later
+source writes. The deny list is not a principal; policy stays in the clerk.
 
 ## Where data is saved
 
@@ -39,7 +41,7 @@ The deny list is not a principal; policy stays in the clerk.
 | --- | --- |
 | Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
 | Hop / join indexes | **mikura projections** (`{log}.joins` sidecar; rebuild from the log) |
-| Who / policy / receipts / type catalogs | A **control plane**, not this crate. The clerk maps datasets/Actions to records; `mikura-ingest` appends. |
+| Who / policy / receipts / type-catalog administration | A **control plane**, not this crate. Last-accepted descriptors persist as `mikura.schema` on the log. The clerk maps datasets/Actions to records; `mikura-ingest` appends. |
 | Portable ontology CLI | A separate ontology database — never the object log |
 
 mikura is the warehouse of things. A control plane may be the clerk (identity,
@@ -143,8 +145,9 @@ or policy compile into mikura. Never make mikura the policy engine.
 - **Vendor mikura into the consumer.** Independent crate; reference later.
 - **SQL as mikura’s store of record.** SQL may remain a clerk. It is not the
   graph engine.
-- **Start with cluster compute.** In-process hop count holds at 10⁷ (0 ms
-  with a hop projection). Cluster compute waits for a miss in-process cannot
-  fix, plus an envelope.
+- **Start with cluster compute.** In-process hop count still misses 10⁷
+  (878 ms after the hop fold; an earlier 0 ms hop-projection figure did
+  not hold). Cluster compute waits for a miss in-process cannot fix, plus
+  an envelope.
 - **Clone a vendor API.** Copy the split (ingest / store / object sets / ACL
   / writeback), not names or protobufs.

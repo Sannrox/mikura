@@ -11,8 +11,10 @@
 
 The first application contract is the public Sekai product-loop fixture:
 kinds `component` and `incident`, one link Incident `affects` Service.
-Values today are strings. Evaluate returns counts, not objects. There is
+Values today are strings. At decision time evaluate returned counts, not objects, and there was
 no supplied-schema check, no host delete, and no typed encoding.
+Listing later landed as `object_bound` ([#113](https://github.com/Sannrox/mikura/issues/113));
+schema validation landed as `mikura.schema` ([#115](https://github.com/Sannrox/mikura/issues/115)).
 
 M2 (list matching objects) and M3 (refresh-safe edits) both need a
 shared type, link, and visibility contract. Growing `MIKURAV1` with a
@@ -61,9 +63,10 @@ empty string.
 ### Supplied schema
 
 The clerk authors descriptors. Mikura validates writes against a
-supplied descriptor and fails closed on unknown kinds (when the
-descriptor is closed), missing required properties, or a link property
-that violates cardinality. End users do not choose the descriptor.
+supplied descriptor and fails closed on unknown properties of a kind
+that has a visible descriptor, missing required properties, or a link
+property that violates cardinality. A kind with no visible descriptor
+stays unvalidated. End users do not choose the descriptor.
 
 To recover validation after the catalog is gone, the last accepted
 descriptor for a kind is itself an object on the log. That object uses
@@ -124,9 +127,9 @@ hidden instance rows use the existing record body.
 
 - Public instance records stay `(kind, key, string props, hidden, optional Action id, gen)`.
 - Kind `mikura.schema` is reserved.
-- Implementation is a follow-up feature: validate supplied descriptors on
-  ingest and load, persist `mikura.schema` objects, fail closed on
-  violations. Do not open listing or edit Issues from this ADR.
+- Implementation landed in [#115](https://github.com/Sannrox/mikura/issues/115)
+  (`src/schema.rs`, `Store::schema`, `Store::load_with_schema`). Do not open
+  listing or edit Issues from this ADR.
 - M2 lists visible objects under this hide rule. M3 refresh/delete uses
   hide and must not introduce a second tombstone format.
 

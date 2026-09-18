@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use mikura::{ObjectRecord, Store};
 
-use crate::common::identity;
+use crate::common::fold_last_wins;
 use crate::BatchIngest;
 
 /// Merge a source snapshot and admitted edits for one write cycle.
@@ -15,15 +13,7 @@ pub fn merge_source_and_edits(
     source: Vec<ObjectRecord>,
     edits: Vec<ObjectRecord>,
 ) -> Vec<ObjectRecord> {
-    let mut order = Vec::new();
-    let mut chosen = HashMap::new();
-    for record in source.into_iter().chain(edits) {
-        let id = identity(&record);
-        if !chosen.contains_key(&id) {
-            order.push(id.clone());
-        }
-        chosen.insert(id, record);
-    }
+    let (order, mut chosen) = fold_last_wins(source.into_iter().chain(edits));
     order
         .into_iter()
         .filter_map(|id| chosen.remove(&id))

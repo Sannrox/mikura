@@ -443,8 +443,8 @@ fn drip_bytes_hit_wall_clock_timeout() {
         let _ = reader.read_to_string(&mut buf);
         (buf, Instant::now())
     });
-    // Gaps stay under the idle timeout (200 ms) so only a wall-clock
-    // deadline can abort. Ignore later write errors after the host FINs.
+    // Gaps stay under the configured wall-clock budget (200 ms) so only
+    // that deadline can abort. Ignore later write errors after the host FINs.
     for _ in 0..8 {
         if client.write_all(b"x").is_err() {
             break;
@@ -458,7 +458,7 @@ fn drip_bytes_hit_wall_clock_timeout() {
         buf.contains("RequestTimeout"),
         "{buf:?} elapsed={elapsed:?}"
     );
-    // Idle-between-bytes would wait ~8×80 ms plus another idle timeout.
+    // An idle-between-bytes timer would wait ~8×80 ms plus another idle gap.
     assert!(
         elapsed < Duration::from_millis(750),
         "wall deadline should abort drip, elapsed={elapsed:?}"

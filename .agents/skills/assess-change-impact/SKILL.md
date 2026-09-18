@@ -23,7 +23,7 @@ Build an evidence-backed impact map before implementation or review.
    - On-disk `MIKURAV1` / `MKJOIN03` checkpoint + `MKJOIN3D` delta versus
      in-memory maps. Old `MKJOIN01` / `MKJOIN02` fail closed;
    - In-process library versus loopback host (`mikura-host`, ADR 0003).
-     Non-loopback / authenticated host is not built.
+     Non-loopback bind requires a clerk bearer; tokens are not principals.
    Complete when each applicable boundary has an owner and expected invariant.
 3. Identify persistence and compatibility obligations. Include fresh logs,
    reopen after crash (committed pages only), sidecar absence or stale

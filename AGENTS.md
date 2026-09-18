@@ -2,7 +2,8 @@
 
 mikura is a Rust 2021 crate for an object database: ingest, object log,
 object-set evaluate, property ACLs, Action writeback. v1 is an in-process
-library plus a loopback host. Multi-process / authenticated hosting is later.
+library plus a loopback host. Multi-process hosting is later; non-loopback
+bind requires a clerk bearer.
 
 **Read [VISION.md](VISION.md) and [ROADMAP.md](ROADMAP.md) first.** How the
 code works: [docs/architecture.md](docs/architecture.md). Human contributor
@@ -72,7 +73,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 
 | Skill | Use in mikura |
 | --- | --- |
-| `verify-change` | After implementation. Gates: fmt-check, `cargo test --locked`, clippy `-D warnings`, `cargo run -p mikura-ingest --example quickstart` when examples or the public API changed. |
+| `verify-change` | After implementation. Gates: fmt-check, `cargo test --workspace --locked`, clippy `-D warnings`, `cargo run -p mikura-ingest --example quickstart` when examples or the public API changed. |
 | `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
 | `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
@@ -99,7 +100,7 @@ Edition is **2021**. `ObjectRecord.gen` is the generation field. Do not bump
 to edition 2024 without renaming `gen`.
 
 Add focused deterministic tests. **Unit / crate tests** sit next to the
-changed module or in `src/crate_tests.rs`. The named **integration** suite
+changed module or in `src/crate_tests/`. The named **integration** suite
 is `tests/integration.rs` (`cargo test --test integration --locked`); it
 uses only public APIs of `mikura` and `mikura-ingest` and is the
 public/multi-component check. Temp directories for logs. No network,
@@ -159,7 +160,8 @@ immediately after the correction.
 **Never**
 
 - Commit secrets, object logs (`*.mikura`), join sidecars (`*.mikura.joins`,
-  `*.joins.delta`, `*.joins.tmp`), SQLite files, or `target/`.
+  `*.joins.delta`, `*.joins.tmp`), checkpoint temps (`*.mikura.tmp`), SQLite
+  files, or `target/`.
 - Vendor mikura into another product or depend on a control plane from this
   crate.
 - Use SQL as mikura's store of record.

@@ -5,7 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#15](https://github.com/Sannrox/mikura/issues/15), [#3](https://github.com/Sannrox/mikura/issues/3), spike 011, [ADR 0005](0005-current-object-load.md)
 - Supersedes: sidecar layout of [ADR 0002](0002-join-sidecar.md) (`MKJOIN01`)
-- Superseded by: none
+- Superseded by: sidecar magic of [ADR 0006](0006-action-provenance.md) (`MKJOIN03` / `MKJOIN3D`)
 
 ## Context
 
@@ -18,10 +18,12 @@ The object log stays authority. A corrupt sidecar still fails closed.
 
 ## Decision
 
-Join maps intern every string once and walk `u32` ids. The sidecar magic is
-`MKJOIN02`: intern table, slim identity `(kind, key, gen, hidden)`, then
-interned join-key and sum-column pairs for visible rows. The stamp is the
-log `committed_pages`, not a hash of hydrated payloads.
+Join maps intern every string once and walk `u32` ids. This ADR chose
+sidecar magic `MKJOIN02`: intern table, slim identity
+`(kind, key, gen, hidden)`, then interned join-key and sum-column pairs
+for visible rows. [ADR 0006](0006-action-provenance.md) later stored
+Action ids and bumped the live magic to `MKJOIN03` / `MKJOIN3D`. The stamp
+is the log `committed_pages`, not a hash of hydrated payloads.
 
 `Store::open` loads identity and hop/sum from the sidecar. It does not
 hydrate object payloads. Evaluate answers from the maps. `append` bumps
@@ -45,7 +47,8 @@ deleting the sidecar rebuilds from the log.
 
 ## Consequences
 
-Old `{log}.joins` files fail open until removed. Dual-read still holds.
+Old `{log}.joins` files fail closed on open until the sidecar is deleted.
+Dual-read still holds.
 Query at 10⁷ should be re-measured (spike 011 addendum).
 
 ## Validation

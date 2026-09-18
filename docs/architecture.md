@@ -17,7 +17,7 @@ a first consumer; `publish = false` until crates.io is authorized
 ([#57](https://github.com/Sannrox/mikura/issues/57)). A control plane maps
 datasets and admitted edits to `ObjectRecord`s; it does not live in this
 repository. The destination object-set is filter, load, hop, and aggregate;
-today evaluate is hop + count/sum.
+today evaluate is hop + count/sum + optional bounded objects.
 
 ## Object model
 
@@ -112,8 +112,9 @@ properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
-Checksum mismatch, truncation, or bad magic (`MKJOIN01` and `MKJOIN02`
-included) fails closed; deleting the sidecar recovers from the log.
+Checksum mismatch, truncation, or bad magic (current `MKJOIN03` /
+`MKJOIN3D`; old `MKJOIN01` and `MKJOIN02` included) fails closed;
+deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. A successful delta persist clears

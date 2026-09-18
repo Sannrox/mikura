@@ -9,6 +9,10 @@ window.
 
 ### Changed
 
+- Shared live-row install, sidecar CRC, CSV split, and host deny/bearer
+  helpers. Crate tests live under `src/crate_tests/`. Docs match
+  `MKJOIN03`, overlay, bounded listing, and clerk bearer.
+
 - Host `RequestTimeout` is the request-line wall-clock.
   `RequestBound` is the byte bound. After a complete line is accepted,
   evaluate and ingest run to completion on this one-process host
