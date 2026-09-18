@@ -82,9 +82,10 @@ disappear. Immediate `load` of `inc-1` shows `note=acked` and
 | Read-after-write | The next `load` / `evaluate` on the same host sees the last committed generation | Supported in-process. After process exit, `Host::open` / `Store::open` rebuilds from the log and returns the last generation. |
 | Object visibility | Does this fixture need object-level hiding in addition to property denies? | No. The seed has two objects and no per-caller hide. Request property denies remain. Principals and policy stay in the clerk. |
 
-The intended later rule (edit overlays source; unedited properties follow
-the next snapshot) is not implemented. Today's refresh is last-write-wins
-by identity.
+The accepted later rule is [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md):
+edit overlays source; unedited properties follow the next snapshot; the
+patch persists as `mikura.overlay`. It is not implemented. Today's refresh
+is last-write-wins by identity.
 
 ## Access boundary
 

@@ -9,6 +9,11 @@ window.
 
 ### Added
 
+- [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md): admitted
+  property overlays persist as `mikura.overlay` objects; source refresh
+  keeps those keys; hide and expected-generation stay on the existing
+  record body. No `MIKURAV1` bump
+  ([#112](https://github.com/Sannrox/mikura/issues/112)).
 - Evaluate can return matching objects: `EvaluateRequest.object_bound`
   greater than zero loads distinct result identities (last hop, or roots
   when hops are empty). Overflow fails closed. Host `evaluate` accepts
