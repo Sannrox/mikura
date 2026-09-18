@@ -31,7 +31,7 @@ application is complete.
 | Object model | `(kind, key)`, string properties, generation, hidden flag, optional Action id, supplied `mikura.schema` validation in [Store](../../src/store/mod.rs) | Non-string scalars; schema migration beyond hide-and-replace |
 | Links | Property-based joins in both directions in [Hop](../../src/objectset.rs) | Named relation definitions, cardinality and dangling-link behavior; explicit edges if the workflow requires them |
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs) | Typed comparisons; sort, composed predicates, and cursors only when a fixture's expected answers are ambiguous without them ([#122](https://github.com/Sannrox/mikura/issues/122)) |
-| Edits | One-object replacement in `apply_action`; [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Persistent property edits, refresh conflict rules, retry safety, stale-write rejection |
+| Edits | Property overlay on the log; `apply_action` still whole-record replace; [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Retry/idempotency beyond expected generation; source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)) |
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs) | Explicit trusted-caller boundary and complete enforcement across supported operations |
 | Recovery and scale | CRC log, sidecar rebuild, integration and host-process tests | Restore drills, capacity limits, operational visibility, representative workload budgets |
 
@@ -66,7 +66,7 @@ checks pass.
 | M0 — application contract (accepted) | Named consumer, fixture, expected answers, budgets, and a thin client exercising the existing host | Baseline report separates supported behavior from each missing capability; no invented performance claim. See [m0-application-contract.md](m0-application-contract.md) |
 | M1 — typed objects and links (accepted) | Strings only; explicit null/absent rules; supplied schema descriptors; property-backed `affects`; `hidden` tombstone | Invalid writes fail closed against a committed `mikura.schema/<kind>` row; objects and descriptors survive restart and projection deletion; historical strings still load ([#115](https://github.com/Sannrox/mikura/issues/115), [ADR 0008](../decisions/0008-type-link-delete.md)). |
 | M2 — application queries | Product-loop list and hop return objects ([#113](https://github.com/Sannrox/mikura/issues/113)). Sort, cursors, and composed filters wait for a fixture that names them ([#122](https://github.com/Sannrox/mikura/issues/122)) | Fixture list/hop return `svc-api`; overflow fails closed. This seed does not need a second predicate, a page token, or a product sort |
-| M3 — refresh-safe edits | Property overlay as `mikura.overlay` objects; `hidden` delete; expected-generation stale write ([#119](https://github.com/Sannrox/mikura/issues/119), [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md)) | Edit overlay → source refresh → crash/reopen → sidecar delete preserves `note=acked` on `inc-1`; stale expected generation fails closed. Remaining: ingest progress / visible commit position |
+| M3 — refresh-safe edits | Property overlay as `mikura.overlay` objects; `hidden` delete; expected-generation stale write ([#119](https://github.com/Sannrox/mikura/issues/119), [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md)). Read-after-write on committed ops is the visibility contract ([#123](https://github.com/Sannrox/mikura/issues/123)) | Edit overlay → source refresh → crash/reopen → sidecar delete preserves `note=acked` on `inc-1`; stale expected generation fails closed. No public commit-position waiter |
 | M4 — hosted pilot | Supported client/protocol, bounded requests and work queues, deadlines, health/metrics, backup/restore, graceful shutdown, upgrade procedure, trusted-gateway deployment | Real consumer completes its workflow; denied operations fail closed; overload and disconnect tests pass; restore and upgrade drills meet M0 budgets |
 | M5 — expand from evidence | Further query operators, datasources, types and link models, schema migration tools, change subscriptions or exports, and measured capacity improvements | Every addition has a consumer fixture; architecture changes follow a documented capacity or availability need |
 
@@ -123,10 +123,15 @@ returned on mismatch. An opaque Action id alone is not a retry contract:
 specify idempotency-key scope, retention, response replay, and what happens
 when a key is reused with different content. Retries must work after restart.
 
-Define commit success, reads during uncommitted ingest, log success followed
-by projection-persist failure, and source-offset advancement together. A
-visible commit position can later support waiting for asynchronous indexing;
-do not add an asynchronous service merely to create that requirement.
+Committed host ops (`ingest_batch`, stream flush, `apply_action`,
+`apply_overlay`) acknowledge only after log `commit`. `committed_pages`
+is already the monotonic rebuild pointer; it is not a public waiter.
+A sidecar persist failure after a successful log flush still returns
+an error; reopen rebuilds from the log. Uncommitted stream pushes are
+visible in-process and dropped on crash — the fixture does not use
+them. Source-sync offsets stay with the clerk. Do not add an
+asynchronous index waiter to invent a commit-position API
+([#123](https://github.com/Sannrox/mikura/issues/123)).
 
 Single-object atomicity is the initial proposed boundary. If the first
 workflow requires all-or-nothing edits to several objects, transaction

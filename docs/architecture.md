@@ -127,7 +127,9 @@ hop/sum. `LocalCompute` answers from these maps, not from a hot object map.
 
 `mikura-ingest::BatchIngest::run` buffers records with `Store::append_uncommitted`
 and group-commits once via `Store::commit`. The `mikura` crate has no ingest
-types.
+types. Host `ingest_batch`, stream flush, `apply_action`, and `apply_overlay`
+return success only after that commit. `committed_pages` is the rebuild
+pointer, not a public waiter. Source-sync offsets stay with the clerk.
 
 `mikura-ingest::merge_source_and_edits` folds a source snapshot and admitted
 edits by `(kind, key)` for one write cycle. Within each input the last record

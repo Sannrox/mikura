@@ -55,20 +55,19 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M2 query operators | Sort, composed filters, and cursors wait for a fixture whose expected answers are ambiguous without them. This seed does not ([#122](https://github.com/Sannrox/mikura/issues/122)). |
 | M3 contract | Property overlay on the log, `hidden` delete, expected-generation stale write ([#112](https://github.com/Sannrox/mikura/issues/112), [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)). |
 | M3 overlay | Persist `mikura.overlay`, merge on source ingest, stale generation fails closed ([#119](https://github.com/Sannrox/mikura/issues/119)). |
+| M3 commit visibility | Read-after-write on committed host ops plus reopen is enough. No public commit-position waiter; source offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 and M1 are accepted. Remaining items:
 
-1. **M3 — refresh-safe edits:** remaining ingest progress / commit-position
-   visibility ([#123](https://github.com/Sannrox/mikura/issues/123)). Overlay
-   merge under [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)
-   is implemented ([#119](https://github.com/Sannrox/mikura/issues/119)).
-2. **M4 — hosted pilot:** decide and prove the one-process contract
+1. **M4 — hosted pilot:** decide and prove the one-process contract
    ([#121](https://github.com/Sannrox/mikura/issues/121)). Leftover M2
-   operators are not a prerequisite ([#122](https://github.com/Sannrox/mikura/issues/122)).
-3. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+   operators and a public commit-position waiter are not prerequisites
+   ([#122](https://github.com/Sannrox/mikura/issues/122),
+   [#123](https://github.com/Sannrox/mikura/issues/123)).
+2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
