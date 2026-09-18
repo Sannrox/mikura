@@ -342,3 +342,52 @@ was 29 M / 10.7 h; this remasure finished 100 M in ~2.8 h.
 Follow-up: [#54](https://github.com/Sannrox/mikura/issues/54) may start.
 A later remasure may still print 10⁸ query/open if a completed log is
 kept. Do not start 10¹⁰ until 10⁹ has a NOTES verdict.
+
+## Addendum (2026-09-18): 10⁹ hop count and sum (#54)
+
+Question: after 10⁸ ingest completed ([#137](https://github.com/Sannrox/mikura/issues/137)),
+do hop count and sum hold a published budget at 10⁹? A miss is a note,
+not an engine pick.
+
+Budgets stated before this run (same machine class as #137: Apple M2 Pro,
+32 GiB, Darwin arm64; `rustc` 1.96.1; no hostnames):
+
+| Metric | Budget |
+| --- | ---: |
+| Hop count + sum query | **≤ 500 ms** |
+| Dual-read vs sidecar (sampled; full replay only if it finishes) | **hold** |
+| Fit in 32 GiB | **hold** |
+
+```text
+cargo test
+cargo run --release -- --objects 1000000000 --dir data/envelope-54 --oracle sidecar
+```
+
+Same Customer→Order→Shipment fixture family as spike 011. The harness
+keeps the log when `--dir` is set so a finished ingest can still print
+query/open if the process later stops. A later command with the same
+`--dir` refuses to overwrite `objects.mikura`. Sidecar oracle is the
+sampled dual-read allowed when full replay cannot finish.
+
+| objects | ingest | 1 M `commit_ms` | `fsync_delta` | RSS | log | sidecar | **query** | `Store::open` | dual-read |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| **10⁷** (from #137) | 224–291 s | 11–58 s | 758–976 | 2.6–2.9 GiB | 593 MiB | 135 MiB | **1252–2117 ms** | 35–164 s | **hold** |
+| **10⁹** | stopped at **77 × 1 M** (~37 min) | 7 s → 61 s, still climbing | 678–834 | 1.4–9.5 GiB | 3.9 GiB | 122 MiB + 3.8 GiB delta | not reached | not reached | not reached |
+
+10⁹ was stopped after 77 million-record chunks. That is enough to answer
+the decision question. Hop count+sum already misses 500 ms at 10⁷. A
+finished billion-object ingest cannot make that hold. Late `commit_ms`
+was already ~60 s; the join delta grew with the log (~3.8 GiB each at
+77 M) on a volume with ~73 GiB free. Linear disk use fills around
+700–800 M objects, before 10⁹, and before any query number.
+
+## Verdict: QUERY MISS; 10⁹ INGEST NOT REQUIRED
+
+- **Query** misses ≤ 500 ms at 10⁷. Do not treat 10⁹ as a new query
+  question.
+- **10⁹ ingest** was not completed. Time and disk project a miss, not an
+  OOM at 77 M.
+- **No engine pick.** Spark stays unsupported.
+- **No follow-up Issue.** Further scale envelopes wait until a consumer
+  names that size with a fixture. Do not start 10¹⁰
+  ([#55](https://github.com/Sannrox/mikura/issues/55)) from this note.
