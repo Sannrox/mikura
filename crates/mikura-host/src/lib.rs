@@ -98,7 +98,7 @@ pub enum HostRequest {
 pub const WIRE_V: u32 = 1;
 /// Default max JSON-line bytes for one RPC. Oversized lines fail closed.
 pub const DEFAULT_REQUEST_BOUND: usize = 1 << 20;
-/// Default socket read/write budget for one RPC.
+/// Default request-line wall-clock for assembling one JSON line.
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,8 +153,10 @@ impl Host {
         })
     }
 
-    /// Fail closed when a JSON line exceeds `bound` bytes or a socket
-    /// exceeds `timeout`. Bound must be greater than zero.
+    /// Fail closed when a JSON line exceeds `bound` bytes or assembling
+    /// that line exceeds `timeout`. Bound must be greater than zero.
+    /// After a complete line is accepted, evaluate and ingest run to
+    /// completion.
     pub fn set_request_limits(&mut self, bound: usize, timeout: Duration) -> Result<(), String> {
         if bound == 0 {
             return Err("request bound must be greater than zero".into());

@@ -7,6 +7,13 @@ window.
 
 ## [Unreleased]
 
+### Changed
+
+- Host `RequestTimeout` is the request-line wall-clock.
+  `RequestBound` is the byte bound. After a complete line is accepted,
+  evaluate and ingest run to completion on this one-process host
+  ([#141](https://github.com/Sannrox/mikura/issues/141)).
+
 ### Added
 
 - After a successful join dirty-set persist, that set is no longer
@@ -26,9 +33,10 @@ window.
   host on the copy answers the product-loop load, list, hop, and overlay.
   Deleting the copied sidecar still rebuilds from the log. No backup RPC
   ([#126](https://github.com/Sannrox/mikura/issues/126)).
-- Host request admission: a JSON line over `--request-bound` or a socket
-  past `--request-timeout-ms` fails closed. A client disconnect does not
-  stop the listener
+- Host request admission: a JSON line over `--request-bound` fails
+  closed with `RequestBound`. Assembling the request line past
+  `--request-timeout-ms` fails closed with `RequestTimeout`. A client
+  disconnect does not stop the listener
   ([#125](https://github.com/Sannrox/mikura/issues/125)).
 - M4 hosted-pilot contract: one process, JSON `v=1`, deny-closed access,
   overload, backup/restore of the log, graceful shutdown, and reopen
