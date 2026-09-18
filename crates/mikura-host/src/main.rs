@@ -1,10 +1,12 @@
 //! Loopback ingest/evaluate process. `--bearer` arms the RPC envelope on any
 //! bind; non-loopback bind still requires a clerk bearer.
 
-use std::io::{self, Write};
-use std::net::SocketAddr;
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use mikura_host::{Host, DEFAULT_REQUEST_BOUND, DEFAULT_REQUEST_TIMEOUT_MS};
@@ -47,7 +49,29 @@ fn run() -> Result<(), String> {
     io::stdout()
         .flush()
         .map_err(|err| format!("flush listen address: {err}"))?;
-    host.serve(listener)
+    let running = Arc::new(AtomicBool::new(true));
+    watch_stdin_then_stop(bound, running.clone());
+    host.serve_while(listener, || running.load(Ordering::SeqCst))
+}
+
+/// Closing stdin stops the listener without flushing the stream buffer.
+fn watch_stdin_then_stop(bound: SocketAddr, running: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut stdin = io::stdin();
+        let mut buf = [0u8; 32];
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+        running.store(false, Ordering::SeqCst);
+        let mut addr = bound;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(2));
+    });
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -94,7 +118,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--help" | "-h" => {
                 return Err(
-                    "usage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]"
+                    "usage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\nclose stdin to stop; uncommitted stream pushes are not flushed"
                         .into(),
                 );
             }

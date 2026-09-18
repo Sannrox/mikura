@@ -271,6 +271,11 @@ RPC. The sidecar is a rebuildable projection, never recovery material.
 Deleting the copied sidecar still answers load, list, hop, and overlay from
 the log. A corrupt committed page or sidecar checksum mismatch fails closed.
 
+Closing stdin stops the listener. Stop does not flush the stream buffer;
+rebuild still reads only `1..=committed_pages`. Upgrade is replace the
+binary and `Host::open` the same files. Wire `v` other than omit/`1` stays
+a typed error. `MIKURAV1` is unchanged.
+
 ## What v1 does not do
 
 - Multi-process replication (researched no-action: one process remains enough;

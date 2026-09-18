@@ -59,19 +59,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M4 contract | Pilot is this one-process host: JSON `v=1`, deny-closed, overload, backup/restore, shutdown, binary replace + reopen ([#121](https://github.com/Sannrox/mikura/issues/121), [m4-hosted-pilot-contract.md](docs/plans/m4-hosted-pilot-contract.md)). |
 | M4 overload | Host request-byte bound and socket timeout fail closed; disconnect does not stop the listener ([#125](https://github.com/Sannrox/mikura/issues/125)). |
 | M4 backup | Copy the object log plus optional `{log}.joins`; a fresh host on the copy answers load, list, hop, and overlay. Delete the sidecar; rebuild from the log. Corrupt pages stay fail-closed ([#126](https://github.com/Sannrox/mikura/issues/126)). |
+| M4 shutdown | Closing stdin stops the listener without promoting uncommitted stream pages. A replacement process on the same files answers product-loop load, list, hop, and overlay. Wire `v` other than omit/`1` stays fail-closed ([#127](https://github.com/Sannrox/mikura/issues/127)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
-M0 and M1 are accepted. Remaining items:
+M0 through M4 are accepted and implemented. Remaining items:
 
-1. **M4 — hosted pilot:** prove shutdown/upgrade
-   ([#127](https://github.com/Sannrox/mikura/issues/127))
-   against [the accepted contract](docs/plans/m4-hosted-pilot-contract.md).
-   Overload and backup/restore are implemented
-   ([#125](https://github.com/Sannrox/mikura/issues/125),
-   [#126](https://github.com/Sannrox/mikura/issues/126)).
-2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+1. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery

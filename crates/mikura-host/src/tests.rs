@@ -1,6 +1,8 @@
 use super::*;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
@@ -145,6 +147,42 @@ fn handle_line_wire_v1_omitted_or_one_unknown_fails_closed() {
 fn non_loopback_bind_with_bearer_listens() {
     let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();
     assert!(listener.local_addr().is_ok());
+}
+
+#[test]
+fn serve_while_stops_without_flushing_stream() {
+    let (dir, log) = temp_log("serve-stop");
+    let mut host = Host::open(&log, 8).unwrap();
+    let pushed = host.handle(HostRequest::IngestStreamPush {
+        record: rec(
+            "incident",
+            "inc-uncommitted",
+            false,
+            &[("name", "tail"), ("affects", "svc-api")],
+        ),
+    });
+    assert!(pushed.ok, "{pushed:?}");
+    let live = host.handle(HostRequest::Load {
+        kind: "incident".into(),
+        key: "inc-uncommitted".into(),
+        deny: Vec::new(),
+    });
+    assert!(live.ok, "{live:?}");
+    let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let running = Arc::new(AtomicBool::new(true));
+    let flag = running.clone();
+    let handle =
+        std::thread::spawn(move || host.serve_while(listener, || flag.load(Ordering::SeqCst)));
+    std::thread::sleep(Duration::from_millis(20));
+    running.store(false, Ordering::SeqCst);
+    let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(1));
+    handle.join().unwrap().unwrap();
+    let store = Store::open(&log).unwrap();
+    assert!(store
+        .load("incident", "inc-uncommitted", &PropertyAcl::allow_all())
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
