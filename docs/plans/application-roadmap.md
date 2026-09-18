@@ -64,7 +64,7 @@ checks pass.
 | Milestone | Deliverable | Exit check |
 | --- | --- | --- |
 | M0 — application contract (accepted) | Named consumer, fixture, expected answers, budgets, and a thin client exercising the existing host | Baseline report separates supported behavior from each missing capability; no invented performance claim. See [m0-application-contract.md](m0-application-contract.md) |
-| M1 — typed objects and links | Minimal required scalar types; explicit null/absent rules; supplied schema descriptors; relation direction/cardinality; deletion visibility | Invalid values fail deterministically; objects and required links survive restart and projection deletion; old-data compatibility follows an accepted ADR |
+| M1 — typed objects and links (contract accepted) | Minimal required scalar types; explicit null/absent rules; supplied schema descriptors; relation direction/cardinality; deletion visibility | Invalid values fail deterministically; objects and required links survive restart and projection deletion; old-data compatibility follows [ADR 0008](../decisions/0008-type-link-delete.md). Implementation of validation is still open. |
 | M2 — application queries | Load batches; list matching objects; deterministic sort and bounded cursor pages; composed filters and typed ranges; required traversal; existing count/sum | The application's queries return the fixture's expected objects/results; duplicate and null semantics are explicit; pagination has documented behavior under writes; permission checks apply to every used property/link |
 | M3 — refresh-safe edits | Durable source state plus property edit overlay; explicit create/delete/recreate behavior; conditional writes; idempotent retry; durable ingest progress and visible commit position | Edit → source refresh → retry → crash/reopen → projection rebuild preserves the defined result; stale writes fail; acknowledged writes satisfy the documented durability/visibility contract |
 | M4 — hosted pilot | Supported client/protocol, bounded requests and work queues, deadlines, health/metrics, backup/restore, graceful shutdown, upgrade procedure, trusted-gateway deployment | Real consumer completes its workflow; denied operations fail closed; overload and disconnect tests pass; restore and upgrade drills meet M0 budgets |
@@ -83,15 +83,16 @@ are not prerequisites for that pilot.
 
 ### Data and schema
 
-Start with the types the fixture needs, likely strings, booleans, integers,
-and timestamps. Decide decimal representation if money is involved. Keep
-arrays, structured values, geospatial, media, and vectors demand-driven.
+[ADR 0008](../decisions/0008-type-link-delete.md) keeps strings for this
+fixture. Boolean, integer, timestamp, and decimal wait for a named
+consumer type. Keep arrays, structured values, geospatial, media, and
+vectors demand-driven.
 
-The external catalog authors schema definitions; mikura validates supplied
-descriptors and stores enough version/type information to recover its data
-without a live catalog. This is a proposed interface boundary that needs a
-design decision. Typed encoding and any added record metadata require the
-on-disk format ADR and approval specified by [AGENTS.md](../../AGENTS.md).
+The external catalog authors schema definitions. Mikura validates supplied
+descriptors and stores the last accepted one as a `mikura.schema` object
+([ADR 0008](../decisions/0008-type-link-delete.md)). Typed encoding and
+any added instance-record metadata still require a format ADR and the
+approval specified by [AGENTS.md](../../AGENTS.md).
 
 Do not silently reinterpret old string data. Specify conversion, validation,
 upgrade, and rollback behavior. Define whether hidden records are internal
@@ -170,7 +171,7 @@ pages, uncommitted tails, absent/stale projections, and acknowledged edits.
 ## Smallest initial work items
 
 1. Capture the consumer workflow and budgets; run a baseline with current APIs. Done: [m0-application-contract.md](m0-application-contract.md).
-2. Decide the minimal type/link/delete contract and log compatibility in an ADR.
+2. Decide the minimal type/link/delete contract and log compatibility in an ADR. Done: [ADR 0008](../decisions/0008-type-link-delete.md).
 3. Implement typed ingest/load and reconstruction through public APIs and host e2e.
 4. Implement bounded object listing, then the fixture's filters and traversal.
 5. Decide durable source/edit merge, retry, concurrency, and commit semantics.

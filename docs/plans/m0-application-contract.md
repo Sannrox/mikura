@@ -123,18 +123,7 @@ A miss is a note, not an engine pick.
 
 ## Follow-up
 
-Shape one research Issue for the M1 type, link, and deletion ADR. Do not
-publish M2–M5 from this contract. `#54` and `#55` stay blocked.
-
-Recommended draft (not opened here):
-
-- **Title:** `research: type, link, and deletion contract`
-- **Question:** What minimal value types, supplied-schema validation, link
-  direction/cardinality, and deletion visibility must the log accept so
-  the product-loop objects survive restart and projection rebuild?
-- **Constraint:** typed encoding and new record metadata need an on-disk
-  format ADR. Do not silently reinterpret existing strings.
-- **Exit:** one ADR or explicit no-action; no implementation in that Issue.
-
-The next implementation work waits on that ADR. M2 (return matching
-objects) and M3 (edit overlay) both depend on those contracts.
+The M1 contract is [ADR 0008](../decisions/0008-type-link-delete.md)
+([#110](https://github.com/Sannrox/mikura/issues/110)). Do not publish
+M2–M5 from this page. `#54` and `#55` stay blocked. Implementation of
+supplied-schema validation is a separate feature Issue.

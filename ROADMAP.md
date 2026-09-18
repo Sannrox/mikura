@@ -49,14 +49,15 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v10 one process | One process remains the hosted form; split waits for a miss one process cannot fix ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 | v10 tag | A git tag is enough for the first consumer; crates.io stays `publish = false` until a human authorizes it ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut the tag with prepare-release, not from this research. |
 | M0 contract | Sekai product-loop fixture is the first application contract; host baseline recorded ([#107](https://github.com/Sannrox/mikura/issues/107), [m0-application-contract.md](docs/plans/m0-application-contract.md)). |
+| M1 contract | Strings, property-backed `affects`, `hidden` tombstone, supplied schema as log objects ([#110](https://github.com/Sannrox/mikura/issues/110), [ADR 0008](docs/decisions/0008-type-link-delete.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
-M0 is accepted. Remaining items:
+M0 and the M1 contract are accepted. Remaining items:
 
-1. **M1 — typed objects and links:** minimal value types, supplied schema
-   validation, link and deletion semantics, and compatible recovery.
+1. **M1 — typed objects and links:** implement supplied-schema validation
+   and persist `mikura.schema` objects under [ADR 0008](docs/decisions/0008-type-link-delete.md).
 2. **M2 — application queries:** return matching objects with bounded pages,
    sorting, composed filters, and the workflow's traversal and aggregates.
 3. **M3 — refresh-safe edits:** persist source/edit semantics, conditional
@@ -68,8 +69,8 @@ M0 is accepted. Remaining items:
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
-or published Issues. Shape the M1 type/link/delete ADR before treating
-later work as implementation-ready.
+or published Issues. Implement ADR 0008 before treating M2/M3 as
+implementation-ready.
 
 Scale and the log remain gated research:
 
