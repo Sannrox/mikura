@@ -52,6 +52,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M1 contract | Strings, property-backed `affects`, `hidden` tombstone, supplied schema as log objects ([#110](https://github.com/Sannrox/mikura/issues/110), [ADR 0008](docs/decisions/0008-type-link-delete.md)). |
 | M1 schema | Validate writes against committed `mikura.schema/<kind>` descriptors; historical strings still load ([#115](https://github.com/Sannrox/mikura/issues/115)). |
 | M2 list | Evaluate returns bounded matching objects for the product-loop list and hop queries ([#113](https://github.com/Sannrox/mikura/issues/113)). |
+| M2 query operators | Sort, composed filters, and cursors wait for a fixture whose expected answers are ambiguous without them. This seed does not ([#122](https://github.com/Sannrox/mikura/issues/122)). |
 | M3 contract | Property overlay on the log, `hidden` delete, expected-generation stale write ([#112](https://github.com/Sannrox/mikura/issues/112), [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)). |
 | M3 overlay | Persist `mikura.overlay`, merge on source ingest, stale generation fails closed ([#119](https://github.com/Sannrox/mikura/issues/119)). |
 
@@ -60,15 +61,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 and M1 are accepted. Remaining items:
 
-1. **M2 — application queries:** sorting, composed filters, cursors, and
-   remaining traversal/aggregate work. Product-loop list and hop already
-   return objects ([#113](https://github.com/Sannrox/mikura/issues/113)).
-2. **M3 — refresh-safe edits:** remaining ingest progress / commit-position
-   visibility. Overlay merge under [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)
+1. **M3 — refresh-safe edits:** remaining ingest progress / commit-position
+   visibility ([#123](https://github.com/Sannrox/mikura/issues/123)). Overlay
+   merge under [ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)
    is implemented ([#119](https://github.com/Sannrox/mikura/issues/119)).
-3. **M4 — hosted pilot:** integrate the real consumer, then prove access
-   enforcement, overload behavior, backup/restore, and upgrades against budgets.
-4. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+2. **M4 — hosted pilot:** decide and prove the one-process contract
+   ([#121](https://github.com/Sannrox/mikura/issues/121)). Leftover M2
+   operators are not a prerequisite ([#122](https://github.com/Sannrox/mikura/issues/122)).
+3. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
@@ -82,7 +82,7 @@ Scale and the log remain gated research:
 Measure the application's workload first. Diagnose the unfinished 10⁸ run
 before larger envelopes; they do not block defining and delivering the pilot.
 
-Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture.
+Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. Sort, composed filters, and snapshot-bound cursors wait the same way ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 ## Later (not this repository)
 

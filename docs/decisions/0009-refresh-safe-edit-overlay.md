@@ -121,7 +121,9 @@ existing record body, as schema rows do.
 - Implementation is one follow-up feature: persist `mikura.overlay`
   rows, merge on source ingest and load, fail closed on expected-generation
   mismatch. Do not open M4, listing, or a second delete format from this ADR.
-- Remaining M2 query work (sort, cursors, composed filters) is independent.
+- Remaining M2 query work (sort, cursors, composed filters) is independent
+  and waits for a fixture that names them
+  ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 ## Validation
 

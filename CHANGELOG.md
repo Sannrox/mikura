@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- Product-loop evaluate stays one exact match, one hop, and a fail-closed
+  object bound. Sort, composed filters, and cursors wait for a fixture
+  whose expected answers are ambiguous without them
+  ([#122](https://github.com/Sannrox/mikura/issues/122)).
 - Property overlay: `Store::apply_overlay` persists `mikura.overlay/{kind}/{key}`
   and rematerializes the instance. Later visible source writes merge the
   patch. Stale `expected_gen` fails closed. Hide of the instance hides the
