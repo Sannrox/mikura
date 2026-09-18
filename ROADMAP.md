@@ -67,12 +67,9 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | 10⁹ envelope | Hop count+sum already misses 500 ms at 10⁷. 10⁹ ingest is not required; a 77 M sample showed climbing commit cost and a disk fill before 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)). |
 | last-hop measures ADR | Count and sum for a schema-named leaf property persist as parent rollups on the deletable sidecar. Evaluate still leaf-walks undeclared sums. No engine pick ([#150](https://github.com/Sannrox/mikura/issues/150), [ADR 0010](docs/decisions/0010-last-hop-measures.md)). |
 | last-hop measures | Schema-named leaf sums persist as parent rollups on `MKJOIN04`. Evaluate reads them. Undeclared sums still leaf-walk. Dual-read holds ([#151](https://github.com/Sannrox/mikura/issues/151), [ADR 0010](docs/decisions/0010-last-hop-measures.md)). |
+| last-hop remasure | After #151, 10⁷ hop count+sum **40 ms hold** vs 500 ms on declared rollups; dual-read holds; 7.1 GiB on 32 GiB ([#152](https://github.com/Sannrox/mikura/issues/152), spike 011 addendum). |
 
 ## Next (this repository, in order)
-
-1. **Last-hop remasure:** remasure 10⁷ hop count+sum after last-hop
-   measures ([#152](https://github.com/Sannrox/mikura/issues/152)). This
-   issue does not close that remasure.
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M4 are accepted and implemented. Remaining items:
@@ -86,7 +83,7 @@ or published Issues.
 
 Scale and the log remain gated research:
 
-1. 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) waits until a consumer names that envelope. 10⁹ is closed: the 500 ms hop budget already misses at 10⁷ ([#54](https://github.com/Sannrox/mikura/issues/54)). A miss is not an engine pick.
+1. 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) waits until a consumer names that envelope. 10⁹ ingest is closed ([#54](https://github.com/Sannrox/mikura/issues/54)). After last-hop measures, 10⁷ hop count+sum holds 500 ms ([#152](https://github.com/Sannrox/mikura/issues/152)). Do not start #55 from that hold. A miss is not an engine pick.
 
 Measure the application's workload first. They do not block defining and
 delivering the pilot.
