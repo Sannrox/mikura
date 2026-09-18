@@ -45,12 +45,12 @@ gRPC stays ask-first.
 | Wire `v` omit or `1`; other `v` fails closed | `process_rejects_unknown_wire_v_and_accepts_omit_or_one` |
 | Same-binary reopen | `Host::open` / `Store::open` after process exit |
 | Bound request work; disconnect fail closed | `process_oversize_request_fails_closed`, `process_disconnect_then_next_request_serves` |
+| Backup and restore | `process_backup_restore_product_loop`: copy the log and optional `{log}.joins`, then `Host::open` on the copy. Dual-read deletes the copied sidecar. Corrupt committed pages and sidecar checksum mismatch stay fail-closed (`missing_committed_page_fails_closed`, `sidecar_checksum_and_bad_magic_fail_closed`) |
 
 ## Still required
 
 | Check | Follow-up | Rule |
 | --- | --- | --- |
-| Backup and restore | [#126](https://github.com/Sannrox/mikura/issues/126) | Backup is the object log plus optional join sidecar. Restore onto a fresh host answers the same load, list, hop, and overlay. Delete the copied sidecar; rebuild from the log. Corrupt committed pages still fail closed. |
 | Shutdown and upgrade | [#127](https://github.com/Sannrox/mikura/issues/127) | Stop leaves only the committed range durable. A current host opens that log and completes the product-loop. Envelope mismatch (`v` other than omit/`1`) fails closed. No `MIKURAV1` magic change. |
 
 Do not invent hold/miss numbers. [M0 budgets](m0-application-contract.md)
@@ -83,6 +83,6 @@ Ops already on the wire: `ingest_batch`, `ingest_stream_push`,
 
 ## Follow-up
 
-Implement remaining [#126](https://github.com/Sannrox/mikura/issues/126)
-and [#127](https://github.com/Sannrox/mikura/issues/127) from this page.
-Do not publish M5 or consumer-repo Issues from this contract.
+Implement remaining [#127](https://github.com/Sannrox/mikura/issues/127)
+from this page. Do not publish M5 or consumer-repo Issues from this
+contract.

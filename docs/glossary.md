@@ -8,6 +8,7 @@ meaning; say it is undefined.
 | **Object** | A typed record with a primary `key`, `props`, `hidden` flag, and `gen`. Identity is `(kind, key)`. |
 | **Generation** (`gen`) | Monotonic version of that identity. `Store::append` bumps it. In edition 2021 the field is named `gen`; it must be renamed before an edition 2024 bump. |
 | **Object log** | Append-only 4 KiB CRC pages. Authority for identity. [ADR 0001](decisions/0001-paged-log.md). |
+| **Backup** | A copy of the object log plus the optional `{log}.joins` sidecar. Restore is `Host::open` on the copy. The sidecar is a rebuildable projection, never recovery material. There is no backup RPC. |
 | **Superblock** | Page 0 of the log. Holds magic `MIKURAV1`, page size, and `committed_pages`. |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |

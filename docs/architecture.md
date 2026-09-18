@@ -265,6 +265,12 @@ exceeds `--request-timeout-ms` (default 5 s) fails closed with
 `RequestBound` / `RequestTimeout`. One disconnect does not stop the
 listener. No tenants, policy compile, receipts, or principals.
 
+Backup is a file copy of the object log plus the optional `{log}.joins`
+sidecar. Copy those files next to a fresh `Host::open`. There is no backup
+RPC. The sidecar is a rebuildable projection, never recovery material.
+Deleting the copied sidecar still answers load, list, hop, and overlay from
+the log. A corrupt committed page or sidecar checksum mismatch fails closed.
+
 ## What v1 does not do
 
 - Multi-process replication (researched no-action: one process remains enough;
