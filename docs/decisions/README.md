@@ -8,7 +8,7 @@ a new ADR. Allocate the next number and list it here.
 | [0001](0001-paged-log.md) | Paged object log with group commit | accepted |
 | [0002](0002-join-sidecar.md) | Checksummed generic join sidecar | accepted |
 | [0003](0003-hosted-service.md) | Single-process hosted ingest/evaluate | accepted |
-| [0004](0004-slim-join-maps.md) | Slim interned join maps (now `MKJOIN03` via 0006) | accepted |
+| [0004](0004-slim-join-maps.md) | Slim interned join maps (now `MKJOIN04` via 0010) | accepted |
 | [0005](0005-current-object-load.md) | Load the current object from slim identity | accepted |
 | [0006](0006-action-provenance.md) | Action provenance on the object log | accepted |
 | [0007](0007-host-bearer.md) | Clerk bearer on non-loopback bind | accepted |

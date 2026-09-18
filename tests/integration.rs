@@ -6,6 +6,7 @@
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
     ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, SchemaDescriptor, SchemaLink, Store,
+    SCHEMA_SUMS,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -77,6 +78,20 @@ fn fixture() -> Vec<ObjectRecord> {
     ]
 }
 
+fn shipment_sum_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "Shipment".into(),
+        properties: vec!["amount".into(), "order_id".into()],
+        required: Vec::new(),
+        links: vec![SchemaLink {
+            name: "order_id".into(),
+            far_kind: "Order".into(),
+            outgoing: true,
+        }],
+        sums: vec!["amount".into()],
+    }
+}
+
 fn shipment_request() -> EvaluateRequest {
     EvaluateRequest {
         root_kind: "Customer".into(),
@@ -116,6 +131,67 @@ fn asset_request() -> EvaluateRequest {
         filter: None,
         object_bound: 0,
     }
+}
+
+#[test]
+fn schema_named_measure_evaluates_and_rebuilds() {
+    let tmp = TempLog::new("measure-eval");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let schema = shipment_sum_schema();
+    BatchIngest::run(
+        &mut store,
+        std::iter::once(schema.to_record().unwrap())
+            .chain(fixture())
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .schema("Shipment")
+            .unwrap()
+            .unwrap()
+            .sums
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["amount"]
+    );
+    assert_eq!(
+        schema
+            .to_record()
+            .unwrap()
+            .props
+            .get(SCHEMA_SUMS)
+            .map(String::as_str),
+        Some("amount")
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let live = oss.evaluate(&store, &shipment_request()).unwrap();
+    assert_eq!(live.two_hop_count, 1);
+    assert_eq!(live.sum_amount, 10);
+
+    let mut denied = shipment_request();
+    denied.acl = PropertyAcl::deny_property("Shipment", "amount");
+    assert!(matches!(
+        oss.evaluate(&store, &denied),
+        Err(ComputeError::Acl(AclError::Denied {
+            ref kind,
+            ref property
+        })) if kind == "Shipment" && property == "amount"
+    ));
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    let from_sidecar = oss.evaluate(&reopened, &shipment_request()).unwrap();
+    assert_eq!(from_sidecar.two_hop_count, live.two_hop_count);
+    assert_eq!(from_sidecar.sum_amount, live.sum_amount);
+    drop(reopened);
+
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    let from_log = oss.evaluate(&replayed, &shipment_request()).unwrap();
+    assert_eq!(from_log.two_hop_count, live.two_hop_count);
+    assert_eq!(from_log.sum_amount, live.sum_amount);
 }
 
 #[test]
@@ -551,6 +627,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
             far_kind: "incident".into(),
             outgoing: false,
         }],
+        sums: Vec::new(),
     };
     let incident_schema = SchemaDescriptor {
         kind: "incident".into(),
@@ -561,6 +638,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
             far_kind: "component".into(),
             outgoing: true,
         }],
+        sums: Vec::new(),
     };
     BatchIngest::run(
         &mut store,

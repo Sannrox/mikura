@@ -346,7 +346,11 @@ impl Store {
             record.gen = 1;
         }
         self.writer.append_record(&record)?;
+        let schema_kind = (record.kind == SCHEMA_KIND).then(|| record.key.clone());
         self.apply_record(record);
+        if let Some(kind) = schema_kind {
+            self.refresh_leaf_measures(&kind)?;
+        }
         if let Some((kind, key)) = overlay_target {
             if self.overlay(&kind, &key)?.is_some() {
                 let mut hide = OverlayPatch {
@@ -424,9 +428,38 @@ impl Store {
         self.joins = JoinMaps::default();
         self.dirty.clear();
         for record in read_records(&self.log)? {
+            let schema_kind = (record.kind == SCHEMA_KIND).then(|| record.key.clone());
             self.apply_record(record);
+            if let Some(kind) = schema_kind {
+                self.refresh_leaf_measures(&kind)?;
+            }
         }
         self.dirty.clear();
+        Ok(())
+    }
+
+    fn refresh_leaf_measures(&mut self, kind: &str) -> Result<(), String> {
+        match self.schema(kind)? {
+            Some(schema) => self.joins.set_declared_sums(&schema.kind, &schema.sums),
+            None => self.joins.clear_declared_sums(kind),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn adopt_declared_measures(&mut self) -> Result<(), String> {
+        let mut kinds: Vec<String> = self
+            .identity
+            .iter()
+            .filter(|((kind, _), meta)| kind == SCHEMA_KIND && !meta.hidden)
+            .map(|((_, key), _)| key.clone())
+            .collect();
+        kinds.sort();
+        for kind in kinds {
+            match self.schema(&kind)? {
+                Some(schema) => self.joins.adopt_declared_sums(&schema.kind, &schema.sums),
+                None => self.joins.clear_declared_sums(&kind),
+            }
+        }
         Ok(())
     }
 }

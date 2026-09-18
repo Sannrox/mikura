@@ -3,6 +3,7 @@ mod delta;
 mod helpers;
 mod hops;
 mod load;
+mod measures;
 mod overlay;
 mod persist;
 mod schema;

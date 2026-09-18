@@ -1,8 +1,9 @@
 //! Clerk-supplied kind, property, and link rules (ADR 0008).
 //!
 //! Descriptors persist as ordinary objects of kind [`SCHEMA_KIND`] with key
-//! equal to the described kind. Values stay UTF-8 strings. A store with no
-//! visible schema row for a kind accepts unvalidated string records.
+//! equal to the described kind. Values stay UTF-8 strings. Optional [`SCHEMA_SUMS`]
+//! names last-hop measure properties. A store with no visible schema row for
+//! a kind accepts unvalidated string records.
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,6 +20,9 @@ pub const SCHEMA_REQUIRED: &str = "required";
 
 /// Comma-separated `name:far_kind:out|in:0..1` link rules. Absent means none.
 pub const SCHEMA_LINKS: &str = "links";
+
+/// Comma-separated property names that are last-hop sum measures. Absent means none.
+pub const SCHEMA_SUMS: &str = "sums";
 
 const LINK_CARDINALITY: &str = "0..1";
 
@@ -40,6 +44,7 @@ pub struct SchemaDescriptor {
     pub properties: Vec<String>,
     pub required: Vec<String>,
     pub links: Vec<SchemaLink>,
+    pub sums: Vec<String>,
 }
 
 impl SchemaDescriptor {
@@ -56,10 +61,15 @@ impl SchemaDescriptor {
             properties: required_csv(record, SCHEMA_PROPERTIES)?,
             required: optional_csv(record, SCHEMA_REQUIRED)?,
             links: parse_links(optional_csv(record, SCHEMA_LINKS)?)?,
+            sums: optional_csv(record, SCHEMA_SUMS)?,
         };
         descriptor.check()?;
         for name in record.props.keys() {
-            if name != SCHEMA_PROPERTIES && name != SCHEMA_REQUIRED && name != SCHEMA_LINKS {
+            if name != SCHEMA_PROPERTIES
+                && name != SCHEMA_REQUIRED
+                && name != SCHEMA_LINKS
+                && name != SCHEMA_SUMS
+            {
                 return Err(format!("unknown schema property {name}"));
             }
         }
@@ -84,6 +94,9 @@ impl SchemaDescriptor {
             let mut encoded: Vec<String> = self.links.iter().map(encode_link).collect();
             encoded.sort();
             props.insert(SCHEMA_LINKS.to_string(), encoded.join(","));
+        }
+        if !self.sums.is_empty() {
+            props.insert(SCHEMA_SUMS.to_string(), join_csv(&sorted(&self.sums)));
         }
         Ok(ObjectRecord {
             gen: 0,
@@ -168,6 +181,16 @@ impl SchemaDescriptor {
                     "outgoing link {} is not a declared property",
                     link.name
                 ));
+            }
+        }
+        let mut sums = HashSet::new();
+        for name in &self.sums {
+            token(name, "sum")?;
+            if !properties.contains(name.as_str()) {
+                return Err(format!("sum property {name} is not declared"));
+            }
+            if !sums.insert(name.as_str()) {
+                return Err(format!("duplicate sum property {name}"));
             }
         }
         Ok(())
@@ -273,6 +296,7 @@ mod tests {
                 far_kind: "component".into(),
                 outgoing: true,
             }],
+            sums: Vec::new(),
         }
     }
 
@@ -339,5 +363,30 @@ mod tests {
         record.props.insert("note".into(), "x".into());
         let err = SchemaDescriptor::from_record(&record).unwrap_err();
         assert!(err.contains("unknown schema property"), "{err}");
+    }
+
+    #[test]
+    fn sums_roundtrip_and_historical_rows_load() {
+        let mut schema = descriptor();
+        schema.properties = vec!["affects".into(), "amount".into(), "name".into()];
+        schema.sums = vec!["amount".into()];
+        let record = schema.to_record().unwrap();
+        assert_eq!(
+            record.props.get(SCHEMA_SUMS).map(String::as_str),
+            Some("amount")
+        );
+        assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
+
+        let mut historical = descriptor().to_record().unwrap();
+        historical.props.remove(SCHEMA_SUMS);
+        let loaded = SchemaDescriptor::from_record(&historical).unwrap();
+        assert!(loaded.sums.is_empty());
+
+        schema.sums = vec!["missing".into()];
+        let err = schema.to_record().unwrap_err();
+        assert!(
+            err.contains("sum property missing is not declared"),
+            "{err}"
+        );
     }
 }

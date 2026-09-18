@@ -20,6 +20,13 @@ window.
 
 ### Added
 
+- Schema-named last-hop sums persist as parent `(count, sum)` rollups on
+  `MKJOIN04` / `MKJOIN4D`. Evaluate of a declared `(sum_kind, sum_property)`
+  reads those columns. Undeclared pairs keep the leaf walk. Old `MKJOIN03`
+  sidecars fail closed until deleted; rebuild from the log recovers.
+  Dual-read holds. Public evaluate request shape is unchanged
+  ([#151](https://github.com/Sannrox/mikura/issues/151),
+  [ADR 0010](docs/decisions/0010-last-hop-measures.md)).
 - [ADR 0010](docs/decisions/0010-last-hop-measures.md): last-hop count
   and sum for a schema-named leaf property persist as parent rollups on
   the deletable sidecar. Evaluate still leaf-walks undeclared sums. No

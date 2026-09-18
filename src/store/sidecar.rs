@@ -83,6 +83,7 @@ impl Store {
             let action_intern = meta.action_id.unwrap_or(ACTION_NONE);
             body.extend_from_slice(&action_intern.to_le_bytes());
         }
+        self.joins.write_measures(&mut body)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
@@ -215,6 +216,7 @@ impl Store {
                 joins.insert_visible_ids(kind_id, key_id, owned)?;
             }
         }
+        joins.read_measures(&mut cur)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
@@ -264,7 +266,11 @@ impl Store {
             } else {
                 Some(self.joins.intern(&row.action))
             };
+            let schema_kind = (row.kind == crate::schema::SCHEMA_KIND).then(|| row.key.clone());
             self.install_live(row.kind, row.key, row.gen, row.hidden, action_id, row.props);
+            if let Some(kind) = schema_kind {
+                self.refresh_leaf_measures(&kind)?;
+            }
         }
         Ok(pages)
     }
@@ -276,12 +282,12 @@ impl Store {
         if sidecar.exists() {
             let loaded = Self::load_checkpoint(&sidecar)?;
             if loaded.pages == pages && !delta.exists() {
-                self.adopt_checkpoint(loaded);
+                self.adopt_checkpoint(loaded)?;
                 return Ok(());
             }
             if loaded.pages <= pages {
                 let loaded_pages = loaded.pages;
-                self.adopt_checkpoint(loaded);
+                self.adopt_checkpoint(loaded)?;
                 if delta.exists() {
                     let delta_pages = self.apply_delta(&delta)?;
                     if delta_pages == pages {
@@ -299,11 +305,12 @@ impl Store {
         self.persist_projection()
     }
 
-    fn adopt_checkpoint(&mut self, loaded: Checkpoint) {
+    fn adopt_checkpoint(&mut self, loaded: Checkpoint) -> Result<(), String> {
         self.joins = loaded.joins;
         self.identity = loaded.identity;
         self.hidden_props = loaded.hidden_props;
         self.has_checkpoint = true;
+        self.adopt_declared_measures()
     }
 }
 

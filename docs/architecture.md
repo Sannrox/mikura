@@ -38,7 +38,9 @@ Records may store an optional Action id. They do not store a principal.
 Schema descriptors persist as ordinary objects of kind `mikura.schema`
 with key equal to the described kind. The descriptor body uses string
 properties `properties` (comma-separated closed set), optional `required`,
-and optional `links` (`name:far_kind:out|in:0..1`). Consumer kinds must
+optional `links` (`name:far_kind:out|in:0..1`), and optional `sums`
+(comma-separated property names already in `properties`). Historical
+descriptors without `sums` still load. Consumer kinds must
 not use `mikura.schema`. A visible descriptor validates later visible
 writes of that kind and `Store::load_with_schema`. `Store::load` still
 returns historical rows that predate the descriptor. Hidden instance
@@ -96,7 +98,7 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
 - slim identity `(kind, key) → (gen, hidden, action_id)` — enough to bump generation and answer provenance
 - `hidden_props` — payloads for hidden identities (not hop-indexed)
-- `joins: JoinMaps` — interned property pairs, packed join-child lists, and hop/sum indexes ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md))
+- `joins: JoinMaps` — interned property pairs, packed join-child lists, hop/sum indexes, and schema-named last-hop parent rollups ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0010](decisions/0010-last-hop-measures.md))
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
@@ -112,9 +114,11 @@ properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
-Checksum mismatch, truncation, or bad magic (current `MKJOIN03` /
-`MKJOIN3D`; old `MKJOIN01` and `MKJOIN02` included) fails closed;
-deleting the sidecar recovers from the log.
+Checksum mismatch, truncation, or bad magic (current `MKJOIN04` /
+`MKJOIN4D`; old `MKJOIN01`, `MKJOIN02`, and `MKJOIN03` included) fails
+closed; deleting the sidecar recovers from the log. Schema-named last-hop
+sums persist on that sidecar as parent → `(count, sum)` rollups
+([ADR 0010](decisions/0010-last-hop-measures.md)).
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. A successful delta persist clears
@@ -177,7 +181,13 @@ uncommitted tail; rebuild reads only committed pages.
    visible `far_kind` key), keeping `(root, identity)` only for the
    current frontier.
 4. The last hop folds the linked set in place: it does not store a
-   `(root, leaf)` tuple per path.
+   `(root, leaf)` tuple per path. When `(sum_kind, sum_property)` is a
+   schema-named sum on that last hop's `far_kind` and the hop is the
+   default (child points at parent), evaluate reads the parent rollup
+   columns instead of hashing every leaf. Undeclared pairs keep the
+   leaf walk ([#59](https://github.com/Sannrox/mikura/issues/59)).
+   Hidden rows are absent from measures; overlay or hide of a leaf or
+   parent updates the affected parent rollups.
 5. Count distinct roots that still have a path (`EvaluateResponse.two_hop_count`
    — the field name is historical; hop count is `request.hops.len()`).
 6. Sum `sum_property` on leaves whose kind is `sum_kind`, once per path
@@ -200,9 +210,10 @@ interned `amounts` map (values that parse as `i64`). Min/max could walk that
 map without a sidecar layout change; they stay out until a consumer names
 one with a fixture. Group-by would be a new evaluate response (buckets, not
 two scalars) and stays out with query languages. Last-hop count and sum for
-a schema-named leaf property are accepted as rebuildable sidecar columns
-([ADR 0010](decisions/0010-last-hop-measures.md)); evaluate still leaf-walks
-until [#151](https://github.com/Sannrox/mikura/issues/151) persists them.
+a schema-named leaf property persist as parent rollups on `MKJOIN04`
+([ADR 0010](decisions/0010-last-hop-measures.md),
+[#151](https://github.com/Sannrox/mikura/issues/151)). Zero-hop evaluate
+is unchanged. Public `EvaluateRequest` shape is unchanged.
 
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 

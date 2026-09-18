@@ -20,8 +20,8 @@ Build an evidence-backed impact map before implementation or review.
    - Fail-closed ACL: load omits denied properties; evaluate of a denied
      `(sum_kind, sum_property)` returns `AclError::Denied`;
    - Independence: this crate must not depend on a control plane;
-   - On-disk `MIKURAV1` / `MKJOIN03` checkpoint + `MKJOIN3D` delta versus
-     in-memory maps. Old `MKJOIN01` / `MKJOIN02` fail closed;
+   - On-disk `MIKURAV1` / `MKJOIN04` checkpoint + `MKJOIN4D` delta versus
+     in-memory maps. Old `MKJOIN01` / `MKJOIN02` / `MKJOIN03` fail closed;
    - In-process library versus loopback host (`mikura-host`, ADR 0003).
      Non-loopback bind requires a clerk bearer; tokens are not principals.
    Complete when each applicable boundary has an owner and expected invariant.

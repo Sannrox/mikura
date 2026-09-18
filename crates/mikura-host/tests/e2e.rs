@@ -735,6 +735,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
                 far_kind: "incident".into(),
                 outgoing: false,
             }],
+            sums: Vec::new(),
         }
         .to_record()
         .unwrap(),
@@ -747,6 +748,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
                 far_kind: "component".into(),
                 outgoing: true,
             }],
+            sums: Vec::new(),
         }
         .to_record()
         .unwrap(),

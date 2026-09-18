@@ -248,6 +248,19 @@ fn old_join_sidecar_magic_fails_closed() {
         err02.contains("magic") || err02.contains("checksum"),
         "{err02}"
     );
+    bytes[..8].copy_from_slice(b"MKJOIN03");
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&bytes[..crc_at]);
+    bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
+    std::fs::write(&sidecar, &bytes).unwrap();
+    let err03 = match Store::open(&log) {
+        Err(err) => err,
+        Ok(_) => panic!("MKJOIN03 should fail closed"),
+    };
+    assert!(
+        err03.contains("magic") || err03.contains("checksum"),
+        "{err03}"
+    );
     std::fs::remove_file(&sidecar).unwrap();
     let recovered = Store::open(&log).unwrap();
     assert!(recovered.joins().is_visible("Customer", "c1"));
