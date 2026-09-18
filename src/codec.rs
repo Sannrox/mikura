@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 pub(crate) fn write_str(body: &mut Vec<u8>, value: &str) -> Result<(), String> {
     let len = u16::try_from(value.len()).map_err(|_| "string too long".to_string())?;
     body.extend_from_slice(&len.to_le_bytes());
@@ -30,4 +32,27 @@ pub(crate) fn take<'a, const N: usize>(cur: &mut &'a [u8]) -> Result<&'a [u8], S
     let (head, rest) = cur.split_at(N);
     *cur = rest;
     Ok(head)
+}
+
+pub(crate) fn split_unique_csv(
+    raw: &str,
+    empty_entry: &str,
+    duplicate: impl Fn(&str) -> String,
+) -> Result<Vec<String>, String> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for part in raw.split(',') {
+        let token = part.trim();
+        if token.is_empty() {
+            return Err(empty_entry.into());
+        }
+        if !seen.insert(token) {
+            return Err(duplicate(token));
+        }
+        out.push(token.to_string());
+    }
+    Ok(out)
 }

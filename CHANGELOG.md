@@ -7,8 +7,23 @@ window.
 
 ## [Unreleased]
 
+### Changed
+
+- Shared live-row install, sidecar CRC, CSV split, and host deny/bearer
+  helpers. Crate tests live under `src/crate_tests/`. Docs match
+  `MKJOIN03`, overlay, bounded listing, and clerk bearer.
+
+- Host `RequestTimeout` is the request-line wall-clock.
+  `RequestBound` is the byte bound. After a complete line is accepted,
+  evaluate and ingest run to completion on this one-process host
+  ([#141](https://github.com/Sannrox/mikura/issues/141)).
+
 ### Added
 
+- Spike 011 remasure: 10⁸ ingest completes after bounded join persist
+  (~2.8 h, 100 × 1 M chunks). 10⁸ query/open were not reached. 10⁷
+  query still misses 500 ms
+  ([#137](https://github.com/Sannrox/mikura/issues/137)).
 - After a successful join dirty-set persist, that set is no longer
   outstanding. Later ingest chunks append only the new dirty rows instead
   of accumulating dirty until every commit rewrites the checkpoint.
@@ -26,9 +41,10 @@ window.
   host on the copy answers the product-loop load, list, hop, and overlay.
   Deleting the copied sidecar still rebuilds from the log. No backup RPC
   ([#126](https://github.com/Sannrox/mikura/issues/126)).
-- Host request admission: a JSON line over `--request-bound` or a socket
-  past `--request-timeout-ms` fails closed. A client disconnect does not
-  stop the listener
+- Host request admission: a JSON line over `--request-bound` fails
+  closed with `RequestBound`. Assembling the request line past
+  `--request-timeout-ms` fails closed with `RequestTimeout`. A client
+  disconnect does not stop the listener
   ([#125](https://github.com/Sannrox/mikura/issues/125)).
 - M4 hosted-pilot contract: one process, JSON `v=1`, deny-closed access,
   overload, backup/restore of the log, graceful shutdown, and reopen
@@ -108,6 +124,15 @@ window.
 
 ### Fixed
 
+- After `RequestBound`, leftover-input discard stops at the request
+  wall-clock deadline instead of resetting idle timeout on every chunk
+  ([#140](https://github.com/Sannrox/mikura/issues/140)).
+- Host request-line timeout is a wall-clock budget from accept, not an
+  idle gap between bytes. A drip still fails closed with `RequestTimeout`
+  ([#139](https://github.com/Sannrox/mikura/issues/139)).
+- Host request-line read uses a bounded buffer and a slab, and refuses
+  before a byte would pass `--request-bound`
+  ([#138](https://github.com/Sannrox/mikura/issues/138)).
 - Source ingest no longer writes an empty `MIKURAV1` Action-id trailer.
   Bodies without an id match the historical shape, so a v0.1.0 decoder
   that rejects trailing bytes can dual-read those logs. Provenance-bearing

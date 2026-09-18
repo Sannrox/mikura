@@ -1,5 +1,7 @@
 use mikura::{ObjectRecord, Store};
 
+use crate::common::intern_token_budget;
+
 pub struct StreamIngest {
     bound: usize,
     uncommitted: usize,
@@ -34,7 +36,7 @@ impl StreamIngest {
                 self.bound
             ));
         }
-        store.reserve_intern(2 + record.props.len().saturating_mul(2));
+        store.reserve_intern(intern_token_budget(&record));
         store.append_uncommitted(record)?;
         self.uncommitted += 1;
         Ok(())

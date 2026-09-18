@@ -10,6 +10,7 @@
 *.mikura.joins
 *.joins.delta
 *.joins.tmp
+*.mikura.tmp
 *.swp
 .env
 .env.*

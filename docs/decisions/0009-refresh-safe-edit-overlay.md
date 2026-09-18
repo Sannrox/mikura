@@ -116,11 +116,13 @@ existing record body, as schema rows do.
 
 - Public instance records stay `(kind, key, string props, hidden, optional Action id, gen)`.
 - Kind `mikura.overlay` is reserved, next to `mikura.schema`.
-- Today's `MergeIngest` whole-record replace and `ingest_batch` refresh
-  remain until the follow-up implements the merge.
-- Implementation is one follow-up feature: persist `mikura.overlay`
-  rows, merge on source ingest and load, fail closed on expected-generation
-  mismatch. Do not open M4, listing, or a second delete format from this ADR.
+- `apply_action` stays whole-record replace. Source ingest of a visible
+  identity with a visible overlay merges: source props, drop `cleared`,
+  then overlay values.
+- Implementation landed in [#119](https://github.com/Sannrox/mikura/issues/119)
+  (`Store::apply_overlay`, merge in `Store::append_uncommitted`). Remaining
+  open items are idempotency-key scope and multi-object transactions.
+  Do not open M4, listing, or a second delete format from this ADR.
 - Remaining M2 query work (sort, cursors, composed filters) is independent
   and waits for a fixture that names them
   ([#122](https://github.com/Sannrox/mikura/issues/122)).

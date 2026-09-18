@@ -4,8 +4,8 @@
 objects, not SQL tables or search hits. The object log is the store of
 record. Indexes are projections you can delete and rebuild.
 
-v1 is an in-process Rust library. A hosted service is the destination, not
-the current crate.
+v1 is an in-process Rust library plus a one-process host. Multi-process
+hosting is later.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
@@ -16,12 +16,13 @@ and for contributing to the kernel. Not a production hosted store.
 
 | Implemented | Not implemented |
 | --- | --- |
-| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Non-loopback / authenticated host |
-| Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Principal-aware ACL on the wire |
-| Loopback ingest/evaluate host ([ADR 0003](docs/decisions/0003-hosted-service.md)) | |
-| Object-set hop / count / sum from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Cluster compute |
+| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Principal-aware ACL on the wire |
+| Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Cluster compute |
+| Loopback ingest/evaluate host; non-loopback bind with clerk bearer ([ADR 0003](docs/decisions/0003-hosted-service.md), [ADR 0007](docs/decisions/0007-host-bearer.md)) | Multi-process hosting |
+| Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Non-string scalars |
 | Property deny-list (fail closed) | |
-| Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | Non-string scalars; listing matching objects |
+| Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |
+| Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) | |
 
 Spikes 001–011 are throwaway evidence under [`spikes/`](spikes/README.md).
 

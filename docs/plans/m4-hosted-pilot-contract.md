@@ -44,7 +44,7 @@ gRPC stays ask-first.
 | Bearer equality, not a principal | `process_non_loopback_bearer_accepts_matching_token` |
 | Wire `v` omit or `1`; other `v` fails closed | `process_rejects_unknown_wire_v_and_accepts_omit_or_one` |
 | Same-binary reopen | `Host::open` / `Store::open` after process exit |
-| Bound request work; disconnect fail closed | `process_oversize_request_fails_closed`, `process_disconnect_then_next_request_serves` |
+| Request-line admission; disconnect fail closed | `process_oversize_request_fails_closed`, `process_disconnect_then_next_request_serves`. `RequestBound` is the byte bound. `RequestTimeout` is the request-line wall-clock. After a complete line is accepted, evaluate and ingest run to completion on this one-process host |
 | Backup and restore | `process_backup_restore_product_loop`: copy the log and optional `{log}.joins`, then `Host::open` on the copy. Dual-read deletes the copied sidecar. Corrupt committed pages and sidecar checksum mismatch stay fail-closed (`missing_committed_page_fails_closed`, `sidecar_checksum_and_bad_magic_fail_closed`) |
 | Shutdown and upgrade | `process_product_loop_survives_shutdown_and_reopen`: close stdin, start a current host on the same files, same load/list/hop/overlay. `process_uncommitted_stream_push_invisible_after_reopen` proves stop does not promote an uncommitted tail. Envelope mismatch stays `process_rejects_unknown_wire_v_and_accepts_omit_or_one`. No `MIKURAV1` change |
 
@@ -75,6 +75,7 @@ Ops already on the wire: `ingest_batch`, `ingest_stream_push`,
   ([#124](https://github.com/Sannrox/mikura/issues/124))
 - M5 operators, subscriptions, encryption, tenants
 - Metrics dashboards, generated SDKs, gRPC
+- Post-accept evaluate/ingest deadline; admission is the request line
 
 ## Follow-up
 

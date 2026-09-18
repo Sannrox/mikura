@@ -57,11 +57,12 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M3 overlay | Persist `mikura.overlay`, merge on source ingest, stale generation fails closed ([#119](https://github.com/Sannrox/mikura/issues/119)). |
 | M3 commit visibility | Read-after-write on committed host ops plus reopen is enough. No public commit-position waiter; source offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)). |
 | M4 contract | Pilot is this one-process host: JSON `v=1`, deny-closed, overload, backup/restore, shutdown, binary replace + reopen ([#121](https://github.com/Sannrox/mikura/issues/121), [m4-hosted-pilot-contract.md](docs/plans/m4-hosted-pilot-contract.md)). |
-| M4 overload | Host request-byte bound and socket timeout fail closed; disconnect does not stop the listener ([#125](https://github.com/Sannrox/mikura/issues/125)). |
+| M4 overload | Host request-byte bound and request-line wall-clock fail closed; after a complete line, evaluate and ingest run to completion; disconnect does not stop the listener ([#125](https://github.com/Sannrox/mikura/issues/125), [#141](https://github.com/Sannrox/mikura/issues/141)). |
 | M4 backup | Copy the object log plus optional `{log}.joins`; a fresh host on the copy answers load, list, hop, and overlay. Delete the sidecar; rebuild from the log. Corrupt pages stay fail-closed ([#126](https://github.com/Sannrox/mikura/issues/126)). |
 | M4 shutdown | Closing stdin stops the listener without promoting uncommitted stream pages. A replacement process on the same files answers product-loop load, list, hop, and overlay. Wire `v` other than omit/`1` stays fail-closed ([#127](https://github.com/Sannrox/mikura/issues/127)). |
 | 10⁸ ingest diagnosis | Unfinished 10⁸ ingest is join persist growing with identity, not log fsync and not OOM. 10⁹ stays blocked ([#124](https://github.com/Sannrox/mikura/issues/124)). |
 | join persist bound | After a dirty-set persist, those rows are no longer outstanding; later ingest chunks write a delta instead of accumulating into a checkpoint rewrite ([#134](https://github.com/Sannrox/mikura/issues/134)). |
+| 10⁸ ingest remasure | After #134, 10⁸ ingest finishes (~2.8 h, 100 × 1 M chunks, peak 7.9 GiB). 10⁸ query/open were not reached. 10⁷ query still misses 500 ms ([#137](https://github.com/Sannrox/mikura/issues/137)). |
 
 ## Next (this repository, in order)
 
@@ -77,10 +78,10 @@ or published Issues.
 
 Scale and the log remain gated research:
 
-1. 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Wait until 10⁸ ingest completes. A miss is not an engine pick.
+1. 10⁹ hop count and sum ([#54](https://github.com/Sannrox/mikura/issues/54)), then 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). 10⁸ ingest completed ([#137](https://github.com/Sannrox/mikura/issues/137)). A miss is not an engine pick.
 
-Measure the application's workload first. Diagnose the unfinished 10⁸ run
-before larger envelopes; they do not block defining and delivering the pilot.
+Measure the application's workload first. They do not block defining and
+delivering the pilot.
 
 Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. Sort, composed filters, and snapshot-bound cursors wait the same way ([#122](https://github.com/Sannrox/mikura/issues/122)).
 

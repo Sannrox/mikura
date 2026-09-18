@@ -86,40 +86,80 @@ impl Store {
         Ok(store)
     }
 
+    fn install_live(
+        &mut self,
+        kind: String,
+        key: String,
+        gen: u64,
+        hidden: bool,
+        action_id: Option<u32>,
+        props: HashMap<String, String>,
+    ) {
+        self.joins.remove(&kind, &key);
+        self.joins.intern(&kind);
+        self.joins.intern(&key);
+        let id = (kind.clone(), key.clone());
+        self.identity.insert(
+            id.clone(),
+            LiveMeta {
+                gen,
+                hidden,
+                action_id,
+            },
+        );
+        if hidden {
+            for (name, value) in &props {
+                self.joins.intern(name);
+                self.joins.intern(value);
+            }
+            self.hidden_props.insert(id, props);
+        } else {
+            self.hidden_props.remove(&id);
+            self.joins.index(&kind, &key, false, props);
+        }
+    }
+
     fn apply_record(&mut self, record: ObjectRecord) {
         let id = (record.kind.clone(), record.key.clone());
-        self.joins.remove(&record.kind, &record.key);
-        self.joins.intern(&record.kind);
-        self.joins.intern(&record.key);
         let action_id = record
             .action_id
             .as_deref()
             .filter(|id| !id.is_empty())
             .map(|id| self.joins.intern(id));
-        self.identity.insert(
-            id.clone(),
-            LiveMeta {
-                gen: record.gen,
-                hidden: record.hidden,
-                action_id,
-            },
-        );
-        if record.hidden {
-            for (name, value) in &record.props {
-                self.joins.intern(name);
-                self.joins.intern(value);
-            }
-            self.hidden_props.insert(id.clone(), record.props.clone());
-        } else {
-            self.hidden_props.remove(&id);
-        }
-        self.joins.index(
-            &record.kind,
-            &record.key,
+        self.install_live(
+            record.kind,
+            record.key,
+            record.gen,
             record.hidden,
-            record.props.clone(),
+            action_id,
+            record.props,
         );
         self.dirty.insert(id);
+    }
+
+    fn require_action_id(id: &str, empty: &'static str) -> Result<(), String> {
+        if id.is_empty() {
+            Err(empty.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn load_reserved<T>(
+        &self,
+        kind: &str,
+        key: &str,
+        decode: fn(&ObjectRecord) -> Result<T, String>,
+    ) -> Result<Option<T>, String> {
+        let id = (kind.to_string(), key.to_string());
+        let Some(meta) = self.identity.get(&id) else {
+            return Ok(None);
+        };
+        if meta.hidden {
+            return Ok(None);
+        }
+        let record = self.load(kind, key, &PropertyAcl::allow_all())?;
+        decode(&record).map(Some)
     }
 
     /// Live object for `(kind, key)` after ingest or [`Store::open`].
@@ -160,29 +200,16 @@ impl Store {
 
     /// Last visible `mikura.schema` row for `kind`, or `None` when absent or hidden.
     pub fn schema(&self, kind: &str) -> Result<Option<SchemaDescriptor>, String> {
-        let id = (SCHEMA_KIND.to_string(), kind.to_string());
-        let Some(meta) = self.identity.get(&id) else {
-            return Ok(None);
-        };
-        if meta.hidden {
-            return Ok(None);
-        }
-        let record = self.load(SCHEMA_KIND, kind, &PropertyAcl::allow_all())?;
-        SchemaDescriptor::from_record(&record).map(Some)
+        self.load_reserved(SCHEMA_KIND, kind, SchemaDescriptor::from_record)
     }
 
     /// Last visible `mikura.overlay` row for `(kind, key)`, or `None` when absent or hidden.
     pub fn overlay(&self, kind: &str, key: &str) -> Result<Option<OverlayPatch>, String> {
-        let overlay_key = OverlayPatch::identity_key(kind, key);
-        let id = (OVERLAY_KIND.to_string(), overlay_key.clone());
-        let Some(meta) = self.identity.get(&id) else {
-            return Ok(None);
-        };
-        if meta.hidden {
-            return Ok(None);
-        }
-        let record = self.load(OVERLAY_KIND, &overlay_key, &PropertyAcl::allow_all())?;
-        OverlayPatch::from_record(&record).map(Some)
+        self.load_reserved(
+            OVERLAY_KIND,
+            &OverlayPatch::identity_key(kind, key),
+            OverlayPatch::from_record,
+        )
     }
 
     /// Admit a property overlay and rematerialize a visible instance.
@@ -196,9 +223,7 @@ impl Store {
         action_id: String,
         expected_gen: Option<u64>,
     ) -> Result<(), String> {
-        if action_id.is_empty() {
-            return Err("action id required".into());
-        }
+        Self::require_action_id(&action_id, "action id required")?;
         let id = (patch.kind.clone(), patch.key.clone());
         if let Some(expected) = expected_gen {
             match self.identity.get(&id) {
@@ -268,8 +293,8 @@ impl Store {
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
     pub fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
-        if matches!(record.action_id.as_deref(), Some("")) {
-            return Err("empty action id".into());
+        if let Some(id) = record.action_id.as_deref() {
+            Self::require_action_id(id, "empty action id")?;
         }
         if record.kind == SCHEMA_KIND {
             SchemaDescriptor::from_record(&record)?;
@@ -336,9 +361,7 @@ impl Store {
     }
 
     pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
-        if action.id.is_empty() {
-            return Err("action id required".into());
-        }
+        Self::require_action_id(&action.id, "action id required")?;
         self.append(ObjectRecord {
             gen: 0,
             kind: action.kind,

@@ -17,7 +17,7 @@ a first consumer; `publish = false` until crates.io is authorized
 ([#57](https://github.com/Sannrox/mikura/issues/57)). A control plane maps
 datasets and admitted edits to `ObjectRecord`s; it does not live in this
 repository. The destination object-set is filter, load, hop, and aggregate;
-today evaluate is hop + count/sum.
+today evaluate is hop + count/sum + optional bounded objects.
 
 ## Object model
 
@@ -112,8 +112,9 @@ properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
-Checksum mismatch, truncation, or bad magic (`MKJOIN01` and `MKJOIN02`
-included) fails closed; deleting the sidecar recovers from the log.
+Checksum mismatch, truncation, or bad magic (current `MKJOIN03` /
+`MKJOIN3D`; old `MKJOIN01` and `MKJOIN02` included) fails closed;
+deleting the sidecar recovers from the log.
 
 After the first checkpoint, a dirty commit writes `{log}.joins.delta`
 instead of rewriting the whole sidecar. A successful delta persist clears
@@ -262,10 +263,15 @@ must carry a matching `token`. Non-loopback bind still requires `--bearer`.
 also refuses a non-loopback listener unless `require_bearer` has been
 called. `open` plus `handle` without a stored bearer stays the in-process
 clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
-A JSON line larger than `--request-bound` (default 1 MiB) or a socket that
-exceeds `--request-timeout-ms` (default 5 s) fails closed with
-`RequestBound` / `RequestTimeout`. One disconnect does not stop the
-listener. No tenants, policy compile, receipts, or principals.
+A JSON line larger than `--request-bound` (default 1 MiB) fails closed
+with `RequestBound`. Assembling that line is a wall-clock budget of
+`--request-timeout-ms` (default 5 s), not an idle gap between bytes;
+overtime is `RequestTimeout`. After a complete line is accepted,
+evaluate and ingest run to completion; this one-process host has no
+post-accept work deadline. Leftover-input discard after a bound or
+timeout reply uses the same wall-clock deadline, not a fresh idle
+timeout per chunk. One disconnect does not stop the listener. No
+tenants, policy compile, receipts, or principals.
 
 Backup is a file copy of the object log plus the optional `{log}.joins`
 sidecar. Copy those files next to a fresh `Host::open`. There is no backup

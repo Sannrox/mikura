@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
@@ -411,6 +411,127 @@ fn loopback_tcp_roundtrip() {
     assert_eq!(evaluate.two_hop_count, 1);
     assert_eq!(evaluate.sum_amount, 10);
     handle.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn drip_bytes_hit_wall_clock_timeout() {
+    let (dir, log) = temp_log("drip-timeout");
+    let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let mut host = Host::open(&log, 4).unwrap();
+        host.set_request_limits(1024, Duration::from_millis(200))
+            .unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let _ = host.serve_one(stream);
+    });
+    let mut client = TcpStream::connect(addr).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut reader = client.try_clone().unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let started = Instant::now();
+    let reader_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = reader.read_to_string(&mut buf);
+        (buf, Instant::now())
+    });
+    // Gaps stay under the configured wall-clock budget (200 ms) so only
+    // that deadline can abort. Ignore later write errors after the host FINs.
+    for _ in 0..8 {
+        if client.write_all(b"x").is_err() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    let (buf, finished) = reader_handle.join().unwrap();
+    let elapsed = finished.saturating_duration_since(started);
+    handle.join().unwrap();
+    assert!(
+        buf.contains("RequestTimeout"),
+        "{buf:?} elapsed={elapsed:?}"
+    );
+    // An idle-between-bytes timer would wait ~8×80 ms plus another idle gap.
+    assert!(
+        elapsed < Duration::from_millis(750),
+        "wall deadline should abort drip, elapsed={elapsed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn post_bound_discard_obeys_wall_clock_deadline() {
+    let (dir, log) = temp_log("discard-deadline");
+    let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let mut host = Host::open(&log, 4).unwrap();
+        host.set_request_limits(64, Duration::from_millis(200))
+            .unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        let _ = host.serve_one(stream);
+        let discard_elapsed = started.elapsed();
+        let (stream, _) = listener.accept().unwrap();
+        let _ = host.serve_one(stream);
+        discard_elapsed
+    });
+    let client = TcpStream::connect(addr).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(Duration::from_millis(400)))
+        .unwrap();
+    let mut reader = client.try_clone().unwrap();
+    reader
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let reader_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = reader.read_to_string(&mut buf);
+        buf
+    });
+    let mut writer = client.try_clone().unwrap();
+    writer
+        .set_write_timeout(Some(Duration::from_millis(400)))
+        .unwrap();
+    let flood = std::thread::spawn(move || {
+        let chunk = [b'x'; 1024];
+        let until = Instant::now() + Duration::from_millis(800);
+        while Instant::now() < until {
+            if writer.write_all(&chunk).is_err() {
+                break;
+            }
+        }
+    });
+    let buf = reader_handle.join().unwrap();
+    assert!(buf.contains("RequestBound"), "{buf:?}");
+    let mut next = TcpStream::connect(addr).unwrap();
+    next.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    next.set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    next.write_all(br#"{"op":"ingest_batch","records":[]}"#)
+        .unwrap();
+    next.write_all(b"\n").unwrap();
+    let mut next_buf = String::new();
+    next.read_to_string(&mut next_buf).unwrap();
+    let elapsed = handle.join().unwrap();
+    let _ = flood.join();
+    let response: HostResponse = serde_json::from_str(next_buf.trim()).unwrap();
+    assert!(response.ok, "{response:?}");
+    // A per-chunk idle reset would stay in discard for the 800 ms flood.
+    assert!(
+        elapsed < Duration::from_millis(750),
+        "discard should stop at wall deadline, elapsed={elapsed:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

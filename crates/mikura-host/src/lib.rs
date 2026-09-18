@@ -1,7 +1,7 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `Evaluate`, `Load`). JSON lines are
+//! `IngestStreamFlush`, `ApplyAction`, `ApplyOverlay`, `Evaluate`, `Load`). JSON lines are
 //! envelope `{ v, token?, op, … }` (`v` omitted or `1`). Loopback bind is
 //! unauthenticated until `require_bearer` is called. Non-loopback bind
 //! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
@@ -98,7 +98,7 @@ pub enum HostRequest {
 pub const WIRE_V: u32 = 1;
 /// Default max JSON-line bytes for one RPC. Oversized lines fail closed.
 pub const DEFAULT_REQUEST_BOUND: usize = 1 << 20;
-/// Default socket read/write budget for one RPC.
+/// Default request-line wall-clock for assembling one JSON line.
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,8 +153,10 @@ impl Host {
         })
     }
 
-    /// Fail closed when a JSON line exceeds `bound` bytes or a socket
-    /// exceeds `timeout`. Bound must be greater than zero.
+    /// Fail closed when a JSON line exceeds `bound` bytes or assembling
+    /// that line exceeds `timeout`. Bound must be greater than zero.
+    /// After a complete line is accepted, evaluate and ingest run to
+    /// completion.
     pub fn set_request_limits(&mut self, bound: usize, timeout: Duration) -> Result<(), String> {
         if bound == 0 {
             return Err("request bound must be greater than zero".into());
@@ -198,49 +200,32 @@ impl Host {
 
     /// Bind a TCP listener. Non-loopback addresses need a non-empty bearer.
     pub fn bind(addr: SocketAddr, bearer: Option<&str>) -> Result<TcpListener, String> {
-        if !addr.ip().is_loopback() {
-            match bearer {
-                Some(secret) if !secret.is_empty() => {}
-                _ => {
-                    return Err("non-loopback bind refused without a clerk bearer".into());
-                }
-            }
-        }
+        require_bearer_if_routable(
+            addr,
+            bearer.is_some_and(|secret| !secret.is_empty()),
+            "non-loopback bind refused without a clerk bearer",
+        )?;
         TcpListener::bind(addr).map_err(|err| err.to_string())
     }
 
     pub fn handle(&mut self, request: HostRequest) -> HostResponse {
         match request {
-            HostRequest::IngestBatch { records } => {
-                match BatchIngest::run(&mut self.store, records) {
-                    Ok(()) => ok(),
-                    Err(error) => fail(error),
-                }
-            }
+            HostRequest::IngestBatch { records } => ack(BatchIngest::run(&mut self.store, records)),
             HostRequest::IngestStreamPush { record } => {
-                match self.stream.push(&mut self.store, record) {
-                    Ok(()) => ok(),
-                    Err(error) => fail(error),
-                }
+                ack(self.stream.push(&mut self.store, record))
             }
-            HostRequest::IngestStreamFlush => match self.stream.flush(&mut self.store) {
-                Ok(()) => ok(),
-                Err(error) => fail(error),
-            },
+            HostRequest::IngestStreamFlush => ack(self.stream.flush(&mut self.store)),
             HostRequest::ApplyAction {
                 id,
                 kind,
                 key,
                 props,
-            } => match self.store.apply_action(Action {
+            } => ack(self.store.apply_action(Action {
                 id,
                 kind,
                 key,
                 props,
-            }) {
-                Ok(()) => ok(),
-                Err(error) => fail(error),
-            },
+            })),
             HostRequest::ApplyOverlay {
                 id,
                 kind,
@@ -248,7 +233,7 @@ impl Host {
                 props,
                 cleared,
                 expected_gen,
-            } => match self.store.apply_overlay(
+            } => ack(self.store.apply_overlay(
                 OverlayPatch {
                     kind,
                     key,
@@ -258,10 +243,7 @@ impl Host {
                 },
                 id,
                 expected_gen,
-            ) {
-                Ok(()) => ok(),
-                Err(error) => fail(error),
-            },
+            )),
             HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
                 Ok(response) => HostResponse {
                     v: WIRE_V,
@@ -293,11 +275,7 @@ impl Host {
 
     pub fn handle_line(&mut self, line: &str) -> HostResponse {
         if line.len() > self.request_bound {
-            return fail(format!(
-                "RequestBound {{ bound: {}, bytes: {} }}",
-                self.request_bound,
-                line.len()
-            ));
+            return request_bound_fail(self.request_bound, line.len());
         }
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
@@ -319,21 +297,16 @@ impl Host {
     pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
         self.refuse_unauthenticated_routable(stream.local_addr().map_err(|err| err.to_string())?)?;
         stream
-            .set_read_timeout(Some(self.request_timeout))
-            .map_err(|err| err.to_string())?;
-        stream
             .set_write_timeout(Some(self.request_timeout))
             .map_err(|err| err.to_string())?;
-        let line = match read_request_line(&mut stream, self.request_bound) {
+        let deadline = Instant::now() + self.request_timeout;
+        let line = match read_request_line(&mut stream, self.request_bound, deadline) {
             Ok(line) => line,
             Err(ServeRead::Bound { bound, bytes }) => {
-                return write_fail_closed(
-                    &mut stream,
-                    fail(format!("RequestBound {{ bound: {bound}, bytes: {bytes} }}")),
-                );
+                return write_fail_closed(&mut stream, request_bound_fail(bound, bytes), deadline);
             }
             Err(ServeRead::Timeout) => {
-                return write_fail_closed(&mut stream, fail("RequestTimeout"));
+                return write_fail_closed(&mut stream, fail("RequestTimeout"), deadline);
             }
             Err(ServeRead::Disconnect) => return Err("client disconnect".into()),
             Err(ServeRead::Io(error)) => return Err(error),
@@ -377,10 +350,41 @@ impl Host {
     }
 
     fn refuse_unauthenticated_routable(&self, addr: SocketAddr) -> Result<(), String> {
-        if !addr.ip().is_loopback() && self.bearer.is_none() {
-            return Err("non-loopback serve refused without a clerk bearer".into());
-        }
-        Ok(())
+        require_bearer_if_routable(
+            addr,
+            self.bearer.is_some(),
+            "non-loopback serve refused without a clerk bearer",
+        )
+    }
+}
+
+fn require_bearer_if_routable(
+    addr: SocketAddr,
+    present: bool,
+    message: &str,
+) -> Result<(), String> {
+    if !addr.ip().is_loopback() && !present {
+        return Err(message.into());
+    }
+    Ok(())
+}
+
+fn ack(result: Result<(), String>) -> HostResponse {
+    match result {
+        Ok(()) => ok(),
+        Err(error) => fail(error),
+    }
+}
+
+fn request_bound_fail(bound: usize, bytes: usize) -> HostResponse {
+    fail(format!("RequestBound {{ bound: {bound}, bytes: {bytes} }}"))
+}
+
+fn acl_from_denies(deny: &[WireDeny], op: &str) -> Result<PropertyAcl, String> {
+    match deny {
+        [] => Ok(PropertyAcl::allow_all()),
+        [deny] => Ok(PropertyAcl::deny_property(&deny.kind, &deny.property)),
+        _ => Err(format!("host {op} accepts at most one deny pair in v1")),
     }
 }
 
@@ -411,22 +415,44 @@ enum ServeRead {
     Io(String),
 }
 
-fn read_request_line(stream: &mut TcpStream, bound: usize) -> Result<String, ServeRead> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
+fn remaining_until(deadline: Instant) -> Result<Duration, ServeRead> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(ServeRead::Timeout);
+    }
+    Ok(deadline.saturating_duration_since(now))
+}
+
+fn read_request_line(
+    stream: &mut TcpStream,
+    bound: usize,
+    deadline: Instant,
+) -> Result<String, ServeRead> {
+    if bound == 0 {
+        return Err(ServeRead::Bound { bound: 0, bytes: 1 });
+    }
+    let mut buf = Vec::with_capacity(bound);
+    let mut slab = [0u8; 8192];
     loop {
-        match stream.read(&mut byte) {
+        let remaining = remaining_until(deadline)?;
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|err| ServeRead::Io(err.to_string()))?;
+        match stream.read(&mut slab) {
             Ok(0) => return Err(ServeRead::Disconnect),
-            Ok(_) => {
-                if byte[0] == b'\n' {
-                    return String::from_utf8(buf).map_err(|err| ServeRead::Io(err.to_string()));
-                }
-                buf.push(byte[0]);
-                if buf.len() > bound {
-                    return Err(ServeRead::Bound {
-                        bound,
-                        bytes: buf.len(),
-                    });
+            Ok(n) => {
+                for &b in &slab[..n] {
+                    if b == b'\n' {
+                        return String::from_utf8(buf)
+                            .map_err(|err| ServeRead::Io(err.to_string()));
+                    }
+                    if buf.len() >= bound {
+                        return Err(ServeRead::Bound {
+                            bound,
+                            bytes: bound + 1,
+                        });
+                    }
+                    buf.push(b);
                 }
             }
             Err(err)
@@ -450,11 +476,23 @@ fn write_response(stream: &mut TcpStream, response: HostResponse) -> Result<(), 
 
 /// Reply, then FIN the write side and discard leftover input so a client that
 /// already sent past the bound can still read the typed error instead of RST.
-fn write_fail_closed(stream: &mut TcpStream, response: HostResponse) -> Result<(), String> {
+/// Discard is the remaining request wall-clock budget, not a fresh idle
+/// timeout on every chunk.
+fn write_fail_closed(
+    stream: &mut TcpStream,
+    response: HostResponse,
+    deadline: Instant,
+) -> Result<(), String> {
     write_response(stream, response)?;
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let mut discard = [0u8; 256];
     loop {
+        let Ok(remaining) = remaining_until(deadline) else {
+            return Ok(());
+        };
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|err| err.to_string())?;
         match stream.read(&mut discard) {
             Ok(0) => return Ok(()),
             Ok(_) => continue,
@@ -511,11 +549,7 @@ impl Host {
 }
 
 fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, String> {
-    let acl = match request.deny.as_slice() {
-        [] => PropertyAcl::allow_all(),
-        [deny] => PropertyAcl::deny_property(&deny.kind, &deny.property),
-        _ => return Err("host evaluate accepts at most one deny pair in v1".into()),
-    };
+    let acl = acl_from_denies(&request.deny, "evaluate")?;
     if let Some(filter) = &request.filter {
         if filter.property.is_empty() || filter.value.is_empty() {
             return Err("evaluate filter requires non-empty property and value".into());
@@ -553,11 +587,7 @@ fn load_record(
     key: String,
     deny: Vec<WireDeny>,
 ) -> Result<ObjectRecord, String> {
-    let acl = match deny.as_slice() {
-        [] => PropertyAcl::allow_all(),
-        [deny] => PropertyAcl::deny_property(&deny.kind, &deny.property),
-        _ => return Err("host load accepts at most one deny pair in v1".into()),
-    };
+    let acl = acl_from_denies(&deny, "load")?;
     store.load(&kind, &key, &acl)
 }
 
