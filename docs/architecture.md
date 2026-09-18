@@ -199,7 +199,10 @@ on returned objects are omitted.
 interned `amounts` map (values that parse as `i64`). Min/max could walk that
 map without a sidecar layout change; they stay out until a consumer names
 one with a fixture. Group-by would be a new evaluate response (buckets, not
-two scalars) and stays out with query languages.
+two scalars) and stays out with query languages. Last-hop count and sum for
+a schema-named leaf property are accepted as rebuildable sidecar columns
+([ADR 0010](decisions/0010-last-hop-measures.md)); evaluate still leaf-walks
+until [#151](https://github.com/Sannrox/mikura/issues/151) persists them.
 
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 

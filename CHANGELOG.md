@@ -20,6 +20,11 @@ window.
 
 ### Added
 
+- [ADR 0010](docs/decisions/0010-last-hop-measures.md): last-hop count
+  and sum for a schema-named leaf property persist as parent rollups on
+  the deletable sidecar. Evaluate still leaf-walks undeclared sums. No
+  engine pick
+  ([#150](https://github.com/Sannrox/mikura/issues/150)).
 - Join persist rewrites the interned checkpoint and deletes
   `{log}.joins.delta` when that dirty-set file exceeds
   `JOIN_DELTA_COMPACT_BYTES` (64 MiB), not only when dirty rows are a
