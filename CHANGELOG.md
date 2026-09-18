@@ -20,6 +20,10 @@ window.
 
 ### Added
 
+- Spike 011 remasure: 10⁸ ingest completes after bounded join persist
+  (~2.8 h, 100 × 1 M chunks). 10⁸ query/open were not reached. 10⁷
+  query still misses 500 ms
+  ([#137](https://github.com/Sannrox/mikura/issues/137)).
 - After a successful join dirty-set persist, that set is no longer
   outstanding. Later ingest chunks append only the new dirty rows instead
   of accumulating dirty until every commit rewrites the checkpoint.

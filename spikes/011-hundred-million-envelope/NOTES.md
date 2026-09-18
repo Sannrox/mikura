@@ -303,3 +303,42 @@ they are not on the hop-count path, and 10⁶ query still holds 500 ms.
 Follow-up implemented: [#134](https://github.com/Sannrox/mikura/issues/134)
 clears the dirty set after a successful persist_delta. Do not open #54
 from this addendum.
+
+## Addendum (2026-09-18): remasure after bounded persist (#137)
+
+Question: after [#134](https://github.com/Sannrox/mikura/issues/134), does
+10⁸ ingest complete, and does hop count/sum hold 500 ms? Same fixture
+family and machine class: Apple M2 Pro, 32 GiB, Darwin arm64. `rustc`
+1.96.1. Harness at `c127063` (dirty-set clear). No hostnames.
+
+```text
+cargo run --release -- --objects 10000000
+cargo run --release -- --objects 100000000
+```
+
+| objects | ingest | 1 M `commit_ms` | `fsync_delta` | RSS | log | sidecar | **query** | `Store::open` | dual-read |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| **10⁷** | 224–291 s | 11–58 s, still climbs | 758–976 | 2.6–2.9 GiB | 593 MiB | 135 MiB | **1252–2117 ms** | 35–164 s | **hold** |
+| **10⁸** | **~2.8 h, 100 × 1 M chunks** | 9 s … 644 s; last eight 173–286 s | 678–1010 | peak 7.9 GiB; last 4.3 GiB | — | — | not reached | not reached | not reached |
+
+10⁸ ingest printed one hundred million-record chunks. That is a finished
+ingest: every object was group-committed. Peak RSS 7.9 GiB on 32 GiB; no
+OOM. The process then ended before live query, `Store::open`, replay, or
+dual-read printed. The files from that run are gone; those post-ingest
+numbers were not recovered.
+
+`fsync_delta` stays ~700–1010 per chunk. Later `commit_ms` still grows
+(persist/open work), but not enough to stop ingest. The 2026-09-17 miss
+was 29 M / 10.7 h; this remasure finished 100 M in ~2.8 h.
+
+## Verdict: INGEST HOLD, QUERY UNMEASURED AT 10⁸
+
+- **10⁸ ingest completes.** The textual gate for 10⁹ is delivered.
+- **10⁷ query** still misses 500 ms (1252–2117 ms). Dual-read holds at 10⁷.
+- **10⁸ query / open / dual-read** were not obtained. Do not claim a
+  10⁸ query hold or miss.
+- **No engine pick.** Spark stays unsupported.
+
+Follow-up: [#54](https://github.com/Sannrox/mikura/issues/54) may start.
+A later remasure may still print 10⁸ query/open if a completed log is
+kept. Do not start 10¹⁰ until 10⁹ has a NOTES verdict.
