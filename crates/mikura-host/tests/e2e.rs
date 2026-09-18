@@ -784,3 +784,57 @@ fn process_evaluate_object_bound_fails_closed() {
         "{overflow:?}"
     );
 }
+
+#[test]
+fn process_overlay_refresh_keeps_note() {
+    let tmp = TempLog::new("overlay-refresh");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"},
+        "expected_gen": 1
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let refresh = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(refresh.ok, "{refresh:?}");
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let incident = loaded.load.expect("load payload");
+    assert_eq!(
+        incident.props.get("note").map(String::as_str),
+        Some("acked")
+    );
+    assert_eq!(incident.action_id.as_deref(), Some("act-inc-1-note"));
+    let stale = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "again"},
+        "expected_gen": 1
+    }));
+    assert!(!stale.ok, "{stale:?}");
+    assert!(
+        stale
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("stale generation"),
+        "{stale:?}"
+    );
+}

@@ -134,10 +134,13 @@ edits by `(kind, key)` for one write cycle. Within each input the last record
 for an identity wins; edits then replace source, including `hidden`. Hidden
 source rows stay hidden unless an edit unhides them. `MergeIngest::run` appends
 that merged list through `BatchIngest`. The merge list is not authority; rebuild
-reads only the committed log. [ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)
-accepts a property overlay recovered as `mikura.overlay` objects; that merge
-is not implemented yet. A source `ingest_batch` after `apply_action` still
-replaces the whole record.
+reads only the committed log. A visible source write of an identity with a visible `mikura.overlay/{kind}/{key}`
+row merges: source props, drop `cleared`, then overlay values
+([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)). `Store::apply_overlay`
+admits the patch and rematerializes a visible instance. Hide of the instance
+hides the overlay. Recreate (visible write after hide) does not apply a prior
+overlay. `apply_action` remains a whole-record replace and does not admit an
+overlay.
 
 `mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
 changed `props`/`hidden`/`action_id` emit the current row; keys that disappear emit a hide
@@ -238,7 +241,7 @@ include `v`. Required and unused fields by bind:
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `evaluate`, `load`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `evaluate`, `load`. Evaluate accepts an
 optional exact-match `filter`. Omit or `null` filter means all visible roots.
 An empty `property` or `value` is a wire error, not a silent empty match.
 `load` returns the live object for `(kind, key)`

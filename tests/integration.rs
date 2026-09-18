@@ -5,7 +5,7 @@
 
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, PropertyAcl, SchemaDescriptor, SchemaLink, Store,
+    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -780,5 +780,76 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         .objects
         .len(),
         2
+    );
+}
+
+#[test]
+fn overlay_refresh_keeps_admitted_note() {
+    let tmp = TempLog::new("overlay");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            rec(
+                "component",
+                "svc-api",
+                false,
+                &[("name", "billing-api"), ("tier", "prod")],
+            ),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[("name", "elevated latency"), ("affects", "svc-api")],
+            ),
+        ],
+    )
+    .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "acked".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            Some(1),
+        )
+        .unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        )],
+    )
+    .unwrap();
+    let live = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(live.props.get("note").map(String::as_str), Some("acked"));
+    drop(store);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        replayed
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("note")
+            .map(String::as_str),
+        Some("acked")
+    );
+    assert_eq!(
+        replayed
+            .overlay("incident", "inc-1")
+            .unwrap()
+            .unwrap()
+            .props["note"],
+        "acked"
     );
 }

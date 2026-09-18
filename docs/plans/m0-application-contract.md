@@ -76,16 +76,15 @@ disappear. Immediate `load` of `inc-1` shows `note=acked` and
 
 | Concern | Contract for this fixture | Current host behavior |
 | --- | --- | --- |
-| Source refresh | Re-ingest the same seed after the edit | `ingest_batch` of the source records appends a new generation. The edit is discarded. `note` and `action_id` are gone. |
+| Source refresh | Re-ingest the same seed after the edit | `apply_overlay` then `ingest_batch` keeps overlay keys (`note`) and the overlay Action id. `apply_action` then `ingest_batch` still replaces the whole record. |
 | Delete | Source delete of an identity should hide it from evaluate and keep `load` defined | No delete RPC. `ChangelogIngest` hide exists only in `mikura-ingest`. `load` still returns hidden records; evaluate excludes them. |
 | Retry | Repeating the same admitted edit must not invent a second effect | `apply_action` with the same Action id appends another generation. There is no idempotency key. |
 | Read-after-write | The next `load` / `evaluate` on the same host sees the last committed generation | Supported in-process. After process exit, `Host::open` / `Store::open` rebuilds from the log and returns the last generation. |
 | Object visibility | Does this fixture need object-level hiding in addition to property denies? | No. The seed has two objects and no per-caller hide. Request property denies remain. Principals and policy stay in the clerk. |
 
-The accepted later rule is [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md):
-edit overlays source; unedited properties follow the next snapshot; the
-patch persists as `mikura.overlay`. It is not implemented. Today's refresh
-is last-write-wins by identity.
+The accepted rule is [ADR 0009](../decisions/0009-refresh-safe-edit-overlay.md):
+`apply_overlay` persists `mikura.overlay/{kind}/{key}`; a later source write
+keeps those keys. `apply_action` stays whole-record replace.
 
 ## Access boundary
 
