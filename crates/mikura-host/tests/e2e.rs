@@ -819,6 +819,130 @@ fn process_evaluate_object_bound_fails_closed() {
     );
 }
 
+fn copy_log_and_optional_sidecar(src: &Path, dst: &Path) {
+    std::fs::copy(src, dst).expect("copy object log");
+    let src_joins = Store::join_map_path(src);
+    if src_joins.is_file() {
+        std::fs::copy(&src_joins, Store::join_map_path(dst)).expect("copy join sidecar");
+    }
+}
+
+fn product_loop_list_wire() -> serde_json::Value {
+    serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "component",
+            "hops": [],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "filter": {"property": "tier", "value": "prod"},
+            "object_bound": 8
+        }
+    })
+}
+
+fn product_loop_hop_wire() -> serde_json::Value {
+    serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{
+                "far_kind": "component",
+                "join_property": "affects",
+                "incoming": true
+            }],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "object_bound": 8
+        }
+    })
+}
+
+fn load_object(host: &HostProcess, kind: &str, key: &str) -> ObjectRecord {
+    let response = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": kind,
+        "key": key
+    }));
+    assert!(response.ok, "{response:?}");
+    response.load.expect("load payload")
+}
+
+fn evaluate_members(host: &HostProcess, body: &serde_json::Value) -> Vec<String> {
+    let response = host.rpc(body);
+    assert!(response.ok, "{response:?}");
+    let evaluate = response.evaluate.expect("evaluate payload");
+    evaluate
+        .objects
+        .into_iter()
+        .map(|object| object.key)
+        .collect()
+}
+
+/// Product-loop answers after ingest + overlay. Used to compare a live host,
+/// a restored copy, and a dual-read reopen.
+fn product_loop_overlay_view(
+    host: &HostProcess,
+) -> (
+    ObjectRecord,
+    ObjectRecord,
+    ObjectRecord,
+    Vec<String>,
+    Vec<String>,
+) {
+    let service = load_object(host, "component", "svc-api");
+    let incident = load_object(host, "incident", "inc-1");
+    let overlay = load_object(host, "mikura.overlay", "incident/inc-1");
+    let list = evaluate_members(host, &product_loop_list_wire());
+    let hop = evaluate_members(host, &product_loop_hop_wire());
+    (service, incident, overlay, list, hop)
+}
+
+#[test]
+fn process_backup_restore_product_loop() {
+    let src = TempLog::new("backup-src");
+    let host = HostProcess::spawn(src.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"},
+        "expected_gen": 1
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let live = product_loop_overlay_view(&host);
+    assert_eq!(live.0.key, "svc-api");
+    assert_eq!(live.0.props.get("tier").map(String::as_str), Some("prod"));
+    assert_eq!(live.1.props.get("note").map(String::as_str), Some("acked"));
+    assert_eq!(live.2.props.get("note").map(String::as_str), Some("acked"));
+    assert_eq!(live.3, vec!["svc-api".to_string()]);
+    assert_eq!(live.4, vec!["svc-api".to_string()]);
+    drop(host);
+
+    let dst = TempLog::new("backup-dst");
+    copy_log_and_optional_sidecar(src.path(), dst.path());
+    let restored = HostProcess::spawn(dst.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_overlay_view(&restored), live);
+    drop(restored);
+
+    let sidecar = Store::join_map_path(dst.path());
+    if sidecar.is_file() {
+        std::fs::remove_file(&sidecar).expect("delete restored sidecar");
+    }
+    let delta = Store::join_delta_path(dst.path());
+    if delta.is_file() {
+        std::fs::remove_file(&delta).expect("delete restored join delta");
+    }
+    let rebuilt = HostProcess::spawn(dst.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_overlay_view(&rebuilt), live);
+}
+
 #[test]
 fn process_overlay_refresh_keeps_note() {
     let tmp = TempLog::new("overlay-refresh");

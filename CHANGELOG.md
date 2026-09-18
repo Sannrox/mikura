@@ -9,6 +9,10 @@ window.
 
 ### Added
 
+- Backup is a copy of the object log plus optional `{log}.joins`. A fresh
+  host on the copy answers the product-loop load, list, hop, and overlay.
+  Deleting the copied sidecar still rebuilds from the log. No backup RPC
+  ([#126](https://github.com/Sannrox/mikura/issues/126)).
 - Host request admission: a JSON line over `--request-bound` or a socket
   past `--request-timeout-ms` fails closed. A client disconnect does not
   stop the listener
