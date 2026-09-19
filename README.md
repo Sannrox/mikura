@@ -19,7 +19,7 @@ and for contributing to the kernel. Not a production hosted store.
 | 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Principal-aware ACL on the wire |
 | Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Cluster compute |
 | Loopback ingest/evaluate host; non-loopback bind with clerk bearer ([ADR 0003](docs/decisions/0003-hosted-service.md), [ADR 0007](docs/decisions/0007-host-bearer.md)) | Multi-process hosting |
-| Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Non-string scalars |
+| Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Non-string scalars ([ADR 0012](docs/decisions/0012-typed-values.md); implementation [#168](https://github.com/Sannrox/mikura/issues/168)) |
 | Last-hop measures on `MKJOIN04` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
 | Property deny-list (fail closed); exact-match filter on evaluate | |
 | Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |

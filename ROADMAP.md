@@ -72,13 +72,16 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | apply_action retry ADR | A supplied Action id is the `apply_action` retry key as well as provenance. Same id and body is a replay; a different body or another identity fails closed. Not implemented ([#158](https://github.com/Sannrox/mikura/issues/158), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
 | apply_action retry | `apply_action` replays a repeated Action id when the body matches and fails closed on a different body or another identity. Reopen agrees. Overlay and hide stay ([#159](https://github.com/Sannrox/mikura/issues/159), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
 | host image | `./build/release-images.sh` wraps `mikura-host` with a git-describe tag. Dirty trees are refused. No clerk compose stack ([#165](https://github.com/Sannrox/mikura/issues/165)). |
+| M6 typed-value contract | Boolean, integer, timestamp, and decimal are schema-declared logical types stored as canonical UTF-8 in `props`. No `MIKURAV1` bump. Historical strings keep their meaning ([#167](https://github.com/Sannrox/mikura/issues/167), [ADR 0012](docs/decisions/0012-typed-values.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M4 are accepted and implemented. Remaining items:
 
-1. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+1. **M6 typed values:** implement [ADR 0012](docs/decisions/0012-typed-values.md)
+   on ingest, overlay, load, and host JSON `v=1` ([#168](https://github.com/Sannrox/mikura/issues/168)). Schema evolution stays [#169](https://github.com/Sannrox/mikura/issues/169).
+2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery

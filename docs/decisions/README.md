@@ -16,6 +16,7 @@ a new ADR. Allocate the next number and list it here.
 | [0009](0009-refresh-safe-edit-overlay.md) | Refresh-safe source and edit overlay | accepted |
 | [0010](0010-last-hop-measures.md) | Last-hop measures on the join sidecar | accepted |
 | [0011](0011-action-id-retry-key.md) | Action id as apply_action retry key | accepted |
+| [0012](0012-typed-values.md) | Typed values and legacy-data compatibility | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

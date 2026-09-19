@@ -28,7 +28,7 @@ application is complete.
 
 | Surface | Present implementation | Gap for the first application |
 | --- | --- | --- |
-| Object model | `(kind, key)`, string properties, generation, hidden flag, optional Action id, supplied `mikura.schema` validation in [Store](../../src/store/mod.rs) | Non-string scalars; schema migration beyond hide-and-replace |
+| Object model | `(kind, key)`, string properties, generation, hidden flag, optional Action id, supplied `mikura.schema` validation in [Store](../../src/store/mod.rs) | Non-string scalars accepted in [ADR 0012](../decisions/0012-typed-values.md), not implemented ([#168](https://github.com/Sannrox/mikura/issues/168)); schema migration beyond hide-and-replace ([#169](https://github.com/Sannrox/mikura/issues/169)) |
 | Links | Property-based joins in both directions in [Hop](../../src/objectset.rs); named `SchemaLink` rules with outgoing `0..1` cardinality | Dangling-link behavior; explicit edges if the workflow requires them |
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs) | Typed comparisons; sort, composed predicates, and cursors only when a fixture's expected answers are ambiguous without them ([#122](https://github.com/Sannrox/mikura/issues/122)) |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; Action-id replay ([ADR 0011](../decisions/0011-action-id-retry-key.md)); [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)) |
@@ -86,20 +86,23 @@ are not prerequisites for that pilot.
 
 ### Data and schema
 
-[ADR 0008](../decisions/0008-type-link-delete.md) keeps strings for this
-fixture. Boolean, integer, timestamp, and decimal wait for a named
-consumer type. Keep arrays, structured values, geospatial, media, and
-vectors demand-driven.
+[ADR 0008](../decisions/0008-type-link-delete.md) keeps strings for the
+product-loop fixture. [ADR 0012](../decisions/0012-typed-values.md) accepts
+boolean, integer, timestamp, and decimal as schema-declared logical types
+stored as canonical UTF-8 in the existing `props` map. Keep arrays,
+structured values, geospatial, media, and vectors demand-driven.
 
 The external catalog authors schema definitions. Mikura validates supplied
 descriptors and stores the last accepted one as a `mikura.schema` object
-([ADR 0008](../decisions/0008-type-link-delete.md)). Typed encoding and
-any added instance-record metadata still require a format ADR and the
+([ADR 0008](../decisions/0008-type-link-delete.md)). Implementation of
+`types` is [#168](https://github.com/Sannrox/mikura/issues/168). Recasting
+an existing property is [#169](https://github.com/Sannrox/mikura/issues/169).
+A tagged durable encoding or `MIKURAV2` still needs a format ADR and the
 approval specified by [AGENTS.md](../../AGENTS.md).
 
-Do not silently reinterpret old string data. Specify conversion, validation,
-upgrade, and rollback behavior. Define whether hidden records are internal
-tombstones: today's `load` returns them, while evaluate excludes them.
+Do not silently reinterpret old string data. ADR 0012 types new properties
+only; `Store::load` still returns stored bytes. Hidden records stay ADR 0008
+tombstones: `load` returns them, evaluate excludes them.
 
 Start with required property-backed links. Add explicit edge records and
 many-to-many editing when the consumer needs them, with a defined identity,
