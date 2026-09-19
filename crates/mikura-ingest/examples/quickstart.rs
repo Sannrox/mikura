@@ -75,15 +75,18 @@ fn main() -> Result<(), String> {
     println!("reachable roots: {}", visible.two_hop_count);
     println!("sum amount: {}", visible.sum_amount);
 
-    store.apply_action(Action {
-        id: "act-s2".into(),
-        kind: "Shipment".into(),
-        key: "s2".into(),
-        props: HashMap::from([
-            ("order_id".into(), "o1".into()),
-            ("amount".into(), "5".into()),
-        ]),
-    })?;
+    store.apply_action(
+        Action {
+            id: "act-s2".into(),
+            kind: "Shipment".into(),
+            key: "s2".into(),
+            props: HashMap::from([
+                ("order_id".into(), "o1".into()),
+                ("amount".into(), "5".into()),
+            ]),
+        },
+        None,
+    )?;
     let after = objects
         .evaluate(&store, &request())
         .map_err(|err| format!("{err:?}"))?;

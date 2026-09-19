@@ -412,7 +412,69 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     let record = loaded.load.expect("load payload");
     assert_eq!(record.action_id.as_deref(), Some("act-s2"));
     assert_eq!(record.props.get("amount").map(String::as_str), Some("5"));
-    let missing = host.rpc(&serde_json::json!({
+    let replay = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-s2",
+        "kind": "Shipment",
+        "key": "s2",
+        "props": {"order_id": "o1", "amount": "5"}
+    }));
+    assert!(replay.ok, "{replay:?}");
+    let replayed = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Shipment",
+        "key": "s2"
+    }));
+    assert_eq!(replayed.load.expect("load payload").gen, record.gen);
+    let conflict = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-s2",
+        "kind": "Shipment",
+        "key": "s2",
+        "props": {"order_id": "o1", "amount": "9"}
+    }));
+    assert!(!conflict.ok);
+    assert!(
+        conflict
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("body conflict"),
+        "{conflict:?}"
+    );
+    let other = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-s2",
+        "kind": "Shipment",
+        "key": "s1",
+        "props": {"order_id": "o1", "amount": "5"}
+    }));
+    assert!(!other.ok);
+    assert!(
+        other
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("already committed"),
+        "{other:?}"
+    );
+    drop(host);
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let after_open = reopened.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-s2",
+        "kind": "Shipment",
+        "key": "s2",
+        "props": {"order_id": "o1", "amount": "5"}
+    }));
+    assert!(after_open.ok, "{after_open:?}");
+    let after_open = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Shipment",
+        "key": "s2"
+    }));
+    assert_eq!(after_open.load.expect("load payload").gen, record.gen);
+    let missing = reopened.rpc(&serde_json::json!({
         "op": "apply_action",
         "id": "",
         "kind": "Shipment",
@@ -690,6 +752,58 @@ fn process_product_loop_baseline() {
     assert_eq!(after_edit.action_id.as_deref(), Some("act-inc-1-note"));
     assert_eq!(
         after_edit.props.get("note").map(String::as_str),
+        Some("acked")
+    );
+    let retried = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "acked"
+        }
+    }));
+    assert!(retried.ok, "{retried:?}");
+    let after_retry = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(after_retry.ok, "{after_retry:?}");
+    let after_retry = after_retry.load.expect("load payload");
+    assert_eq!(after_retry.gen, after_edit.gen);
+    assert_eq!(after_retry.action_id.as_deref(), Some("act-inc-1-note"));
+    assert_eq!(
+        after_retry.props.get("note").map(String::as_str),
+        Some("acked")
+    );
+    drop(host);
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let retried_open = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "acked"
+        }
+    }));
+    assert!(retried_open.ok, "{retried_open:?}");
+    let after_open = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(after_open.ok, "{after_open:?}");
+    let after_open = after_open.load.expect("load payload");
+    assert_eq!(after_open.gen, after_edit.gen);
+    assert_eq!(after_open.action_id.as_deref(), Some("act-inc-1-note"));
+    assert_eq!(
+        after_open.props.get("note").map(String::as_str),
         Some("acked")
     );
 

@@ -309,6 +309,8 @@ impl Store {
         self.identity = loaded.identity;
         self.hidden_props = loaded.hidden_props;
         self.has_checkpoint = true;
+        self.action_commits.clear();
+        self.action_commits_from_log = false;
         self.adopt_declared_measures()
     }
 }

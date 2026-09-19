@@ -25,10 +25,16 @@ window.
 
 ### Added
 
+- `Store::apply_action` and host `apply_action` replay a repeated Action
+  id when the body matches and fail closed on a different body or
+  another identity. `expected_gen` still applies to a new id. Overlay
+  and hide stay. No log-format change
+  ([#159](https://github.com/Sannrox/mikura/issues/159),
+  [ADR 0011](docs/decisions/0011-action-id-retry-key.md)).
 - [ADR 0011](docs/decisions/0011-action-id-retry-key.md): a supplied
   Action id is the `apply_action` retry key as well as provenance.
   Same id and body is a replay; a different body or another identity
-  fails closed. No second key. Not implemented
+  fails closed. No second key
   ([#158](https://github.com/Sannrox/mikura/issues/158)).
 - Host JSON `hide` hides an identity (`kind`+`key`). `load` stays
   defined; evaluate list/hop omit it. Reopen and sidecar rebuild agree.

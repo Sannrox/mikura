@@ -221,15 +221,18 @@ fn action_writeback_is_a_new_generation() {
     assert!(!store.joins().is_visible("Shipment", "s2"));
 
     store
-        .apply_action(Action {
-            id: "act-s2".into(),
-            kind: "Shipment".into(),
-            key: "s2".into(),
-            props: HashMap::from([
-                ("order_id".into(), "o1".into()),
-                ("amount".into(), "5".into()),
-            ]),
-        })
+        .apply_action(
+            Action {
+                id: "act-s2".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
         .unwrap();
 
     assert!(store.joins().is_visible("Shipment", "s2"));
@@ -237,6 +240,78 @@ fn action_writeback_is_a_new_generation() {
     let after = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(after.two_hop_count, 1);
     assert_eq!(after.sum_amount, 15);
+}
+
+#[test]
+fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
+    let tmp = TempLog::new("action-retry");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let action = Action {
+        id: "act-inc-1-note".into(),
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        props: HashMap::from([
+            ("order_id".into(), "o1".into()),
+            ("amount".into(), "5".into()),
+        ]),
+    };
+    store.apply_action(action.clone(), None).unwrap();
+    let committed = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(committed.action_id.as_deref(), Some("act-inc-1-note"));
+    store.apply_action(action.clone(), None).unwrap();
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
+
+    let body = store
+        .apply_action(
+            Action {
+                id: "act-inc-1-note".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "9".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(body.contains("body conflict"), "{body}");
+
+    let other = store
+        .apply_action(
+            Action {
+                id: "act-inc-1-note".into(),
+                kind: "Shipment".into(),
+                key: "s1".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(other.contains("already committed"), "{other}");
+    drop(store);
+
+    let mut reopened = Store::open(tmp.path()).unwrap();
+    reopened.apply_action(action, None).unwrap();
+    assert_eq!(
+        reopened
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
 }
 
 #[test]
@@ -329,15 +404,18 @@ fn reopen_matches_live_hop_count_and_sum() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     store
-        .apply_action(Action {
-            id: "act-s2".into(),
-            kind: "Shipment".into(),
-            key: "s2".into(),
-            props: HashMap::from([
-                ("order_id".into(), "o1".into()),
-                ("amount".into(), "5".into()),
-            ]),
-        })
+        .apply_action(
+            Action {
+                id: "act-s2".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
         .unwrap();
     let oss = ObjectSet::new(LocalCompute);
     let live = oss.evaluate(&store, &fixture_request()).unwrap();
@@ -960,15 +1038,18 @@ fn apply_action_replaces_without_merging_overlay() {
         )
         .unwrap();
     store
-        .apply_action(Action {
-            id: "act-inc-1-rename".into(),
-            kind: "incident".into(),
-            key: "inc-1".into(),
-            props: HashMap::from([
-                ("name".into(), "elevated latency".into()),
-                ("affects".into(), "svc-api".into()),
-            ]),
-        })
+        .apply_action(
+            Action {
+                id: "act-inc-1-rename".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([
+                    ("name".into(), "elevated latency".into()),
+                    ("affects".into(), "svc-api".into()),
+                ]),
+            },
+            None,
+        )
         .unwrap();
     let replaced = store
         .load("incident", "inc-1", &PropertyAcl::allow_all())

@@ -181,20 +181,18 @@ fn main() -> Result<(), String> {
     assert_eq!(hopped.objects.len(), 1);
     assert_eq!(hopped.objects[0].key, "svc-api");
 
-    require_ok(
-        "apply_action inc-1",
-        session.rpc(&serde_json::json!({
-            "op": "apply_action",
-            "id": "act-inc-1-note",
-            "kind": "incident",
-            "key": "inc-1",
-            "props": {
-                "name": "elevated latency",
-                "affects": "svc-api",
-                "note": "acked"
-            }
-        }))?,
-    )?;
+    let edit = serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "acked"
+        }
+    });
+    require_ok("apply_action inc-1", session.rpc(&edit)?)?;
     let edited = require_ok(
         "load inc-1 after edit",
         session.rpc(&serde_json::json!({
@@ -207,6 +205,40 @@ fn main() -> Result<(), String> {
     .expect("load payload");
     assert_eq!(edited.action_id.as_deref(), Some("act-inc-1-note"));
     assert_eq!(edited.props.get("note").map(String::as_str), Some("acked"));
+    require_ok("retry apply_action inc-1", session.rpc(&edit)?)?;
+    let retried = require_ok(
+        "load inc-1 after retry",
+        session.rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "incident",
+            "key": "inc-1"
+        }))?,
+    )?
+    .load
+    .expect("load payload");
+    assert_eq!(retried.gen, edited.gen);
+    assert_eq!(retried.action_id.as_deref(), Some("act-inc-1-note"));
+    assert_eq!(retried.props.get("note").map(String::as_str), Some("acked"));
+
+    drop(session);
+    let mut session = Session::open(&log)?;
+    require_ok("retry apply_action after Host::open", session.rpc(&edit)?)?;
+    let after_open = require_ok(
+        "load inc-1 after Host::open retry",
+        session.rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "incident",
+            "key": "inc-1"
+        }))?,
+    )?
+    .load
+    .expect("load payload");
+    assert_eq!(after_open.gen, edited.gen);
+    assert_eq!(after_open.action_id.as_deref(), Some("act-inc-1-note"));
+    assert_eq!(
+        after_open.props.get("note").map(String::as_str),
+        Some("acked")
+    );
 
     require_ok(
         "ingest_batch refresh source",
@@ -311,10 +343,11 @@ fn main() -> Result<(), String> {
         hopped.objects[0].key
     );
     println!("edit inc-1\tapply_action\tsupported (whole-record replace, action_id stored)");
+    println!("retry act-inc-1-note\tapply_action\tsupported (replay, same generation)");
     println!("refresh source\tingest_batch\tsupported as overwrite; edit note discarded");
     println!("reopen log\tload after Host::open\tsupported");
     println!("delete inc-1\thide\tsupported (load defined, evaluate omits)");
-    println!("retry / object visibility\t(none)\tunsupported on the host wire");
+    println!("object visibility\t(none)\tnot required on this seed");
 
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())

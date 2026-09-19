@@ -613,6 +613,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         ]
         .into_iter()
         .collect(),
+        expected_gen: None,
     });
     assert!(written.ok, "{written:?}");
     let loaded = host.handle(HostRequest::Load {
@@ -624,11 +625,52 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     let loaded = loaded.load.expect("load payload");
     assert_eq!(loaded.action_id.as_deref(), Some("act-s2"));
     assert_eq!(loaded.props.get("amount").map(String::as_str), Some("5"));
+    let replay = host.handle(HostRequest::ApplyAction {
+        id: "act-s2".into(),
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        props: [
+            ("order_id".into(), "o1".into()),
+            ("amount".into(), "5".into()),
+        ]
+        .into_iter()
+        .collect(),
+        expected_gen: Some(0),
+    });
+    assert!(replay.ok, "{replay:?}");
+    let replayed = host.handle(HostRequest::Load {
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        deny: Vec::new(),
+    });
+    assert_eq!(replayed.load.expect("load payload").gen, loaded.gen);
+    let conflict = host.handle(HostRequest::ApplyAction {
+        id: "act-s2".into(),
+        kind: "Shipment".into(),
+        key: "s2".into(),
+        props: [
+            ("order_id".into(), "o1".into()),
+            ("amount".into(), "9".into()),
+        ]
+        .into_iter()
+        .collect(),
+        expected_gen: None,
+    });
+    assert!(!conflict.ok);
+    assert!(
+        conflict
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("body conflict"),
+        "{conflict:?}"
+    );
     let missing = host.handle(HostRequest::ApplyAction {
         id: String::new(),
         kind: "Shipment".into(),
         key: "s3".into(),
         props: [("order_id".into(), "o1".into())].into_iter().collect(),
+        expected_gen: None,
     });
     assert!(!missing.ok);
     assert!(
