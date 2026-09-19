@@ -11,9 +11,11 @@
 
 Hop count+sum still walks every last-hop leaf and hashes the sum
 property ([#59](https://github.com/Sannrox/mikura/issues/59)). At 10⁷
-that query misses the 500 ms budget ([#137](https://github.com/Sannrox/mikura/issues/137),
-[#54](https://github.com/Sannrox/mikura/issues/54)). The interned join
-sidecar already stores rebuildable hop indexes stamped with log
+that query missed the 500 ms budget ([#137](https://github.com/Sannrox/mikura/issues/137),
+[#54](https://github.com/Sannrox/mikura/issues/54)). After this layout
+landed, a remasure held at **40 ms** ([#152](https://github.com/Sannrox/mikura/issues/152)).
+The interned join sidecar already stores rebuildable hop indexes stamped
+with log
 `committed_pages` ([ADR 0002](0002-join-sidecar.md),
 [ADR 0004](0004-slim-join-maps.md)). Count+sum stays the only aggregate
 until a consumer names another with a fixture

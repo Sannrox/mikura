@@ -30,7 +30,7 @@ today evaluate is hop + count/sum + optional bounded objects.
 | `props` | String map |
 | `hidden` | Excluded from join indexing |
 | `action_id` | Optional clerk-assigned Action id that produced this generation |
-| `gen` | Generation. `Store::append` sets `1` on insert and `existing+1` on update |
+| `gen` | Generation. `Store::append` sets `existing+1` on update. On insert it keeps a non-zero first `gen` and sets `1` only when the incoming value is `0` |
 
 Identity is `(kind, key)`. A later append replaces the live record.
 

@@ -20,7 +20,8 @@ deletable. Changing `MIKURAV1` is out of scope.
 
 `Store::load(kind, key, acl)` returns the live `ObjectRecord`.
 
-Visible rows already store interned property pairs in `MKJOIN03`. Load
+Visible rows already store interned property pairs in the join sidecar
+(current magic `MKJOIN04`). Load
 reconstructs props from that list plus slim identity. Hidden rows stay out of
 hop/sum indexes. Their property pairs are written in the same identity-row
 slot so a hidden object can still be loaded by primary key. Empty props are

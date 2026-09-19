@@ -35,8 +35,9 @@ application is complete.
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs) | Explicit trusted-caller boundary and complete enforcement across supported operations |
 | Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests | Capacity limits, operational visibility, representative workload budgets |
 
-The [existing roadmap](../../ROADMAP.md) records a 10⁷ query miss, a
-finished 10⁸ ingest, and a 10⁹ close that does not need a finished
+The [existing roadmap](../../ROADMAP.md) records a 10⁷ hop count+sum
+**40 ms hold** after last-hop measures ([#152](https://github.com/Sannrox/mikura/issues/152)),
+a finished 10⁸ ingest, and a 10⁹ close that does not need a finished
 billion-object run ([#54](https://github.com/Sannrox/mikura/issues/54)).
 [10¹⁰](https://github.com/Sannrox/mikura/issues/55) waits until a
 consumer names that envelope. Those are long-horizon research, not the
@@ -176,7 +177,7 @@ assumed requirements. gRPC remains ask-first.
 | Ingest / writeback | Overlay merge on source ingest; replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
 | Access boundary | Caller-provided property denies and process bearer | Trusted-gateway contract; integration/e2e tests across every operation | Restricted values affect observable results or edits bypass admission |
 | Hosting | Single process, request bounds, stdin-close stop, copy-the-log restore | Representative workload baseline and operational visibility | One client stalls service or resources grow without bound |
-| Scale | Existing synthetic misses and incomplete large ingest | Representative workload baseline and one targeted bottleneck investigation at a time | Optimizing a workload the application does not need |
+| Scale | Existing synthetic envelopes; 10⁸ ingest finished, 10⁸ query/open not reached | Representative workload baseline and one targeted bottleneck investigation at a time | Optimizing a workload the application does not need |
 
 Implementation gates remain formatting, workspace tests (including named
 integration and process e2e), clippy, the quickstart when the public API
@@ -198,8 +199,9 @@ numbers are reserved by this proposal, and no issues are published by it.
 
 ## Deferred work and scale gates
 
-[#54](https://github.com/Sannrox/mikura/issues/54) is closed: the hop
-budget already misses at 10⁷. Keep
+[#54](https://github.com/Sannrox/mikura/issues/54) is closed: a billion-object
+ingest is not needed to decide 10⁹. After last-hop measures, 10⁷ hop
+count+sum holds ([#152](https://github.com/Sannrox/mikura/issues/152)). Keep
 [#55](https://github.com/Sannrox/mikura/issues/55) blocked until a
 consumer names 10¹⁰. Measure the application's actual scale first. No
 larger synthetic envelope is needed to justify the next application

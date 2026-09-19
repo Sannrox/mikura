@@ -32,10 +32,11 @@ These behaviors are implemented and fail closed:
 
 These are **not** a security boundary yet:
 
-- `PropertyAcl` is an in-process deny list of `(kind, property)`. There is no
-  principal, session, or wire ACL.
-- There is no authentication, authorization service, or multi-tenant isolation
-  in this crate.
+- `PropertyAcl` is a request deny list of `(kind, property)`. There is no
+  principal, session, or compiled policy.
+- Non-loopback bind checks a clerk-owned bearer for equality ([ADR 0007](docs/decisions/0007-host-bearer.md)).
+  That is a process secret, not an authorization service or multi-tenant
+  isolation. Loopback is unauthenticated unless `--bearer` is set.
 - Object logs on disk are not encrypted by mikura.
 
 Treat a mikura log file as sensitive application data. Do not commit `*.mikura`

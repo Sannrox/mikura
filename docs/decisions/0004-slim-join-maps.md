@@ -5,7 +5,9 @@
 - Owners: mikura maintainers
 - Related: [#15](https://github.com/Sannrox/mikura/issues/15), [#3](https://github.com/Sannrox/mikura/issues/3), spike 011, [ADR 0005](0005-current-object-load.md)
 - Supersedes: sidecar layout of [ADR 0002](0002-join-sidecar.md) (`MKJOIN01`)
-- Superseded by: sidecar magic of [ADR 0006](0006-action-provenance.md) (`MKJOIN03` / `MKJOIN3D`)
+- Superseded by: sidecar magic of [ADR 0006](0006-action-provenance.md)
+  (`MKJOIN03`), then [ADR 0010](0010-last-hop-measures.md) (`MKJOIN04` /
+  `MKJOIN4D`)
 
 ## Context
 
@@ -31,7 +33,9 @@ hydrate object payloads. Evaluate answers from the maps. `append` bumps
 
 Dirty identities after a checkpoint write `{log}.joins.delta` (`MKJOIN2D`)
 instead of rewriting the checkpoint. A compact rewrite happens when there
-is no checkpoint or dirty rows exceed a quarter of identity.
+is no checkpoint, dirty rows exceed a quarter of identity, or the dirty-set
+file exceeds `JOIN_DELTA_COMPACT_BYTES` (64 MiB;
+[#149](https://github.com/Sannrox/mikura/issues/149)).
 
 `MKJOIN01` is not readable. Checksum mismatch or bad magic fails closed;
 deleting the sidecar rebuilds from the log.

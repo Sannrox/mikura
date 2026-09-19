@@ -10,8 +10,7 @@
 //! join direction, with an optional exact-match on root properties.
 //! `EvaluateRequest.object_bound` greater than zero also returns the
 //! distinct matching objects and fails closed if the set is larger.
-//! [`SparkCompute`] returns [`ComputeError::UnsupportedBackend`] until a
-//! published envelope says otherwise.
+//! [`SparkCompute`] always returns [`ComputeError::UnsupportedBackend`].
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
 //! Optional `sums` on that descriptor persist last-hop parent rollups.

@@ -346,11 +346,10 @@ impl Store {
             record.gen = 1;
         }
         self.writer.append_record(&record)?;
-        let schema_kind = (record.kind == SCHEMA_KIND).then(|| record.key.clone());
+        let schema_kind = record.kind.clone();
+        let schema_key = record.key.clone();
         self.apply_record(record);
-        if let Some(kind) = schema_kind {
-            self.refresh_leaf_measures(&kind)?;
-        }
+        self.maybe_refresh_schema(&schema_kind, &schema_key)?;
         if let Some((kind, key)) = overlay_target {
             if self.overlay(&kind, &key)?.is_some() {
                 let mut hide = OverlayPatch {
@@ -448,13 +447,19 @@ impl Store {
         self.joins = JoinMaps::default();
         self.dirty.clear();
         for record in read_records(&self.log)? {
-            let schema_kind = (record.kind == SCHEMA_KIND).then(|| record.key.clone());
+            let schema_kind = record.kind.clone();
+            let schema_key = record.key.clone();
             self.apply_record(record);
-            if let Some(kind) = schema_kind {
-                self.refresh_leaf_measures(&kind)?;
-            }
+            self.maybe_refresh_schema(&schema_kind, &schema_key)?;
         }
         self.dirty.clear();
+        Ok(())
+    }
+
+    fn maybe_refresh_schema(&mut self, kind: &str, key: &str) -> Result<(), String> {
+        if kind == SCHEMA_KIND {
+            self.refresh_leaf_measures(key)?;
+        }
         Ok(())
     }
 

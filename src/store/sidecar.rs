@@ -266,11 +266,10 @@ impl Store {
             } else {
                 Some(self.joins.intern(&row.action))
             };
-            let schema_kind = (row.kind == crate::schema::SCHEMA_KIND).then(|| row.key.clone());
+            let schema_kind = row.kind.clone();
+            let schema_key = row.key.clone();
             self.install_live(row.kind, row.key, row.gen, row.hidden, action_id, row.props);
-            if let Some(kind) = schema_kind {
-                self.refresh_leaf_measures(&kind)?;
-            }
+            self.maybe_refresh_schema(&schema_kind, &schema_key)?;
         }
         Ok(pages)
     }

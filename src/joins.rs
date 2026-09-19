@@ -324,7 +324,9 @@ pub(crate) struct LiveMeta {
 /// Strings are interned once; hop/sum walks `u32` ids. Join children are
 /// packed identity lists. Hidden records are absent from hop/sum indexes.
 /// The checkpoint stores interned owned property pairs for every identity
-/// (hidden props sit on the identity row) plus interned Action ids.
+/// (hidden props sit on the identity row), interned Action ids, and
+/// schema-named last-hop rollups (`MKJOIN04`). Hop and sum indexes are
+/// derived; undeclared sums still walk leaves.
 #[derive(Clone, Debug, Default)]
 pub struct JoinMaps {
     pub(crate) intern: Vec<String>,

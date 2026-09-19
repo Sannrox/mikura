@@ -19,12 +19,13 @@ tracked. Do not treat that directory as gitignored.
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
-| `src/joins.rs` | Interned `JoinMaps` and sidecar checksum helpers |
+| `src/joins.rs` | Interned `JoinMaps`, last-hop rollups, sidecar checksum helpers (`MKJOIN04`) |
 | `src/store/` | Identity, sidecar persist/load, append/commit |
+| `src/crate_tests/` | In-crate tests split by persist, hops, load, schema, overlay, measures |
 | `src/schema.rs` | Clerk-supplied descriptors; write-time validation ([ADR 0008](docs/decisions/0008-type-link-delete.md)) |
 | `src/overlay.rs` | Clerk-admitted property overlay; merge on later source writes ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) |
 | `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
-| `crates/mikura-host/` | Loopback ingest/evaluate/load host over `Store`, plus `mikura-host` binary |
+| `crates/mikura-host/` | Ingest/evaluate/load host over `Store`, `mikura-host` binary, product-loop example |
 | `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |
 | `src/objectset.rs` | Evaluate request/response |
 | `src/acl.rs` | Property deny-list (fail closed) |
@@ -33,7 +34,7 @@ tracked. Do not treat that directory as gitignored.
 | `crates/mikura-ingest/examples/` | Runnable examples (`quickstart`) |
 | `tests/integration.rs` | Public-API integration suite (`mikura` + `mikura-ingest`) |
 | `spikes/` | Throwaway measurements; not the store of record |
-| `docs/` | Architecture, glossary, ADRs |
+| `docs/` | Architecture, glossary, ADRs, plans |
 | `scripts/` | `gh-verified-push.sh` for GitHub-signed PR tips |
 | `.github/` | CI, issue templates, pull request template |
 | `.agents/skills/` | Copied from sekai-chisei; apply as below |

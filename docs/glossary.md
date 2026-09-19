@@ -23,7 +23,7 @@ meaning; say it is undefined.
 | **Fail closed** | On checksum mismatch, missing committed pages, ACL denial of an aggregate, or a schema violation: return an error. Do not guess. Load omits denied properties instead of fabricating them. |
 | **Property ACL** | v1: in-process deny list of `(kind, property)`. Load / host `load` omit those keys (never `""`). Evaluate of a denied aggregate returns `AclError::Denied`. The wire does not list denied names. Not a principal. |
 | **Action** | Governed edit in the product sense. `apply_action` appends a new visible generation and stores the clerk-assigned Action id ([ADR 0006](decisions/0006-action-provenance.md)). |
-| **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` returns unsupported until an envelope. |
+| **Compute backend** | Pluggable evaluate implementation. `LocalCompute` runs in-process. `SparkCompute` always returns unsupported. |
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |
 | **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate merges by identity and appends. |

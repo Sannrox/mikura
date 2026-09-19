@@ -92,7 +92,7 @@ fn shipment_sum_schema() -> SchemaDescriptor {
     }
 }
 
-fn shipment_request() -> EvaluateRequest {
+fn fixture_request() -> EvaluateRequest {
     EvaluateRequest {
         root_kind: "Customer".into(),
         hops: vec![
@@ -166,11 +166,11 @@ fn schema_named_measure_evaluates_and_rebuilds() {
         Some("amount")
     );
     let oss = ObjectSet::new(LocalCompute);
-    let live = oss.evaluate(&store, &shipment_request()).unwrap();
+    let live = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(live.two_hop_count, 1);
     assert_eq!(live.sum_amount, 10);
 
-    let mut denied = shipment_request();
+    let mut denied = fixture_request();
     denied.acl = PropertyAcl::deny_property("Shipment", "amount");
     assert!(matches!(
         oss.evaluate(&store, &denied),
@@ -182,14 +182,14 @@ fn schema_named_measure_evaluates_and_rebuilds() {
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    let from_sidecar = oss.evaluate(&reopened, &shipment_request()).unwrap();
+    let from_sidecar = oss.evaluate(&reopened, &fixture_request()).unwrap();
     assert_eq!(from_sidecar.two_hop_count, live.two_hop_count);
     assert_eq!(from_sidecar.sum_amount, live.sum_amount);
     drop(reopened);
 
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    let from_log = oss.evaluate(&replayed, &shipment_request()).unwrap();
+    let from_log = oss.evaluate(&replayed, &fixture_request()).unwrap();
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
 }
@@ -201,7 +201,7 @@ fn batch_ingest_evaluates_demo_and_non_demo_kinds() {
     BatchIngest::run(&mut store, fixture()).unwrap();
 
     let oss = ObjectSet::new(LocalCompute);
-    let shipments = oss.evaluate(&store, &shipment_request()).unwrap();
+    let shipments = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(shipments.two_hop_count, 1);
     assert_eq!(shipments.sum_amount, 10);
 
@@ -216,7 +216,7 @@ fn action_writeback_is_a_new_generation() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let before = oss.evaluate(&store, &shipment_request()).unwrap();
+    let before = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(before.sum_amount, 10);
     assert!(!store.joins().is_visible("Shipment", "s2"));
 
@@ -234,7 +234,7 @@ fn action_writeback_is_a_new_generation() {
 
     assert!(store.joins().is_visible("Shipment", "s2"));
     assert_eq!(store.joins().prop("Shipment", "s2", "amount"), Some("5"));
-    let after = oss.evaluate(&store, &shipment_request()).unwrap();
+    let after = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(after.two_hop_count, 1);
     assert_eq!(after.sum_amount, 15);
 }
@@ -256,7 +256,7 @@ fn acl_deny_of_sum_property_fails_closed() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
 
-    let mut denied = shipment_request();
+    let mut denied = fixture_request();
     denied.acl = PropertyAcl::deny_property("Shipment", "amount");
     let err = ObjectSet::new(LocalCompute)
         .evaluate(&store, &denied)
@@ -316,10 +316,10 @@ fn stream_overflow_fails_closed_without_silent_drop() {
     assert!(!store.joins().is_visible("Shipment", "s5"));
 
     let oss = ObjectSet::new(LocalCompute);
-    let live = oss.evaluate(&store, &shipment_request()).unwrap();
+    let live = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(live.sum_amount, 13);
     stream.flush(&mut store).unwrap();
-    let committed = oss.evaluate(&store, &shipment_request()).unwrap();
+    let committed = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(committed.sum_amount, 13);
 }
 
@@ -340,12 +340,12 @@ fn reopen_matches_live_hop_count_and_sum() {
         })
         .unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let live = oss.evaluate(&store, &shipment_request()).unwrap();
+    let live = oss.evaluate(&store, &fixture_request()).unwrap();
     let live_asset = oss.evaluate(&store, &asset_request()).unwrap();
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    let from_log = oss.evaluate(&reopened, &shipment_request()).unwrap();
+    let from_log = oss.evaluate(&reopened, &fixture_request()).unwrap();
     let from_log_asset = oss.evaluate(&reopened, &asset_request()).unwrap();
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
@@ -362,13 +362,13 @@ fn dual_read_after_deleting_sidecar_rebuilds_from_log() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let from_projection = oss.evaluate(&store, &shipment_request()).unwrap();
+    let from_projection = oss.evaluate(&store, &fixture_request()).unwrap();
     let from_projection_asset = oss.evaluate(&store, &asset_request()).unwrap();
     drop(store);
 
     std::fs::remove_file(&sidecar).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    let from_log = oss.evaluate(&replayed, &shipment_request()).unwrap();
+    let from_log = oss.evaluate(&replayed, &fixture_request()).unwrap();
     let from_log_asset = oss.evaluate(&replayed, &asset_request()).unwrap();
     assert_eq!(from_log.two_hop_count, from_projection.two_hop_count);
     assert_eq!(from_log.sum_amount, from_projection.sum_amount);
@@ -386,7 +386,7 @@ fn sidecar_checksum_and_bad_magic_fail_closed() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let live = oss.evaluate(&store, &shipment_request()).unwrap();
+    let live = oss.evaluate(&store, &fixture_request()).unwrap();
     drop(store);
 
     let good = std::fs::read(&sidecar).unwrap();
@@ -417,7 +417,7 @@ fn sidecar_checksum_and_bad_magic_fail_closed() {
 
     std::fs::remove_file(&sidecar).unwrap();
     let recovered = Store::open(tmp.path()).unwrap();
-    let from_log = oss.evaluate(&recovered, &shipment_request()).unwrap();
+    let from_log = oss.evaluate(&recovered, &fixture_request()).unwrap();
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
 }
@@ -487,7 +487,7 @@ fn incoming_hop_follows_join_property() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let outgoing = oss.evaluate(&store, &shipment_request()).unwrap();
+    let outgoing = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(outgoing.two_hop_count, 1);
     let incoming = EvaluateRequest {
         root_kind: "Order".into(),
@@ -534,7 +534,7 @@ fn load_omits_denied_properties() {
     assert!(!redacted.props.contains_key("fabricated"));
     assert!(!store.joins().is_visible("Customer", "c0"));
 
-    let mut denied = shipment_request();
+    let mut denied = fixture_request();
     denied.acl = PropertyAcl::deny_property("Shipment", "amount");
     let err = ObjectSet::new(LocalCompute)
         .evaluate(&store, &denied)
@@ -587,7 +587,7 @@ fn exact_match_filter_on_evaluate() {
     )
     .unwrap();
     let oss = ObjectSet::new(LocalCompute);
-    let mut us = shipment_request();
+    let mut us = fixture_request();
     us.filter = Some(ExactMatch {
         property: "region".into(),
         value: "us".into(),

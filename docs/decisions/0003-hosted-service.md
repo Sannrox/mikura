@@ -56,9 +56,10 @@ blocked on #15. This ADR is the recommendation; it does not add a server.
 `apply_overlay`, `evaluate`, and `load`. After auth ([ADR 0007](0007-host-bearer.md)) and the 10⁸
 envelope ([#49](https://github.com/Sannrox/mikura/issues/49)), one process
 is still enough ([#56](https://github.com/Sannrox/mikura/issues/56)): there
-is no published miss that one process cannot fix, and 10⁸ ingest did not
-finish so ingest-versus-evaluate contention was not measured. Split remains
-out until that miss exists.
+is no published miss that one process cannot fix. 10⁸ ingest later finished
+([#137](https://github.com/Sannrox/mikura/issues/137)); query and open at
+that size were not reached, so ingest-versus-evaluate contention was not
+measured. Split remains out until that miss exists.
 
 ## Alternatives considered
 
