@@ -32,7 +32,17 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let args = parse_args()?;
+    let args = match parse_args()? {
+        Some(args) => args,
+        None => {
+            println!(
+                "mikura-host {} {}\nusage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\nclose stdin to stop; uncommitted stream pushes are not flushed",
+                env!("MIKURA_GIT_VERSION"),
+                env!("MIKURA_GIT_COMMIT")
+            );
+            return Ok(());
+        }
+    };
     let (mut host, listener) = Host::listen(
         &args.log,
         args.stream_bound,
@@ -75,7 +85,7 @@ fn watch_stdin_then_stop(bound: SocketAddr, running: Arc<AtomicBool>) {
     });
 }
 
-fn parse_args() -> Result<Args, String> {
+fn parse_args() -> Result<Option<Args>, String> {
     let mut log = None;
     let mut bind: SocketAddr = "127.0.0.1:0"
         .parse()
@@ -117,24 +127,19 @@ fn parse_args() -> Result<Args, String> {
             "--bearer" => {
                 bearer = Some(required_value("--bearer", args.next())?);
             }
-            "--help" | "-h" => {
-                return Err(
-                    "usage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\nclose stdin to stop; uncommitted stream pushes are not flushed"
-                        .into(),
-                );
-            }
+            "--help" | "-h" => return Ok(None),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
     let log = log.ok_or_else(|| "missing --log PATH".to_string())?;
-    Ok(Args {
+    Ok(Some(Args {
         log,
         bind,
         stream_bound,
         request_bound,
         request_timeout_ms,
         bearer,
-    })
+    }))
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, String> {

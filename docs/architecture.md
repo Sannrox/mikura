@@ -16,7 +16,9 @@ loopback ingest, evaluate, and load. A git tag of that surface is enough for
 a first consumer; `publish = false` until crates.io is authorized
 ([#57](https://github.com/Sannrox/mikura/issues/57)). A control plane maps
 datasets and admitted edits to `ObjectRecord`s; it does not live in this
-repository. The destination object-set is filter, load, hop, and aggregate;
+repository. `./build/release-images.sh` wraps `mikura-host` in a
+git-describe image; `./build/release.sh` pushes that tag. There is no
+compose stack and no cluster compute in that wrap. The destination object-set is filter, load, hop, and aggregate;
 today evaluate is hop + count/sum + optional bounded objects.
 
 ## Object model

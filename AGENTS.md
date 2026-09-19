@@ -49,7 +49,11 @@ cargo fmt --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p mikura-ingest --example quickstart
+./build/release-images.sh
 ```
+
+`./build/release-images.sh` wraps `mikura-host`. Dirty trees are refused.
+`./build/release.sh` pushes the git-describe tag to `DOCKER_REGISTRY`.
 
 `cargo test` is the short loop. Spike crates are separate packages under
 `spikes/<nnn>-*/`; run them only when measuring, from that directory, and
