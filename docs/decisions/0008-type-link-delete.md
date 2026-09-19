@@ -6,7 +6,7 @@
 - Related: [#110](https://github.com/Sannrox/mikura/issues/110), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md), [ADR 0012](0012-typed-values.md)
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR 0012](0012-typed-values.md) (value types only)
+- Amended by: [ADR 0012](0012-typed-values.md) (value types); [ADR 0013](0013-schema-evolution.md) (descriptor replacement)
 
 ## Context
 

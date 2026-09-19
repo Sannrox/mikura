@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Schema-evolution contract: replacing `mikura.schema/<kind>` is
+  additive-first. Recasting an existing property type, rename, and
+  outgoing-link retarget fail at descriptor write. Implementation is
+  [#170](https://github.com/Sannrox/mikura/issues/170)
+  ([#169](https://github.com/Sannrox/mikura/issues/169),
+  [ADR 0013](docs/decisions/0013-schema-evolution.md)).
 - Schema-declared boolean, integer, timestamp, and decimal values
   round-trip as canonical UTF-8 in `props`. Host JSON `v=1` stays a string
   map. Invalid values fail closed. Historical strings and M0 fields stay
