@@ -399,6 +399,7 @@ impl Store {
                 }
             }
             if let Some(schema) = self.schema(&record.kind)? {
+                schema.canonicalize_instance(&mut record)?;
                 schema.validate(&record)?;
             }
         }
