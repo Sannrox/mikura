@@ -45,6 +45,11 @@ exact-match token. `affects` is a foreign key string. No boolean,
 integer, timestamp, decimal, array, or structured value is required to
 answer the three queries or apply the one edit.
 
+[ADR 0012](../decisions/0012-typed-values.md) accepts a **proposed**
+Incident extension (`open` boolean, `priority` integer, `opened_at`
+timestamp, `cost` decimal scale 2) for typed-value tests. Those fields
+are not M0 requirements until the consumer accepts them.
+
 `SchemaDescriptor` / `Store::schema` / write-time validate /
 `Store::load_with_schema` are public. Relation cardinality is encoded on
 the descriptor; dangling-link behavior is still clerk-owned. The domain
@@ -121,7 +126,7 @@ memory, disk, or reopen budgets.
 | Delete | `hide` | **supported** | Hide `inc-1`; `load` defined; evaluate omits; reopen and sidecar rebuild agree |
 | Retry same Action | `apply_action` | **supported** | Same id and body is a replay; a different body or another identity fails closed |
 | Object-visibility filter | none | **not required** for this fixture | Property deny remains available |
-| Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** | Strings only; domain file not loaded |
+| Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** (contract [ADR 0012](../decisions/0012-typed-values.md), implementation [#168](https://github.com/Sannrox/mikura/issues/168)) | Strings only; domain file not loaded |
 | Named relation metadata | `mikura.schema` `links` | **supported** for `0..1` outgoing | Direction and cardinality live on the descriptor; dangling keys stay clerk-owned |
 
 A miss is a note, not an engine pick.

@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Typed-value contract: boolean, integer, timestamp, and decimal as
+  schema-declared logical types stored as canonical UTF-8 in `props`.
+  No `MIKURAV1` bump. Historical strings keep their meaning. Implementation
+  is [#168](https://github.com/Sannrox/mikura/issues/168)
+  ([#167](https://github.com/Sannrox/mikura/issues/167),
+  [ADR 0012](docs/decisions/0012-typed-values.md)).
 - `./build/release-images.sh` compiles `mikura-host` in a rust bookworm
   image and wraps it. The tag is `git describe`. Dirty trees are refused.
   `./build/release.sh` pushes that tag to `DOCKER_REGISTRY`. No compose

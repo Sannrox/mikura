@@ -29,7 +29,7 @@ today evaluate is hop + count/sum + optional bounded objects.
 | --- | --- |
 | `kind` | Type name (`Customer`, `Order`, …) |
 | `key` | Primary key within that kind |
-| `props` | String map |
+| `props` | String map. Non-string scalars are accepted in [ADR 0012](decisions/0012-typed-values.md) as canonical UTF-8 in this map and are not implemented until [#168](https://github.com/Sannrox/mikura/issues/168). |
 | `hidden` | Excluded from join indexing |
 | `action_id` | Optional clerk-assigned Action id that produced this generation |
 | `gen` | Generation. `Store::append` sets `existing+1` on update. On insert it keeps a non-zero first `gen` and sets `1` only when the incoming value is `0` |

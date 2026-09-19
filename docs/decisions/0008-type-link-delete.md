@@ -3,9 +3,10 @@
 - Status: accepted
 - Date: 2026-09-18
 - Owners: mikura maintainers
-- Related: [#110](https://github.com/Sannrox/mikura/issues/110), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md)
+- Related: [#110](https://github.com/Sannrox/mikura/issues/110), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md), [ADR 0012](0012-typed-values.md)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0012](0012-typed-values.md) (value types only)
 
 ## Context
 
@@ -38,14 +39,17 @@ fact, explicit edge records, or a new log magic.
 
 ### Value types
 
-The only persisted value type is a UTF-8 string. `tier` is an
-exact-match token. `affects` is a foreign-key string. Boolean, integer,
-timestamp, decimal, array, and structured values wait until a consumer
-fixture names one and a later format ADR says how to encode it.
+The only persisted value type for the product-loop fixture is a UTF-8
+string. `tier` is an exact-match token. `affects` is a foreign-key string.
+[ADR 0012](0012-typed-values.md) accepts boolean, integer, timestamp, and
+decimal as schema-declared logical types stored in the same UTF-8 `props`
+map. Array and structured values still wait until a consumer fixture names
+one.
 
-Historical and new `props` values stay strings. A later typed encoding
-must convert or reject explicitly. It must not reinterpret existing
-bytes.
+Historical and new untyped `props` values stay strings. A later typed
+encoding must convert or reject explicitly. It must not reinterpret
+existing bytes. ADR 0012 types new properties; recasting an existing
+property is [#169](https://github.com/Sannrox/mikura/issues/169).
 
 ### Null and absent
 
@@ -147,5 +151,6 @@ The implementation Issue must prove:
 5. Hidden identities load and stay out of evaluate.
 6. No `MIKURAV1` magic or second trailer appears.
 
-Revisit if a consumer fixture names a non-string scalar, a many-to-many
-link, or a delete that must hide from `load`.
+Non-string scalars are accepted in [ADR 0012](0012-typed-values.md).
+Revisit if a consumer fixture names a many-to-many link or a delete that
+must hide from `load`.
