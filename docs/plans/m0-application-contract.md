@@ -122,7 +122,7 @@ memory, disk, or reopen budgets.
 | Retry same Action | `apply_action` | **unsupported** | Same id is not idempotent |
 | Object-visibility filter | none | **not required** for this fixture | Property deny remains available |
 | Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** | Strings only; domain file not loaded |
-| Named relation metadata | property `affects` | **workaround** | Direction is encoded by the clerk; no cardinality check |
+| Named relation metadata | `mikura.schema` `links` | **supported** for `0..1` outgoing | Direction and cardinality live on the descriptor; dangling keys stay clerk-owned |
 
 A miss is a note, not an engine pick.
 

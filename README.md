@@ -4,8 +4,8 @@
 objects, not SQL tables or search hits. The object log is the store of
 record. Indexes are projections you can delete and rebuild.
 
-v1 is an in-process Rust library plus a one-process host. Multi-process
-hosting is later.
+v1 is an in-process Rust library plus a one-process host. Loopback bind
+is unauthenticated unless `--bearer` is set. Multi-process hosting is later.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 

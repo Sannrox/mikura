@@ -85,6 +85,40 @@ impl CountScratch {
         }
     }
 
+    fn reset_reachable(&mut self, intern_len: usize) {
+        let words = intern_len.div_ceil(64);
+        if self.reachable.len() < words {
+            self.reachable.resize(words, 0);
+        } else {
+            self.reachable[..words].fill(0);
+        }
+    }
+
+    fn amounts_table<'a>(
+        maps: &'a JoinMaps,
+        sum_kind: &str,
+        sum_property: &str,
+    ) -> Option<&'a HashMap<u32, i64>> {
+        match (
+            maps.intern_ix.get(sum_kind),
+            maps.intern_ix.get(sum_property),
+        ) {
+            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
+            _ => None,
+        }
+    }
+
+    fn mark_root(reachable: &mut [u64], root: u32) -> bool {
+        let word = root as usize / 64;
+        let bit = 1u64 << (root % 64);
+        if reachable[word] & bit == 0 {
+            reachable[word] |= bit;
+            true
+        } else {
+            false
+        }
+    }
+
     fn fold_rollups(
         &mut self,
         maps: &JoinMaps,
@@ -92,12 +126,7 @@ impl CountScratch {
         join_property: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        let words = maps.intern.len().div_ceil(64);
-        if self.reachable.len() < words {
-            self.reachable.resize(words, 0);
-        } else {
-            self.reachable[..words].fill(0);
-        }
+        self.reset_reachable(maps.intern.len());
         let Some(rollup) = maps.measure_table(leaf_kind, join_property, sum_property) else {
             return (0, 0);
         };
@@ -110,10 +139,7 @@ impl CountScratch {
             if count == 0 {
                 continue;
             }
-            let word = root as usize / 64;
-            let bit = 1u64 << (root % 64);
-            if self.reachable[word] & bit == 0 {
-                self.reachable[word] |= bit;
+            if Self::mark_root(&mut self.reachable, root) {
                 reachable += 1;
             }
             total += sum;
@@ -129,19 +155,8 @@ impl CountScratch {
         sum_kind: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        let words = maps.intern.len().div_ceil(64);
-        if self.reachable.len() < words {
-            self.reachable.resize(words, 0);
-        } else {
-            self.reachable[..words].fill(0);
-        }
-        let amounts = match (
-            maps.intern_ix.get(sum_kind),
-            maps.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
-            _ => None,
-        };
+        self.reset_reachable(maps.intern.len());
+        let amounts = Self::amounts_table(maps, sum_kind, sum_property);
         let sum_leaves = leaf_kind == sum_kind;
         let mut reachable = 0usize;
         let mut total = 0i64;
@@ -153,10 +168,7 @@ impl CountScratch {
                 if children.is_empty() {
                     continue;
                 }
-                let word = root as usize / 64;
-                let bit = 1u64 << (root % 64);
-                if self.reachable[word] & bit == 0 {
-                    self.reachable[word] |= bit;
+                if Self::mark_root(&mut self.reachable, root) {
                     reachable += 1;
                 }
                 if sum_leaves {
@@ -180,19 +192,8 @@ impl CountScratch {
         sum_kind: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        let words = maps.intern.len().div_ceil(64);
-        if self.reachable.len() < words {
-            self.reachable.resize(words, 0);
-        } else {
-            self.reachable[..words].fill(0);
-        }
-        let amounts = match (
-            maps.intern_ix.get(sum_kind),
-            maps.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
-            _ => None,
-        };
+        self.reset_reachable(maps.intern.len());
+        let amounts = Self::amounts_table(maps, sum_kind, sum_property);
         let sum_leaves = far_kind == sum_kind;
         let mut reachable = 0usize;
         let mut total = 0i64;
@@ -216,10 +217,7 @@ impl CountScratch {
             if !visible.is_some_and(|keys| keys.contains(value_id)) {
                 continue;
             }
-            let word = root as usize / 64;
-            let bit = 1u64 << (root % 64);
-            if self.reachable[word] & bit == 0 {
-                self.reachable[word] |= bit;
+            if Self::mark_root(&mut self.reachable, root) {
                 reachable += 1;
             }
             if sum_leaves {
@@ -243,13 +241,7 @@ impl CountScratch {
         self.paths.clear();
         self.paths.extend(roots.iter().map(|&key| (key, key)));
         let Some((last, rest)) = hops.split_last() else {
-            let amounts = match (
-                maps.intern_ix.get(sum_kind),
-                maps.intern_ix.get(sum_property),
-            ) {
-                (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
-                _ => None,
-            };
+            let amounts = Self::amounts_table(maps, sum_kind, sum_property);
             let mut total = 0i64;
             if root_kind == sum_kind {
                 for &(_, leaf) in &self.paths {
@@ -365,8 +357,10 @@ impl JoinMaps {
         None
     }
 
-    /// Distinct roots that still have a hop path, and the sum of `sum_property`
-    /// on every leaf along those paths (fan-out multiplies; diamonds do not).
+    /// Distinct visible roots (zero hops counts every visible root) and the
+    /// sum of `sum_property` on leaves whose kind is `sum_kind`, once per path
+    /// (fan-out multiplies; a diamond still counts the root once). A declared
+    /// last-hop sum reads parent rollups instead of walking every leaf.
     pub fn count_and_sum(
         &self,
         root_kind: &str,

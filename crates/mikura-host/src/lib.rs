@@ -1,11 +1,12 @@
 //! Single-process host over [`mikura::Store`].
 //!
-//! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `ApplyOverlay`, `Hide`, `Evaluate`, `Load`). JSON lines are
-//! envelope `{ v, token?, op, … }` (`v` omitted or `1`). Loopback bind is
-//! unauthenticated until `require_bearer` is called. Non-loopback bind
-//! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
-//! any bind, including loopback.
+//! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
+//! `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`,
+//! `evaluate`, `load`. JSON lines are envelope `{ v, token?, op, … }`
+//! (`v` omitted or `1`). Loopback bind is unauthenticated until
+//! `require_bearer` is called. Non-loopback bind requires a clerk-owned
+//! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
+//! loopback.
 //! This crate does not know tenants, policy, receipts, or principals.
 
 use std::collections::HashMap;

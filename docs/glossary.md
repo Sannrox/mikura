@@ -5,11 +5,11 @@ meaning; say it is undefined.
 
 | Term | Meaning |
 | --- | --- |
-| **Object** | A typed record with a primary `key`, `props`, `hidden` flag, and `gen`. Identity is `(kind, key)`. |
+| **Object** | A typed record with a primary `key`, `props`, `hidden` flag, optional `action_id`, and `gen`. Identity is `(kind, key)`. |
 | **Generation** (`gen`) | Monotonic version of that identity. `Store::append` bumps it. In edition 2021 the field is named `gen`; it must be renamed before an edition 2024 bump. |
 | **Object log** | Append-only 4 KiB CRC pages. Authority for identity. [ADR 0001](decisions/0001-paged-log.md). |
 | **Backup** | A copy of the object log plus the optional `{log}.joins` sidecar. Restore is `Host::open` on the copy. The sidecar is a rebuildable projection, never recovery material. There is no backup RPC. |
-| **Superblock** | Page 0 of the log. Holds magic `MIKURAV1`, page size, and `committed_pages`. |
+| **Superblock** | Page 0 of the log. Holds CRC32, magic `MIKURAV1`, page size, and `committed_pages`. |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |
 | **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN04`). Interned property pairs plus slim identity including optional Action id; hop/sum indexes omit hidden rows; schema-named last-hop sums persist as parent rollups. Dirty commits may add `{log}.joins.delta` (`MKJOIN4D`). Checksummed; deletable; rebuilt from the log. Old `MKJOIN03` fails closed until deleted. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0006](decisions/0006-action-provenance.md), [ADR 0010](decisions/0010-last-hop-measures.md). |
@@ -27,8 +27,8 @@ meaning; say it is undefined.
 | **Dual-read** | Compare a projection answer to a log replay (or a slower oracle) on the same fixture. |
 | **Clerk / warehouse** | Control plane stores who/policy/receipts (clerk). mikura stores objects (warehouse). |
 | **mikura-ingest** | Write orchestrator crate in this repo. Depends on `mikura` only. Clerk maps records; this crate merges by identity and appends. |
-| **Edit overlay** | Admitted named-property patch for one identity. The last accepted patch persists as `mikura.overlay/{kind}/{key}`. A later visible source write keeps those keys and takes unedited keys from source ([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)). `apply_action` and `MergeIngest` remain whole-record replace. |
+| **Edit overlay** | Admitted named-property patch for one identity. The last accepted patch persists as `mikura.overlay/{kind}/{key}`. A later visible source write keeps those keys and takes unedited keys from source ([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)). `apply_action` stays a whole-record replace. `MergeIngest` last-wins in the cycle, then appends as source writes (overlay merges). |
 | **Snapshot changelog** | Diff of two source snapshots by `(kind, key)` into upserts and hides. A changed Action id is a payload change. Empty diff appends nothing. Output is source input to merge. |
 | **Stream bound** | Max outstanding uncommitted records on `StreamIngest`. Excess `push` fails closed. |
-| **mikura-host** | Single-process host. JSON RPCs over `Store` (`ingest_batch`, stream push/flush, `apply_action`, `apply_overlay`, `evaluate`, `load`). Loopback bind is unauthenticated unless `--bearer` is set. Non-loopback bind requires a clerk-owned bearer on every RPC ([ADR 0007](decisions/0007-host-bearer.md)). A line over `--request-bound` is `RequestBound`. Assembling the request line past `--request-timeout-ms` is `RequestTimeout`. After a complete line, evaluate and ingest run to completion. |
+| **mikura-host** | Single-process host. JSON RPCs over `Store` (`ingest_batch`, stream push/flush, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`). Required `--log`; `--bind` default `127.0.0.1:0`; `--stream-bound` default 8. Loopback bind is unauthenticated unless `--bearer` is set. Non-loopback bind requires a clerk-owned bearer on every RPC ([ADR 0007](decisions/0007-host-bearer.md)). A line over `--request-bound` is `RequestBound`. Assembling the request line past `--request-timeout-ms` is `RequestTimeout`. After a complete line, evaluate and ingest run to completion. |
 | **Spike** | Throwaway harness under `spikes/`. A spike may use JSONL or SQLite as a *vehicle*. That vehicle is not mikura’s store of record. |

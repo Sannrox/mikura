@@ -14,6 +14,9 @@ window.
   `MKJOIN04`, overlay, bounded listing, last-hop measures, and clerk bearer.
   Present-tense VISION/ADR/plan claims now match the `#137` ingest finish
   and `#152` 40 ms hold.
+- `Store::apply_action` is a whole-record replace again: it no longer
+  re-applies a visible `mikura.overlay` (ADR 0009). Source ingest still
+  merges. Host rustdocs name the snake_case wire `op`s.
 
 - Host `RequestTimeout` is the request-line wall-clock.
   `RequestBound` is the byte bound. After a complete line is accepted,

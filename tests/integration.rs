@@ -933,6 +933,51 @@ fn overlay_refresh_keeps_admitted_note() {
 }
 
 #[test]
+fn apply_action_replaces_without_merging_overlay() {
+    let tmp = TempLog::new("overlay-apply-action");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        )],
+    )
+    .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "acked".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            Some(1),
+        )
+        .unwrap();
+    store
+        .apply_action(Action {
+            id: "act-inc-1-rename".into(),
+            kind: "incident".into(),
+            key: "inc-1".into(),
+            props: HashMap::from([
+                ("name".into(), "elevated latency".into()),
+                ("affects".into(), "svc-api".into()),
+            ]),
+        })
+        .unwrap();
+    let replaced = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(!replaced.props.contains_key("note"));
+    assert_eq!(replaced.action_id.as_deref(), Some("act-inc-1-rename"));
+}
+
+#[test]
 fn hide_drops_identity_from_join_maps_and_rebuilds() {
     let tmp = TempLog::new("hide-joins");
     let mut store = Store::create(tmp.path()).unwrap();

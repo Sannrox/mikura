@@ -21,7 +21,7 @@ that can lag written pages so a crash cannot promote an un-fsynced page.
 
 The mikura `Store` log is 4 KiB CRC32 pages (`src/log.rs`).
 
-- Page 0 is a superblock: magic `MIKURAV1` (8 bytes), page size,
+- Page 0 is a superblock: CRC32, magic `MIKURAV1` (8 bytes), page size,
   `committed_pages`.
 - The crate was briefly named `kura` in private development. `MIKURAV1`
   is the only product magic; there was no published `KURAV1` format.

@@ -1,5 +1,6 @@
-//! Loopback ingest/evaluate process. `--bearer` arms the RPC envelope on any
-//! bind; non-loopback bind still requires a clerk bearer.
+//! Single-process host: ingest, evaluate, load, apply_action, apply_overlay,
+//! and hide. `--bearer` arms the RPC envelope on any bind; non-loopback bind
+//! still requires a clerk bearer.
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
