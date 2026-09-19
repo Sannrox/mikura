@@ -29,7 +29,7 @@ application is complete.
 | Surface | Present implementation | Gap for the first application |
 | --- | --- | --- |
 | Object model | `(kind, key)`, string properties, generation, hidden flag, optional Action id, supplied `mikura.schema` validation in [Store](../../src/store/mod.rs) | Non-string scalars; schema migration beyond hide-and-replace |
-| Links | Property-based joins in both directions in [Hop](../../src/objectset.rs) | Named relation definitions, cardinality and dangling-link behavior; explicit edges if the workflow requires them |
+| Links | Property-based joins in both directions in [Hop](../../src/objectset.rs); named `SchemaLink` rules with outgoing `0..1` cardinality | Dangling-link behavior; explicit edges if the workflow requires them |
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs) | Typed comparisons; sort, composed predicates, and cursors only when a fixture's expected answers are ambiguous without them ([#122](https://github.com/Sannrox/mikura/issues/122)) |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Retry/idempotency beyond expected generation; source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)) |
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs) | Explicit trusted-caller boundary and complete enforcement across supported operations |

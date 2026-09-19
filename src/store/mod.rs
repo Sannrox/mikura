@@ -61,17 +61,10 @@ impl Store {
     pub fn create_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         let _ = std::fs::remove_file(Self::join_map_path(log));
         let _ = std::fs::remove_file(Self::join_delta_path(log));
-        Ok(Self {
-            log: log.to_path_buf(),
-            writer: LogWriter::create(log, sync)?,
-            identity: HashMap::new(),
-            hidden_props: HashMap::new(),
-            joins: JoinMaps::default(),
-            dirty: HashSet::new(),
-            has_checkpoint: false,
-            delta_bytes: 0,
-            delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
-        })
+        Ok(Self::empty(
+            log.to_path_buf(),
+            LogWriter::create(log, sync)?,
+        ))
     }
 
     pub fn open(log: &Path) -> Result<Self, String> {
@@ -79,9 +72,15 @@ impl Store {
     }
 
     pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        let mut store = Self {
-            log: log.to_path_buf(),
-            writer: LogWriter::open(log, sync)?,
+        let mut store = Self::empty(log.to_path_buf(), LogWriter::open(log, sync)?);
+        store.install_projection()?;
+        Ok(store)
+    }
+
+    fn empty(log: PathBuf, writer: LogWriter) -> Self {
+        Self {
+            log,
+            writer,
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
             joins: JoinMaps::default(),
@@ -89,9 +88,7 @@ impl Store {
             has_checkpoint: false,
             delta_bytes: 0,
             delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
-        };
-        store.install_projection()?;
-        Ok(store)
+        }
     }
 
     /// Use a tiny compact bound in tests so a few dirty-set frames can exceed
@@ -299,7 +296,8 @@ impl Store {
         self.commit()
     }
 
-    /// Reserve intern capacity before a batch of new property or value tokens.
+    /// Reserve intern capacity before a batch of new kind, key, property,
+    /// value, or Action-id tokens.
     pub fn reserve_intern(&mut self, additional: usize) {
         self.joins.reserve(additional);
     }
@@ -307,7 +305,26 @@ impl Store {
     /// Buffer a record on the writer and update live maps. Durability requires
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
-    pub fn append_uncommitted(&mut self, mut record: ObjectRecord) -> Result<(), String> {
+    ///
+    /// Visible source writes of a non-hidden identity merge a visible
+    /// `mikura.overlay` and validate a visible `mikura.schema`. Hide of the
+    /// instance also hides that overlay. [`Self::apply_action`] uses
+    /// [`Self::append_replace`] so it stays a whole-record replace.
+    pub fn append_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
+        self.write_uncommitted(record, true)
+    }
+
+    /// Buffer a whole-record replace. Overlay merge is skipped; schema
+    /// validation still runs on a visible instance.
+    pub(crate) fn append_replace(&mut self, record: ObjectRecord) -> Result<(), String> {
+        self.write_uncommitted(record, false)
+    }
+
+    fn write_uncommitted(
+        &mut self,
+        mut record: ObjectRecord,
+        merge_overlay: bool,
+    ) -> Result<(), String> {
         if let Some(id) = record.action_id.as_deref() {
             Self::require_action_id(id, "empty action id")?;
         }
@@ -320,7 +337,7 @@ impl Store {
                 .identity
                 .get(&(record.kind.clone(), record.key.clone()))
                 .is_some_and(|meta| meta.hidden);
-            if !was_hidden {
+            if !was_hidden && merge_overlay {
                 if let Some(overlay) = self.overlay(&record.kind, &record.key)? {
                     record.props = overlay.apply(std::mem::take(&mut record.props));
                     if record.action_id.is_none() {
@@ -367,7 +384,7 @@ impl Store {
         Ok(())
     }
 
-    /// Group-commit the current writer pages and persist join maps.
+    /// Group-commit the current writer pages and persist the sidecar.
     pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
         self.persist_projection()
@@ -380,14 +397,15 @@ impl Store {
 
     pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
         Self::require_action_id(&action.id, "action id required")?;
-        self.append(ObjectRecord {
+        self.append_replace(ObjectRecord {
             gen: 0,
             kind: action.kind,
             key: action.key,
             hidden: false,
             action_id: Some(action.id),
             props: action.props,
-        })
+        })?;
+        self.commit()
     }
 
     /// Hide `(kind, key)` from evaluate. [`Self::load`] still returns the last

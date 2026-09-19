@@ -33,7 +33,8 @@ either from a parent key to pointing children or by following a join
 property, then count/sum, plus optional exact-match on root properties and
 bounded object listing. A committed `mikura.schema` descriptor validates
 later writes; a committed `mikura.overlay` merges clerk edits onto later
-source writes. The deny list is not a principal; policy stays in the clerk.
+source writes. Schema-named last-hop sums persist as parent rollups on
+`MKJOIN04`. The deny list is not a principal; policy stays in the clerk.
 
 ## Where data is saved
 

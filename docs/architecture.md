@@ -288,6 +288,10 @@ must carry a matching `token`. Non-loopback bind still requires `--bearer`.
 also refuses a non-loopback listener unless `require_bearer` has been
 called. `open` plus `handle` without a stored bearer stays the in-process
 clerk path ([ADR 0007](decisions/0007-host-bearer.md)).
+Required CLI `--log PATH`. `--bind` defaults to `127.0.0.1:0`.
+`--stream-bound` defaults to 8 outstanding uncommitted stream records.
+Host `evaluate` / `load` / `hide` accept at most one wire `deny` pair
+(`kind` + `property`); a longer list fails closed.
 A JSON line larger than `--request-bound` (default 1 MiB) fails closed
 with `RequestBound`. Assembling that line is a wall-clock budget of
 `--request-timeout-ms` (default 5 s), not an idle gap between bytes;
