@@ -71,6 +71,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | product-loop hide | Host `hide` is the product-loop delete. `load` stays defined; evaluate omits the identity. Reopen and sidecar rebuild agree ([#157](https://github.com/Sannrox/mikura/issues/157)). |
 | apply_action retry ADR | A supplied Action id is the `apply_action` retry key as well as provenance. Same id and body is a replay; a different body or another identity fails closed. Not implemented ([#158](https://github.com/Sannrox/mikura/issues/158), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
 | apply_action retry | `apply_action` replays a repeated Action id when the body matches and fails closed on a different body or another identity. Reopen agrees. Overlay and hide stay ([#159](https://github.com/Sannrox/mikura/issues/159), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
+| host image | `./build/release-images.sh` wraps `mikura-host` with a git-describe tag. Dirty trees are refused. No clerk compose stack ([#165](https://github.com/Sannrox/mikura/issues/165)). |
 
 ## Next (this repository, in order)
 

@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- `./build/release-images.sh` compiles `mikura-host` in a rust bookworm
+  image and wraps it. The tag is `git describe`. Dirty trees are refused.
+  `./build/release.sh` pushes that tag to `DOCKER_REGISTRY`. No compose
+  stack ([#165](https://github.com/Sannrox/mikura/issues/165)).
 - `Store::apply_action` and host `apply_action` replay a repeated Action
   id when the body matches and fail closed on a different body or
   another identity. `expected_gen` still applies to a new id. Overlay
