@@ -70,16 +70,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | last-hop remasure | After #151, 10⁷ hop count+sum **40 ms hold** vs 500 ms on declared rollups; dual-read holds; 7.1 GiB on 32 GiB ([#152](https://github.com/Sannrox/mikura/issues/152), spike 011 addendum). |
 | product-loop hide | Host `hide` is the product-loop delete. `load` stays defined; evaluate omits the identity. Reopen and sidecar rebuild agree ([#157](https://github.com/Sannrox/mikura/issues/157)). |
 | apply_action retry ADR | A supplied Action id is the `apply_action` retry key as well as provenance. Same id and body is a replay; a different body or another identity fails closed. Not implemented ([#158](https://github.com/Sannrox/mikura/issues/158), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
+| apply_action retry | `apply_action` replays a repeated Action id when the body matches and fails closed on a different body or another identity. Reopen agrees. Overlay and hide stay ([#159](https://github.com/Sannrox/mikura/issues/159), [ADR 0011](docs/decisions/0011-action-id-retry-key.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M4 are accepted and implemented. Remaining items:
 
-1. **Honor apply_action retry:** treat a repeated Action id as a replay
-   per [ADR 0011](docs/decisions/0011-action-id-retry-key.md)
-   ([#159](https://github.com/Sannrox/mikura/issues/159)).
-2. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
+1. **M5 — evidence-led expansion:** add query, ingest, schema, and capacity
    features justified by consumer fixtures and measurements.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery

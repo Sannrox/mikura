@@ -73,6 +73,8 @@ pub enum HostRequest {
         key: String,
         #[serde(default)]
         props: HashMap<String, String>,
+        #[serde(default)]
+        expected_gen: Option<u64>,
     },
     ApplyOverlay {
         id: String,
@@ -227,12 +229,16 @@ impl Host {
                 kind,
                 key,
                 props,
-            } => ack(self.store.apply_action(Action {
-                id,
-                kind,
-                key,
-                props,
-            })),
+                expected_gen,
+            } => ack(self.store.apply_action(
+                Action {
+                    id,
+                    kind,
+                    key,
+                    props,
+                },
+                expected_gen,
+            )),
             HostRequest::ApplyOverlay {
                 id,
                 kind,

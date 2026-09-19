@@ -27,6 +27,15 @@ pub struct ObjectRecord {
     pub props: HashMap<String, String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ActionCommit {
+    kind: String,
+    key: String,
+    gen: u64,
+    hidden: bool,
+    props: HashMap<String, String>,
+}
+
 pub struct Store {
     log: PathBuf,
     writer: LogWriter,
@@ -37,6 +46,8 @@ pub struct Store {
     has_checkpoint: bool,
     delta_bytes: u64,
     delta_compact_bytes: u64,
+    action_commits: HashMap<String, ActionCommit>,
+    action_commits_from_log: bool,
 }
 
 impl Store {
@@ -88,6 +99,8 @@ impl Store {
             has_checkpoint: false,
             delta_bytes: 0,
             delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
+            action_commits: HashMap::new(),
+            action_commits_from_log: true,
         }
     }
 
@@ -131,7 +144,60 @@ impl Store {
         }
     }
 
+    fn remember_action(&mut self, record: &ObjectRecord) {
+        let Some(id) = record.action_id.as_deref().filter(|id| !id.is_empty()) else {
+            return;
+        };
+        self.action_commits
+            .entry(id.to_string())
+            .or_insert_with(|| ActionCommit {
+                kind: record.kind.clone(),
+                key: record.key.clone(),
+                gen: record.gen,
+                hidden: record.hidden,
+                props: record.props.clone(),
+            });
+    }
+
+    fn ensure_action_commits(&mut self) -> Result<(), String> {
+        if self.action_commits_from_log {
+            return Ok(());
+        }
+        let since_open = std::mem::take(&mut self.action_commits);
+        for record in read_records(&self.log)? {
+            self.remember_action(&record);
+        }
+        for (id, commit) in since_open {
+            self.action_commits.entry(id).or_insert(commit);
+        }
+        self.action_commits_from_log = true;
+        Ok(())
+    }
+
+    fn require_expected_gen(
+        &self,
+        kind: &str,
+        key: &str,
+        expected_gen: Option<u64>,
+    ) -> Result<(), String> {
+        let Some(expected) = expected_gen else {
+            return Ok(());
+        };
+        let id = (kind.to_string(), key.to_string());
+        match self.identity.get(&id) {
+            Some(meta) if meta.gen != expected => Err(format!(
+                "stale generation: expected {expected}, live {}",
+                meta.gen
+            )),
+            None if expected != 0 => {
+                Err(format!("stale generation: expected {expected}, live none"))
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn apply_record(&mut self, record: ObjectRecord) {
+        self.remember_action(&record);
         let id = (record.kind.clone(), record.key.clone());
         let action_id = record
             .action_id
@@ -237,20 +303,7 @@ impl Store {
     ) -> Result<(), String> {
         Self::require_action_id(&action_id, "action id required")?;
         let id = (patch.kind.clone(), patch.key.clone());
-        if let Some(expected) = expected_gen {
-            match self.identity.get(&id) {
-                Some(meta) if meta.gen != expected => {
-                    return Err(format!(
-                        "stale generation: expected {expected}, live {}",
-                        meta.gen
-                    ));
-                }
-                None if expected != 0 => {
-                    return Err(format!("stale generation: expected {expected}, live none"));
-                }
-                _ => {}
-            }
-        }
+        self.require_expected_gen(&patch.kind, &patch.key, expected_gen)?;
         patch.action_id = Some(action_id.clone());
         let instance_hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
         let instance_exists = self.identity.contains_key(&id);
@@ -395,8 +448,33 @@ impl Store {
         self.writer.fsync_count()
     }
 
-    pub fn apply_action(&mut self, action: Action) -> Result<(), String> {
+    /// Whole-record replace with a clerk Action id (ADR 0006).
+    ///
+    /// A repeated id with the same body (`kind`, `key`, `hidden = false`,
+    /// `props`) is a replay: no append (ADR 0011). The same id with a
+    /// different body or on another identity fails closed. Ids are unique
+    /// in the store; lookup rebuilds from the log. `expected_gen` still
+    /// applies to a new id. A replay that already committed does not append.
+    pub fn apply_action(
+        &mut self,
+        action: Action,
+        expected_gen: Option<u64>,
+    ) -> Result<(), String> {
         Self::require_action_id(&action.id, "action id required")?;
+        self.ensure_action_commits()?;
+        if let Some(committed) = self.action_commits.get(&action.id).cloned() {
+            if committed.kind != action.kind || committed.key != action.key {
+                return Err(format!(
+                    "action id {} already committed on {}/{}",
+                    action.id, committed.kind, committed.key
+                ));
+            }
+            if committed.hidden || committed.props != action.props {
+                return Err(format!("action id {} body conflict", action.id));
+            }
+            return Ok(());
+        }
+        self.require_expected_gen(&action.kind, &action.key, expected_gen)?;
         self.append_replace(ObjectRecord {
             gen: 0,
             kind: action.kind,
@@ -464,6 +542,7 @@ impl Store {
         self.hidden_props.clear();
         self.joins = JoinMaps::default();
         self.dirty.clear();
+        self.action_commits.clear();
         for record in read_records(&self.log)? {
             let schema_kind = record.kind.clone();
             let schema_key = record.key.clone();
@@ -471,6 +550,7 @@ impl Store {
             self.maybe_refresh_schema(&schema_kind, &schema_key)?;
         }
         self.dirty.clear();
+        self.action_commits_from_log = true;
         Ok(())
     }
 

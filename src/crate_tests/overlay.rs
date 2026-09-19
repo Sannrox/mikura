@@ -107,15 +107,18 @@ fn apply_action_replaces_without_merging_overlay() {
         )
         .unwrap();
     store
-        .apply_action(Action {
-            id: "act-inc-1-rename".into(),
-            kind: "incident".into(),
-            key: "inc-1".into(),
-            props: HashMap::from([
-                ("name".into(), "elevated latency".into()),
-                ("affects".into(), "svc-api".into()),
-            ]),
-        })
+        .apply_action(
+            Action {
+                id: "act-inc-1-rename".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([
+                    ("name".into(), "elevated latency".into()),
+                    ("affects".into(), "svc-api".into()),
+                ]),
+            },
+            None,
+        )
         .unwrap();
     let replaced = store
         .load("incident", "inc-1", &PropertyAcl::allow_all())

@@ -13,15 +13,18 @@ fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
     assert_eq!(visible.sum_amount, 10);
 
     store
-        .apply_action(Action {
-            id: "act-s2".into(),
-            kind: "Shipment".into(),
-            key: "s2".into(),
-            props: HashMap::from([
-                ("order_id".into(), "o1".into()),
-                ("amount".into(), "5".into()),
-            ]),
-        })
+        .apply_action(
+            Action {
+                id: "act-s2".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
         .unwrap();
     let after = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(after.sum_amount, 15);

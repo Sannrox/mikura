@@ -82,7 +82,7 @@ disappear. Immediate `load` of `inc-1` shows `note=acked` and
 | --- | --- | --- |
 | Source refresh | Re-ingest the same seed after the edit | `apply_overlay` then `ingest_batch` keeps overlay keys (`note`) and the overlay Action id. `apply_action` then `ingest_batch` still replaces the whole record. |
 | Delete | Source delete of an identity should hide it from evaluate and keep `load` defined | Host `hide` (`kind`+`key`). `load` still returns the hidden record; evaluate list/hop omit it. `ChangelogIngest` hide remains the ingest-side path. |
-| Retry | Repeating the same admitted edit must not invent a second effect | `apply_action` with the same Action id appends another generation. There is no idempotency key. |
+| Retry | Repeating the same admitted edit must not invent a second effect | `apply_action` with the same Action id and body is a replay. A different body or another identity fails closed. |
 | Read-after-write | The next `load` / `evaluate` on the same host sees the last committed generation | Supported in-process. After process exit, `Host::open` / `Store::open` rebuilds from the log and returns the last generation. No public commit-position waiter ([#123](https://github.com/Sannrox/mikura/issues/123)). |
 | Object visibility | Does this fixture need object-level hiding in addition to property denies? | No. The seed has two objects and no per-caller hide. Request property denies remain. Principals and policy stay in the clerk. |
 
@@ -119,7 +119,7 @@ memory, disk, or reopen budgets.
 | Refresh source | `ingest_batch` | **supported** after `apply_overlay` | Overlay keys (`note`) and the overlay Action id survive refresh |
 | Reopen | `load` after `Host::open` | **supported** | Last generation survives process exit |
 | Delete | `hide` | **supported** | Hide `inc-1`; `load` defined; evaluate omits; reopen and sidecar rebuild agree |
-| Retry same Action | `apply_action` | **unsupported** | Same id is not idempotent |
+| Retry same Action | `apply_action` | **supported** | Same id and body is a replay; a different body or another identity fails closed |
 | Object-visibility filter | none | **not required** for this fixture | Property deny remains available |
 | Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** | Strings only; domain file not loaded |
 | Named relation metadata | `mikura.schema` `links` | **supported** for `0..1` outgoing | Direction and cardinality live on the descriptor; dangling keys stay clerk-owned |
