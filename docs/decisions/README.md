@@ -18,6 +18,7 @@ a new ADR. Allocate the next number and list it here.
 | [0011](0011-action-id-retry-key.md) | Action id as apply_action retry key | accepted |
 | [0012](0012-typed-values.md) | Typed values and legacy-data compatibility | accepted |
 | [0013](0013-schema-evolution.md) | Schema evolution for typed objects and edits | accepted |
+| [0014](0014-externally-supplied-restrictions.md) | Externally supplied object visibility and operation restrictions | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should
