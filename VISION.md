@@ -68,9 +68,9 @@ deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md
 
 **v2 (done):** persist join maps in `Store` ([#1](https://github.com/Sannrox/mikura/issues/1)); group commit, ingest crate, merge, changelog; slim interned sidecar ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)). After slim maps, 10⁷ query was a **2.6 s miss** ([#31](https://github.com/Sannrox/mikura/issues/31)). After hop scratch, intern-id checkpoint load, and intern-once ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)), 10⁷ query was a **1012 ms miss** ([#43](https://github.com/Sannrox/mikura/issues/43)). Dual-read holds.
 
-**v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest is still open.
+**v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest later finished after bounded persist ([#137](https://github.com/Sannrox/mikura/issues/137)).
 
-**v4 (done):** hop count/sum without materializing every leaf path ([#59](https://github.com/Sannrox/mikura/issues/59)). After that fold, 10⁷ query is an **878 ms miss** vs 500 ms and 10⁶ holds. Dual-read holds. Compute stays closed; a miss is not an engine pick.
+**v4 (done):** hop count/sum without materializing every leaf path ([#59](https://github.com/Sannrox/mikura/issues/59)). After that fold, 10⁷ query was an **878 ms miss** vs 500 ms. After last-hop measures, the same query is a **40 ms hold** ([#152](https://github.com/Sannrox/mikura/issues/152)). Dual-read holds. Compute stays closed; a miss is not an engine pick.
 
 **v5 (done):** exact-match filter on evaluate (question 4) ([#45](https://github.com/Sannrox/mikura/issues/45)); load by primary key ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language.
 
@@ -93,12 +93,12 @@ Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
 wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
 **v9 (compact no-action):** the append-only log plus a deletable sidecar stay
-enough. 10⁷ is 613 MiB log / 18.9 s open; 10⁸ ingest did not finish. No
-checkpoint ADR. Revisit if a later envelope misses on disk or open time
-because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)).
-Envelopes at 10⁹ ([#54](https://github.com/Sannrox/mikura/issues/54)) then
-10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)). Compute backend
-only after a published in-process miss.
+enough. 10⁸ ingest finished after bounded persist ([#137](https://github.com/Sannrox/mikura/issues/137)).
+No log-checkpoint ADR. Revisit if a later envelope misses on disk or open
+time because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)).
+10⁹ closed without a billion-object ingest ([#54](https://github.com/Sannrox/mikura/issues/54)).
+10¹⁰ waits for a named consumer envelope ([#55](https://github.com/Sannrox/mikura/issues/55)).
+Compute backend only after a published in-process miss.
 
 **v10 (one process):** one process remains the hosted form
 ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)).
@@ -145,9 +145,10 @@ or policy compile into mikura. Never make mikura the policy engine.
 - **Vendor mikura into the consumer.** Independent crate; reference later.
 - **SQL as mikura’s store of record.** SQL may remain a clerk. It is not the
   graph engine.
-- **Start with cluster compute.** In-process hop count still misses 10⁷
-  (878 ms after the hop fold; an earlier 0 ms hop-projection figure did
-  not hold). Cluster compute waits for a miss in-process cannot fix, plus
-  an envelope.
+- **Start with cluster compute.** Spike 008 held 10⁷ hop count at **0 ms**
+  with a dedicated hop projection. After the product hop fold, 10⁷ was an
+  **878 ms miss**. After last-hop measures it is a **40 ms hold**
+  ([#152](https://github.com/Sannrox/mikura/issues/152)). Cluster compute
+  waits for a miss in-process cannot fix, plus an envelope.
 - **Clone a vendor API.** Copy the split (ingest / store / object sets / ACL
   / writeback), not names or protobufs.

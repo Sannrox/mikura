@@ -20,7 +20,8 @@ and for contributing to the kernel. Not a production hosted store.
 | Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Cluster compute |
 | Loopback ingest/evaluate host; non-loopback bind with clerk bearer ([ADR 0003](docs/decisions/0003-hosted-service.md), [ADR 0007](docs/decisions/0007-host-bearer.md)) | Multi-process hosting |
 | Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | Non-string scalars |
-| Property deny-list (fail closed) | |
+| Last-hop measures on `MKJOIN04` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
+| Property deny-list (fail closed); exact-match filter on evaluate | |
 | Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |
 | Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) | |
 
@@ -88,10 +89,10 @@ Default hops find `far_kind` rows that point at the frontier key;
 ```
 src/                      mikura library (log, store, evaluate)
 crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append)
-crates/mikura-host/       loopback ingest/evaluate host and process binary
+crates/mikura-host/       ingest/evaluate/load host, process binary, product-loop example
 tests/integration.rs      public-API integration suite (unit tests stay in-crate)
 crates/mikura-host/tests/e2e.rs  host-process e2e suite
-docs/                     architecture, glossary, ADRs
+docs/                     architecture, glossary, ADRs, plans
 spikes/              historical measurements; not the store
 VISION.md            why this project exists
 ROADMAP.md           what to build next, in order
@@ -103,6 +104,7 @@ ROADMAP.md           what to build next, in order
 | --- | --- |
 | [VISION.md](VISION.md) | Product purpose and boundary |
 | [ROADMAP.md](ROADMAP.md) | Ordered next work |
+| [docs/plans/application-roadmap.md](docs/plans/application-roadmap.md) | Application-led milestone proposal |
 | [docs/architecture.md](docs/architecture.md) | How the crate works today |
 | [docs/glossary.md](docs/glossary.md) | Terms (log, projection, envelope, …) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, pull requests |

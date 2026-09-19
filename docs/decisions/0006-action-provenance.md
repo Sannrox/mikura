@@ -82,7 +82,8 @@ journal to this crate.
 - Implementation landed ([#64](https://github.com/Sannrox/mikura/issues/64)).
   Codecs emit the trailing Action id only when the generation has one
   ([#106](https://github.com/Sannrox/mikura/issues/106)) and use
-  `MKJOIN03` / `MKJOIN3D` sidecar magic.
+  `MKJOIN03` / `MKJOIN3D` sidecar magic. Current magic is `MKJOIN04` /
+  `MKJOIN4D` ([ADR 0010](0010-last-hop-measures.md)).
 
 ## Validation
 

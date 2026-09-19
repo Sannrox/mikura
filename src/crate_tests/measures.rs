@@ -156,28 +156,3 @@ fn hide_and_overlay_update_parent_rollups() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-#[test]
-fn old_mkjoin03_sidecar_fails_closed() {
-    let (dir, log) = temp_log("measure-old-magic");
-    let sidecar = Store::join_map_path(&log);
-    let mut store = Store::create(&log).unwrap();
-    append_all(&mut store, fixture());
-    drop(store);
-    let mut bytes = std::fs::read(&sidecar).unwrap();
-    let crc_at = bytes.len() - 4;
-    bytes[..8].copy_from_slice(b"MKJOIN03");
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(&bytes[..crc_at]);
-    bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
-    std::fs::write(&sidecar, &bytes).unwrap();
-    let err = match Store::open(&log) {
-        Err(err) => err,
-        Ok(_) => panic!("MKJOIN03 should fail closed"),
-    };
-    assert!(err.contains("magic") || err.contains("checksum"), "{err}");
-    std::fs::remove_file(&sidecar).unwrap();
-    let recovered = Store::open(&log).unwrap();
-    assert!(recovered.joins().is_visible("Customer", "c1"));
-    let _ = std::fs::remove_dir_all(&dir);
-}

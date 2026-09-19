@@ -58,7 +58,7 @@ per-page sync was ~175×.
 
 - `src/log.rs` unit test: an extra sealed page after the committed range is
   ignored.
-- Crate test in `src/crate_tests.rs`: `Store::open` after ingest matches live
+- Crate tests in `src/crate_tests/`: `Store::open` after ingest matches live
   evaluate.
 - Spikes 003–005: torn last page dropped; middle CRC fail closed; orphan
   pages ignored; group 32 measured.

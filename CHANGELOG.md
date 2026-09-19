@@ -11,7 +11,9 @@ window.
 
 - Shared live-row install, sidecar CRC, CSV split, and host deny/bearer
   helpers. Crate tests live under `src/crate_tests/`. Docs match
-  `MKJOIN03`, overlay, bounded listing, and clerk bearer.
+  `MKJOIN04`, overlay, bounded listing, last-hop measures, and clerk bearer.
+  Present-tense VISION/ADR/plan claims now match the `#137` ingest finish
+  and `#152` 40 ms hold.
 
 - Host `RequestTimeout` is the request-line wall-clock.
   `RequestBound` is the byte bound. After a complete line is accepted,
