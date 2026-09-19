@@ -25,6 +25,11 @@ window.
 
 ### Added
 
+- [ADR 0011](docs/decisions/0011-action-id-retry-key.md): a supplied
+  Action id is the `apply_action` retry key as well as provenance.
+  Same id and body is a replay; a different body or another identity
+  fails closed. No second key. Not implemented
+  ([#158](https://github.com/Sannrox/mikura/issues/158)).
 - Host JSON `hide` hides an identity (`kind`+`key`). `load` stays
   defined; evaluate list/hop omit it. Reopen and sidecar rebuild agree.
   Unknown identity and denied properties the hide would copy fail closed.
