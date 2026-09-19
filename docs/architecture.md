@@ -51,6 +51,7 @@ writes of that kind and `Store::load_with_schema`. `Store::load` still
 returns historical rows that predate the descriptor. Hidden instance
 writes skip validation (tombstones). Hidden schema rows are treated as
 absent. No schema row means today's unvalidated strings.
+Descriptor replacement compatibility is accepted in [ADR 0013](decisions/0013-schema-evolution.md) and not implemented until [#170](https://github.com/Sannrox/mikura/issues/170).
 [ADR 0008](decisions/0008-type-link-delete.md).
 [ADR 0006](decisions/0006-action-provenance.md).
 
