@@ -253,6 +253,13 @@ Host `load` uses the same omit-as-absent map. The wire does not grow a
 Never stored and denied-on-this-request look the same on the request
 view; dual-read is how a clerk distinguishes them.
 
+Object visibility as a request-scoped hide of kinds or identities is
+accepted in [ADR 0014](decisions/0014-externally-supplied-restrictions.md)
+and not implemented until [#179](https://github.com/Sannrox/mikura/issues/179).
+Restriction-invisible identities must not confirm existence on `load` and
+must not contribute to evaluate membership or aggregates. The process
+bearer stays a process secret, not a principal.
+
 ## Action writeback
 
 `Store::apply_action` requires a non-empty clerk-assigned `Action.id` and

@@ -76,13 +76,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M6 typed values | Schema `types` validate and round-trip through ingest, overlay, load, host JSON `v=1`, restart, and sidecar rebuild ([#168](https://github.com/Sannrox/mikura/issues/168), [ADR 0012](docs/decisions/0012-typed-values.md)). |
 | M6 schema-evolution contract | Descriptor replacement is additive-first. Recasting an existing property type, rename, and outgoing-link retarget fail at schema write. Historical load keeps stored bytes ([#169](https://github.com/Sannrox/mikura/issues/169), [ADR 0013](docs/decisions/0013-schema-evolution.md)). |
 | M6 schema evolution | Compatible descriptor replacement preserves stored bytes; recast, rename, and outgoing-link retarget fail closed at schema write. Overlay merge and Action bodies use the current descriptor ([#170](https://github.com/Sannrox/mikura/issues/170), [ADR 0013](docs/decisions/0013-schema-evolution.md)). |
+| M7 restriction contract | Trusted caller supplies a request-scoped hide/deny document. Object visibility and property restriction are separate axes. Principals stay out of the log ([#172](https://github.com/Sannrox/mikura/issues/172), [ADR 0014](docs/decisions/0014-externally-supplied-restrictions.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M6 are complete for their accepted scope. Remaining items:
 
-1. **M7 research:** composable object-set queries, externally supplied access, and editable many-to-many relationships ([#171](https://github.com/Sannrox/mikura/issues/171), [#172](https://github.com/Sannrox/mikura/issues/172), [#175](https://github.com/Sannrox/mikura/issues/175)).
+1. **M7 research:** composable object-set queries and editable many-to-many relationships ([#171](https://github.com/Sannrox/mikura/issues/171), [#175](https://github.com/Sannrox/mikura/issues/175)).
 2. **M9 research:** production workload and service acceptance budgets ([#185](https://github.com/Sannrox/mikura/issues/185)).
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
