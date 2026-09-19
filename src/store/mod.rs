@@ -391,6 +391,26 @@ impl Store {
         })
     }
 
+    /// Hide `(kind, key)` from evaluate. [`Self::load`] still returns the last
+    /// payload. Missing identity fails closed. Denied properties this hide
+    /// would copy fail closed. Overlay rows stay on the log under the
+    /// existing instance-hide rule.
+    pub fn hide(&mut self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<(), String> {
+        let current = self.load(kind, key, &PropertyAcl::allow_all())?;
+        for property in current.props.keys() {
+            acl.check(kind, property)
+                .map_err(|err| format!("{err:?}"))?;
+        }
+        self.append(ObjectRecord {
+            gen: 0,
+            kind: current.kind,
+            key: current.key,
+            hidden: true,
+            action_id: current.action_id,
+            props: current.props,
+        })
+    }
+
     pub fn joins(&self) -> &JoinMaps {
         &self.joins
     }

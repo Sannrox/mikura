@@ -136,7 +136,7 @@ hop/sum. `LocalCompute` answers from these maps, not from a hot object map.
 
 `mikura-ingest::BatchIngest::run` buffers records with `Store::append_uncommitted`
 and group-commits once via `Store::commit`. The `mikura` crate has no ingest
-types. Host `ingest_batch`, stream flush, `apply_action`, and `apply_overlay`
+types. Host `ingest_batch`, stream flush, `apply_action`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Source-sync offsets stay with the clerk.
 
@@ -233,6 +233,7 @@ this crate applies the request deny list.
 | --- | --- | --- |
 | `Store::load` / host `load` | on the request deny list | key absent from `props` (never `""`) |
 | evaluate aggregate | `(sum_kind, sum_property)` denied | `AclError::Denied` |
+| `Store::hide` / host `hide` | property this hide would copy | fail closed |
 | dual-read | load with allow-all, or delete the sidecar | stored values from the log |
 
 Host `load` uses the same omit-as-absent map. The wire does not grow a
@@ -250,6 +251,12 @@ indexes ignore the id. [ADR 0006](decisions/0006-action-provenance.md).
 Host JSON exposes the same writeback as `apply_action`. Ingest stays the
 source-snapshot path and does not become governed writeback.
 
+Host `hide` copies the last visible payload with `hidden: true`. Evaluate
+and join maps omit the identity. `load` still returns that hidden current
+object. Missing identity fails closed. Overlay keys stay on the log under
+the existing instance-hide rule; this op does not invent a second overlay
+rule or a hard-delete.
+
 ## Hosted service
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
@@ -265,12 +272,14 @@ include `v`. Required and unused fields by bind:
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `evaluate`, `load`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`. Evaluate accepts an
 optional exact-match `filter`. Omit or `null` filter means all visible roots.
 An empty `property` or `value` is a wire error, not a silent empty match.
 `load` returns the live object for `(kind, key)`
-and omits denied properties. Missing identity fails closed. The request ACL deny
-list fails closed on evaluate. Evaluate `object_bound` greater than zero
+and omits denied properties. Missing identity fails closed. `hide` hides
+that identity from evaluate and keeps `load` defined. The request ACL deny
+list fails closed on evaluate and on hide when the op would copy a denied
+property. Evaluate `object_bound` greater than zero
 returns matching objects on the same `v=1` envelope; overflow fails closed.
 Loopback bind is unauthenticated unless `--bearer` is set. Presenting
 `--bearer` arms the envelope on any bind, including loopback: every line

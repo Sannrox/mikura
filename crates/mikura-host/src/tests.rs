@@ -718,3 +718,114 @@ fn load_matches_in_process_and_omits_denied() {
     assert!(missing.load.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn hide_omits_from_evaluate_and_keeps_load() {
+    let (dir, log) = temp_log("hide");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch {
+        records: vec![
+            rec(
+                "component",
+                "svc-api",
+                false,
+                &[("name", "billing-api"), ("tier", "prod")],
+            ),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[("name", "elevated latency"), ("affects", "svc-api")],
+            ),
+        ],
+    });
+    let hidden = host.handle(HostRequest::Hide {
+        kind: "incident".into(),
+        key: "inc-1".into(),
+        deny: Vec::new(),
+    });
+    assert!(hidden.ok, "{hidden:?}");
+    let loaded = host.handle(HostRequest::Load {
+        kind: "incident".into(),
+        key: "inc-1".into(),
+        deny: Vec::new(),
+    });
+    assert!(loaded.ok, "{loaded:?}");
+    let loaded = loaded.load.expect("load payload");
+    assert!(loaded.hidden);
+    assert_eq!(
+        loaded.props.get("name").map(String::as_str),
+        Some("elevated latency")
+    );
+    let listed = host.handle(HostRequest::Evaluate {
+        request: WireEvaluate {
+            root_kind: "component".into(),
+            hops: Vec::new(),
+            sum_kind: "component".into(),
+            sum_property: "tier".into(),
+            deny: Vec::new(),
+            filter: Some(WireFilter {
+                property: "tier".into(),
+                value: "prod".into(),
+            }),
+            object_bound: 8,
+        },
+    });
+    assert!(listed.ok, "{listed:?}");
+    let listed = listed.evaluate.unwrap();
+    assert_eq!(listed.objects.len(), 1);
+    assert_eq!(listed.objects[0].key, "svc-api");
+    let hopped = host.handle(HostRequest::Evaluate {
+        request: WireEvaluate {
+            root_kind: "incident".into(),
+            hops: vec![WireHop {
+                far_kind: "component".into(),
+                join_property: "affects".into(),
+                incoming: true,
+            }],
+            sum_kind: "component".into(),
+            sum_property: "tier".into(),
+            deny: Vec::new(),
+            filter: None,
+            object_bound: 8,
+        },
+    });
+    assert!(hopped.ok, "{hopped:?}");
+    let hopped = hopped.evaluate.unwrap();
+    assert_eq!(hopped.two_hop_count, 0);
+    assert!(hopped.objects.is_empty());
+    let unknown = host.handle(HostRequest::Hide {
+        kind: "incident".into(),
+        key: "nope".into(),
+        deny: Vec::new(),
+    });
+    assert!(!unknown.ok, "{unknown:?}");
+    assert!(
+        unknown
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown identity"),
+        "{unknown:?}"
+    );
+    let denied = host.handle(HostRequest::Hide {
+        kind: "component".into(),
+        key: "svc-api".into(),
+        deny: vec![WireDeny {
+            kind: "component".into(),
+            property: "tier".into(),
+        }],
+    });
+    assert!(!denied.ok, "{denied:?}");
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("Denied"),
+        "{denied:?}"
+    );
+    let unknown_v = host.handle_line(r#"{"v":2,"op":"hide","kind":"incident","key":"inc-1"}"#);
+    assert!(!unknown_v.ok, "{unknown_v:?}");
+    assert!(
+        unknown_v.error.as_deref().unwrap_or("").contains("wire v"),
+        "{unknown_v:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

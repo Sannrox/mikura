@@ -1045,6 +1045,94 @@ fn process_uncommitted_stream_push_invisible_after_reopen() {
     );
 }
 
+fn product_loop_hide_view(
+    host: &HostProcess,
+) -> (ObjectRecord, ObjectRecord, Vec<String>, Vec<String>) {
+    let service = load_object(host, "component", "svc-api");
+    let incident = load_object(host, "incident", "inc-1");
+    let list = evaluate_members(host, &product_loop_list_wire());
+    let hop = evaluate_members(host, &product_loop_hop_wire());
+    (service, incident, list, hop)
+}
+
+#[test]
+fn process_product_loop_hide() {
+    let tmp = TempLog::new("product-loop-hide");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let hidden = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(hidden.ok, "{hidden:?}");
+    let live = product_loop_hide_view(&host);
+    assert_eq!(live.0.key, "svc-api");
+    assert!(live.1.hidden);
+    assert_eq!(
+        live.1.props.get("name").map(String::as_str),
+        Some("elevated latency")
+    );
+    assert_eq!(live.2, vec!["svc-api".to_string()]);
+    assert!(live.3.is_empty());
+    let unknown = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "incident",
+        "key": "nope"
+    }));
+    assert!(!unknown.ok, "{unknown:?}");
+    assert!(
+        unknown
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown identity"),
+        "{unknown:?}"
+    );
+    let denied = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "component",
+        "key": "svc-api",
+        "deny": [{"kind": "component", "property": "tier"}]
+    }));
+    assert!(!denied.ok, "{denied:?}");
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("Denied"),
+        "{denied:?}"
+    );
+    let unknown_v = host.rpc(&serde_json::json!({
+        "v": 2,
+        "op": "hide",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(!unknown_v.ok, "{unknown_v:?}");
+    assert!(
+        unknown_v.error.as_deref().unwrap_or("").contains("wire v"),
+        "{unknown_v:?}"
+    );
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_hide_view(&reopened), live);
+    drop(reopened);
+
+    let sidecar = Store::join_map_path(tmp.path());
+    if sidecar.is_file() {
+        std::fs::remove_file(&sidecar).expect("delete sidecar");
+    }
+    let delta = Store::join_delta_path(tmp.path());
+    if delta.is_file() {
+        std::fs::remove_file(&delta).expect("delete join delta");
+    }
+    let rebuilt = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_hide_view(&rebuilt), live);
+}
+
 #[test]
 fn process_overlay_refresh_keeps_note() {
     let tmp = TempLog::new("overlay-refresh");
