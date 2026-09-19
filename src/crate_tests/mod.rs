@@ -1,6 +1,7 @@
 mod action;
 mod delta;
 mod helpers;
+mod hide;
 mod hops;
 mod load;
 mod measures;

@@ -1,7 +1,7 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! RPCs are local names (`IngestBatch`, `IngestStreamPush`,
-//! `IngestStreamFlush`, `ApplyAction`, `ApplyOverlay`, `Evaluate`, `Load`). JSON lines are
+//! `IngestStreamFlush`, `ApplyAction`, `ApplyOverlay`, `Hide`, `Evaluate`, `Load`). JSON lines are
 //! envelope `{ v, token?, op, … }` (`v` omitted or `1`). Loopback bind is
 //! unauthenticated until `require_bearer` is called. Non-loopback bind
 //! requires a clerk-owned bearer (ADR 0007). The CLI applies `--bearer` on
@@ -83,6 +83,12 @@ pub enum HostRequest {
         cleared: Vec<String>,
         #[serde(default)]
         expected_gen: Option<u64>,
+    },
+    Hide {
+        kind: String,
+        key: String,
+        #[serde(default)]
+        deny: Vec<WireDeny>,
     },
     Evaluate {
         request: WireEvaluate,
@@ -244,6 +250,9 @@ impl Host {
                 id,
                 expected_gen,
             )),
+            HostRequest::Hide { kind, key, deny } => {
+                ack(hide_identity(&mut self.store, kind, key, deny))
+            }
             HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
                 Ok(response) => HostResponse {
                     v: WIRE_V,
@@ -589,6 +598,16 @@ fn load_record(
 ) -> Result<ObjectRecord, String> {
     let acl = acl_from_denies(&deny, "load")?;
     store.load(&kind, &key, &acl)
+}
+
+fn hide_identity(
+    store: &mut Store,
+    kind: String,
+    key: String,
+    deny: Vec<WireDeny>,
+) -> Result<(), String> {
+    let acl = acl_from_denies(&deny, "hide")?;
+    store.hide(&kind, &key, &acl)
 }
 
 #[cfg(test)]

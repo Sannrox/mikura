@@ -258,6 +258,47 @@ fn main() -> Result<(), String> {
         Some("elevated latency")
     );
 
+    require_ok(
+        "hide inc-1",
+        reopened.rpc(&serde_json::json!({
+            "op": "hide",
+            "kind": "incident",
+            "key": "inc-1"
+        }))?,
+    )?;
+    let hidden = require_ok(
+        "load inc-1 after hide",
+        reopened.rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "incident",
+            "key": "inc-1"
+        }))?,
+    )?
+    .load
+    .expect("load payload");
+    assert!(hidden.hidden);
+    let after_hide = require_ok(
+        "evaluate hop after hide",
+        reopened.rpc(&serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [{
+                    "far_kind": "component",
+                    "join_property": "affects",
+                    "incoming": true
+                }],
+                "sum_kind": "component",
+                "sum_property": "tier",
+                "object_bound": 8
+            }
+        }))?,
+    )?
+    .evaluate
+    .expect("evaluate payload");
+    assert_eq!(after_hide.two_hop_count, 0);
+    assert!(after_hide.objects.is_empty());
+
     println!("step\thost op\tresult");
     println!("ingest seed\tingest_batch\tsupported");
     println!("load svc-api\tload\tsupported (component/svc-api, name=billing-api, tier=prod)");
@@ -272,7 +313,8 @@ fn main() -> Result<(), String> {
     println!("edit inc-1\tapply_action\tsupported (whole-record replace, action_id stored)");
     println!("refresh source\tingest_batch\tsupported as overwrite; edit note discarded");
     println!("reopen log\tload after Host::open\tsupported");
-    println!("delete / retry / object visibility\t(none)\tunsupported on the host wire");
+    println!("delete inc-1\thide\tsupported (load defined, evaluate omits)");
+    println!("retry / object visibility\t(none)\tunsupported on the host wire");
 
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())

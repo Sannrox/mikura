@@ -931,3 +931,118 @@ fn overlay_refresh_keeps_admitted_note() {
         "acked"
     );
 }
+
+#[test]
+fn hide_drops_identity_from_join_maps_and_rebuilds() {
+    let tmp = TempLog::new("hide-joins");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            rec(
+                "component",
+                "svc-api",
+                false,
+                &[("name", "billing-api"), ("tier", "prod")],
+            ),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[("name", "elevated latency"), ("affects", "svc-api")],
+            ),
+        ],
+    )
+    .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "acked".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            Some(1),
+        )
+        .unwrap();
+    assert!(store.joins().is_visible("incident", "inc-1"));
+    store
+        .hide("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(!store.joins().is_visible("incident", "inc-1"));
+    let hidden = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert_eq!(hidden.props.get("note").map(String::as_str), Some("acked"));
+    let overlay = store
+        .load(
+            mikura::OVERLAY_KIND,
+            &OverlayPatch::identity_key("incident", "inc-1"),
+            &PropertyAcl::allow_all(),
+        )
+        .unwrap();
+    assert!(overlay.hidden);
+    assert!(store.overlay("incident", "inc-1").unwrap().is_none());
+    let listed = ObjectSet::new(LocalCompute)
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "component".into(),
+                hops: vec![],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: Some(ExactMatch {
+                    property: "tier".into(),
+                    value: "prod".into(),
+                }),
+                object_bound: 8,
+            },
+        )
+        .unwrap();
+    assert_eq!(listed.objects.len(), 1);
+    assert_eq!(listed.objects[0].key, "svc-api");
+    let hopped = ObjectSet::new(LocalCompute)
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "incident".into(),
+                hops: vec![Hop {
+                    far_kind: "component".into(),
+                    join_property: "affects".into(),
+                    incoming: true,
+                }],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: None,
+                object_bound: 8,
+            },
+        )
+        .unwrap();
+    assert_eq!(hopped.two_hop_count, 0);
+    assert!(hopped.objects.is_empty());
+    let missing = store
+        .hide("incident", "nope", &PropertyAcl::allow_all())
+        .unwrap_err();
+    assert!(missing.contains("unknown identity"), "{missing}");
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert!(!reopened.joins().is_visible("incident", "inc-1"));
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert!(!replayed.joins().is_visible("incident", "inc-1"));
+    assert!(
+        replayed
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .hidden
+    );
+}

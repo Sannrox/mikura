@@ -20,6 +20,11 @@ window.
 
 ### Added
 
+- Host JSON `hide` hides an identity (`kind`+`key`). `load` stays
+  defined; evaluate list/hop omit it. Reopen and sidecar rebuild agree.
+  Unknown identity and denied properties the hide would copy fail closed.
+  Overlay keys stay on the log. No log-format change
+  ([#157](https://github.com/Sannrox/mikura/issues/157)).
 - Spike 011 remasure: after last-hop measures, 10⁷ hop count+sum
   **40 ms hold** vs 500 ms on the schema-named rollup path. Dual-read
   holds. No engine pick

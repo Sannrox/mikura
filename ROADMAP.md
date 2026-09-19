@@ -68,6 +68,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | last-hop measures ADR | Count and sum for a schema-named leaf property persist as parent rollups on the deletable sidecar. Evaluate still leaf-walks undeclared sums. No engine pick ([#150](https://github.com/Sannrox/mikura/issues/150), [ADR 0010](docs/decisions/0010-last-hop-measures.md)). |
 | last-hop measures | Schema-named leaf sums persist as parent rollups on `MKJOIN04`. Evaluate reads them. Undeclared sums still leaf-walk. Dual-read holds ([#151](https://github.com/Sannrox/mikura/issues/151), [ADR 0010](docs/decisions/0010-last-hop-measures.md)). |
 | last-hop remasure | After #151, 10⁷ hop count+sum **40 ms hold** vs 500 ms on declared rollups; dual-read holds; 7.1 GiB on 32 GiB ([#152](https://github.com/Sannrox/mikura/issues/152), spike 011 addendum). |
+| product-loop hide | Host `hide` is the product-loop delete. `load` stays defined; evaluate omits the identity. Reopen and sidecar rebuild agree ([#157](https://github.com/Sannrox/mikura/issues/157)). |
 
 ## Next (this repository, in order)
 
