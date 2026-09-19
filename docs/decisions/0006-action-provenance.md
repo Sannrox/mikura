@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-16
 - Owners: mikura maintainers
-- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#77](https://github.com/Sannrox/mikura/issues/77), [#80](https://github.com/Sannrox/mikura/issues/80), [#106](https://github.com/Sannrox/mikura/issues/106), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md)
+- Related: [#46](https://github.com/Sannrox/mikura/issues/46), [#64](https://github.com/Sannrox/mikura/issues/64), [#77](https://github.com/Sannrox/mikura/issues/77), [#80](https://github.com/Sannrox/mikura/issues/80), [#106](https://github.com/Sannrox/mikura/issues/106), [#158](https://github.com/Sannrox/mikura/issues/158), [ADR 0001](0001-paged-log.md), [ADR 0005](0005-current-object-load.md), [ADR 0011](0011-action-id-retry-key.md)
 - Supersedes: none
 - Superseded by: none
 

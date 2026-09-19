@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-18
 - Owners: mikura maintainers
-- Related: [#112](https://github.com/Sannrox/mikura/issues/112), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md), [ADR 0008](0008-type-link-delete.md)
+- Related: [#112](https://github.com/Sannrox/mikura/issues/112), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md), [ADR 0008](0008-type-link-delete.md), [ADR 0011](0011-action-id-retry-key.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -89,6 +89,10 @@ already observed. Uncommitted ingest and a crash before
 sidecar persist failure is not loss: delete the sidecar and rebuild
 from the log, including overlay rows.
 
+[ADR 0011](0011-action-id-retry-key.md) later accepts that same id as
+the `apply_action` retry key. Overlay and expected generation on this
+ADR stay.
+
 ### Atomicity
 
 One identity, one commit. A refresh that merges overlay plus source for
@@ -120,8 +124,9 @@ existing record body, as schema rows do.
   identity with a visible overlay merges: source props, drop `cleared`,
   then overlay values.
 - Implementation landed in [#119](https://github.com/Sannrox/mikura/issues/119)
-  (`Store::apply_overlay`, merge in `Store::append_uncommitted`). Remaining
-  open items are idempotency-key scope and multi-object transactions.
+  (`Store::apply_overlay`, merge in `Store::append_uncommitted`).
+  Idempotency-key scope is [ADR 0011](0011-action-id-retry-key.md).
+  Remaining open item is multi-object transactions.
   Do not open M4, listing, or a second delete format from this ADR.
 - Remaining M2 query work (sort, cursors, composed filters) is independent
   and waits for a fixture that names them

@@ -248,6 +248,9 @@ appends an `ObjectRecord` with `hidden: false`, `gen` assigned by `append`,
 and that id. It is writeback of object bytes, not admission or attestation.
 Source ingest may omit `action_id`; an empty string fails closed. Hop/sum
 indexes ignore the id. [ADR 0006](decisions/0006-action-provenance.md).
+A repeated Action id is a replay when the body matches and fails closed
+when it does not ([ADR 0011](decisions/0011-action-id-retry-key.md));
+that rule is not implemented yet.
 Host JSON exposes the same writeback as `apply_action`. Ingest stays the
 source-snapshot path and does not become governed writeback.
 
