@@ -14,6 +14,8 @@
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
+//! Optional `types` declare boolean, integer, timestamp, and decimal values
+//! stored as canonical UTF-8 in `props` ([`PropertyType`]).
 //! A committed [`OverlayPatch`] (`mikura.overlay/{kind}/{key}`) merges
 //! named properties onto later source writes of that identity.
 //!
@@ -29,6 +31,7 @@ mod objectset;
 mod overlay;
 mod schema;
 mod store;
+mod value;
 
 pub use acl::{AclError, PropertyAcl};
 pub use actions::Action;
@@ -38,9 +41,10 @@ pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Ho
 pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
 pub use schema::{
     SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
-    SCHEMA_SUMS,
+    SCHEMA_SUMS, SCHEMA_TYPES,
 };
 pub use store::{ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES};
+pub use value::{PropertyType, PropertyValue};
 
 #[cfg(test)]
 mod crate_tests;

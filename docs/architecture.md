@@ -29,7 +29,7 @@ today evaluate is hop + count/sum + optional bounded objects.
 | --- | --- |
 | `kind` | Type name (`Customer`, `Order`, …) |
 | `key` | Primary key within that kind |
-| `props` | String map. Non-string scalars are accepted in [ADR 0012](decisions/0012-typed-values.md) as canonical UTF-8 in this map and are not implemented until [#168](https://github.com/Sannrox/mikura/issues/168). |
+| `props` | String map. Declared non-string scalars store canonical UTF-8 here ([ADR 0012](decisions/0012-typed-values.md)). |
 | `hidden` | Excluded from join indexing |
 | `action_id` | Optional clerk-assigned Action id that produced this generation |
 | `gen` | Generation. `Store::append` sets `existing+1` on update. On insert it keeps a non-zero first `gen` and sets `1` only when the incoming value is `0` |
@@ -40,9 +40,12 @@ Records may store an optional Action id. They do not store a principal.
 Schema descriptors persist as ordinary objects of kind `mikura.schema`
 with key equal to the described kind. The descriptor body uses string
 properties `properties` (comma-separated closed set), optional `required`,
-optional `links` (`name:far_kind:out|in:0..1`), and optional `sums`
-(comma-separated property names already in `properties`). Historical
-descriptors without `sums` still load. Consumer kinds must
+optional `links` (`name:far_kind:out|in:0..1`), optional `sums`
+(comma-separated property names already in `properties`), and optional
+`types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>`).
+Historical descriptors without `sums` or `types` still load. Visible writes
+of a typed property fail closed unless the value is canonical (timestamps
+with an offset normalize to UTC millis on write). Consumer kinds must
 not use `mikura.schema`. A visible descriptor validates later visible
 writes of that kind and `Store::load_with_schema`. `Store::load` still
 returns historical rows that predate the descriptor. Hidden instance

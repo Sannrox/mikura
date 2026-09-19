@@ -126,7 +126,7 @@ memory, disk, or reopen budgets.
 | Delete | `hide` | **supported** | Hide `inc-1`; `load` defined; evaluate omits; reopen and sidecar rebuild agree |
 | Retry same Action | `apply_action` | **supported** | Same id and body is a replay; a different body or another identity fails closed |
 | Object-visibility filter | none | **not required** for this fixture | Property deny remains available |
-| Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **unsupported** (contract [ADR 0012](../decisions/0012-typed-values.md), implementation [#168](https://github.com/Sannrox/mikura/issues/168)) | Strings only; domain file not loaded |
+| Typed values / schema validate | `mikura.schema` | **schema supported**; typed scalars **supported** and **not required** for this fixture ([ADR 0012](../decisions/0012-typed-values.md), [#168](https://github.com/Sannrox/mikura/issues/168)) | Strings only; domain file not loaded |
 | Named relation metadata | `mikura.schema` `links` | **supported** for `0..1` outgoing | Direction and cardinality live on the descriptor; dangling keys stay clerk-owned |
 
 A miss is a note, not an engine pick.

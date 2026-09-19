@@ -5,7 +5,7 @@
 
 use mikura::{
     Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,
-    SchemaDescriptor, SchemaLink, Store,
+    PropertyType, SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_host::HostResponse;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -850,6 +850,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
                 outgoing: false,
             }],
             sums: Vec::new(),
+            types: Vec::new(),
         }
         .to_record()
         .unwrap(),
@@ -863,6 +864,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
                 outgoing: true,
             }],
             sums: Vec::new(),
+            types: Vec::new(),
         }
         .to_record()
         .unwrap(),
@@ -1351,4 +1353,110 @@ fn process_disconnect_then_next_request_serves() {
     }));
     assert!(loaded.ok, "{loaded:?}");
     assert_eq!(loaded.load.expect("load payload").key, "svc-api");
+}
+
+fn incident_typed_schema_record() -> ObjectRecord {
+    SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec![
+            "affects".into(),
+            "cost".into(),
+            "name".into(),
+            "open".into(),
+            "opened_at".into(),
+            "priority".into(),
+        ],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+        sums: Vec::new(),
+        types: vec![
+            ("cost".into(), PropertyType::Decimal { scale: 2 }),
+            ("open".into(), PropertyType::Boolean),
+            ("opened_at".into(), PropertyType::Timestamp),
+            ("priority".into(), PropertyType::Integer),
+        ],
+    }
+    .to_record()
+    .unwrap()
+}
+
+#[test]
+fn process_typed_scalars_round_trip() {
+    let tmp = TempLog::new("typed-values");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            incident_typed_schema_record(),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[
+                    ("name", "elevated latency"),
+                    ("affects", "svc-api"),
+                    ("open", "true"),
+                    ("priority", "2"),
+                    ("opened_at", "2026-09-19T18:00:00+01:00"),
+                    ("cost", "1500.00"),
+                ],
+            ),
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let loaded = loaded.load.expect("load payload");
+    assert_eq!(loaded.props.get("open").map(String::as_str), Some("true"));
+    assert_eq!(
+        loaded.props.get("opened_at").map(String::as_str),
+        Some("2026-09-19T17:00:00.000Z")
+    );
+    let invalid = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec("incident", "inc-2", false, &[("name", "n"), ("open", "TRUE")])]
+    }));
+    assert!(!invalid.ok, "{invalid:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-open",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"open": "false"}
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let again = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(again.ok, "{again:?}");
+    let again = again.load.expect("load payload");
+    assert_eq!(again.props.get("open").map(String::as_str), Some("false"));
+    assert_eq!(again.props.get("cost").map(String::as_str), Some("1500.00"));
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let rebuilt = replayed.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(rebuilt.ok, "{rebuilt:?}");
+    let rebuilt = rebuilt.load.expect("load payload");
+    assert_eq!(
+        rebuilt.props.get("opened_at").map(String::as_str),
+        Some("2026-09-19T17:00:00.000Z")
+    );
 }

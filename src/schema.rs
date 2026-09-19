@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::store::ObjectRecord;
+use crate::value::PropertyType;
 
 /// Reserved kind for the last accepted descriptor of another kind.
 pub const SCHEMA_KIND: &str = "mikura.schema";
@@ -23,6 +24,10 @@ pub const SCHEMA_LINKS: &str = "links";
 
 /// Comma-separated property names that are last-hop sum measures. Absent means none.
 pub const SCHEMA_SUMS: &str = "sums";
+
+/// Comma-separated `name:type` or `name:decimal:<scale>` logical types.
+/// Absent means every property is a string (ADR 0012).
+pub const SCHEMA_TYPES: &str = "types";
 
 const LINK_CARDINALITY: &str = "0..1";
 
@@ -45,6 +50,8 @@ pub struct SchemaDescriptor {
     pub required: Vec<String>,
     pub links: Vec<SchemaLink>,
     pub sums: Vec<String>,
+    /// Declared non-default types. Omitted names are [`PropertyType::String`].
+    pub types: Vec<(String, PropertyType)>,
 }
 
 impl SchemaDescriptor {
@@ -62,6 +69,7 @@ impl SchemaDescriptor {
             required: optional_csv(record, SCHEMA_REQUIRED)?,
             links: parse_links(optional_csv(record, SCHEMA_LINKS)?)?,
             sums: optional_csv(record, SCHEMA_SUMS)?,
+            types: parse_types(optional_csv(record, SCHEMA_TYPES)?)?,
         };
         descriptor.check()?;
         for name in record.props.keys() {
@@ -69,6 +77,7 @@ impl SchemaDescriptor {
                 && name != SCHEMA_REQUIRED
                 && name != SCHEMA_LINKS
                 && name != SCHEMA_SUMS
+                && name != SCHEMA_TYPES
             {
                 return Err(format!("unknown schema property {name}"));
             }
@@ -97,6 +106,15 @@ impl SchemaDescriptor {
         }
         if !self.sums.is_empty() {
             props.insert(SCHEMA_SUMS.to_string(), join_csv(&sorted(&self.sums)));
+        }
+        if !self.types.is_empty() {
+            let mut encoded: Vec<String> = self
+                .types
+                .iter()
+                .map(|(name, ty)| format!("{name}:{}", ty.token()))
+                .collect();
+            encoded.sort();
+            props.insert(SCHEMA_TYPES.to_string(), encoded.join(","));
         }
         Ok(ObjectRecord {
             gen: 0,
@@ -141,7 +159,48 @@ impl SchemaDescriptor {
                 Some(_) => {}
             }
         }
+        for (name, value) in &record.props {
+            if let Some(ty) = self.property_type(name) {
+                ty.parse_canonical(value)
+                    .map_err(|err| format!("{err} for {name} on {}", self.kind))?;
+            }
+        }
         Ok(())
+    }
+
+    /// Normalize timestamp offsets in `record.props`. Other types must already
+    /// be canonical (ADR 0012).
+    pub fn canonicalize_instance(&self, record: &mut ObjectRecord) -> Result<(), String> {
+        self.check()?;
+        if record.kind != self.kind {
+            return Err(format!(
+                "schema {} does not apply to {}",
+                self.kind, record.kind
+            ));
+        }
+        for (name, value) in record.props.iter_mut() {
+            if let Some(ty) = self.property_type(name) {
+                *value = ty
+                    .canonicalize_write(value)
+                    .map_err(|err| format!("{err} for {name} on {}", self.kind))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Declared type, or [`PropertyType::String`] when the name is declared
+    /// without `types`.
+    pub fn property_type(&self, name: &str) -> Option<PropertyType> {
+        if !self.properties.iter().any(|prop| prop == name) {
+            return None;
+        }
+        Some(
+            self.types
+                .iter()
+                .find(|(prop, _)| prop == name)
+                .map(|(_, ty)| *ty)
+                .unwrap_or(PropertyType::String),
+        )
     }
 
     fn check(&self) -> Result<(), String> {
@@ -193,6 +252,33 @@ impl SchemaDescriptor {
                 return Err(format!("duplicate sum property {name}"));
             }
         }
+        let mut types = HashSet::new();
+        for (name, ty) in &self.types {
+            token(name, "type")?;
+            if !properties.contains(name.as_str()) {
+                return Err(format!("typed property {name} is not declared"));
+            }
+            if !types.insert(name.as_str()) {
+                return Err(format!("duplicate typed property {name}"));
+            }
+            if let PropertyType::Decimal { scale } = ty {
+                if *scale > 18 {
+                    return Err(format!("decimal scale {scale} on {name} exceeds 18"));
+                }
+            }
+        }
+        for link in self.links.iter().filter(|link| link.outgoing) {
+            if let Some(ty) = self
+                .types
+                .iter()
+                .find(|(name, _)| name == &link.name)
+                .map(|(_, ty)| *ty)
+            {
+                if ty != PropertyType::String {
+                    return Err(format!("outgoing link {} must be a string type", link.name));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -226,6 +312,32 @@ fn sorted(parts: &[String]) -> Vec<String> {
     let mut out = parts.to_vec();
     out.sort();
     out
+}
+
+fn parse_types(entries: Vec<String>) -> Result<Vec<(String, PropertyType)>, String> {
+    let mut types = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in entries {
+        let (name, token) = split_type_entry(&entry)?;
+        if !seen.insert(name.clone()) {
+            return Err(format!("duplicate typed property {name}"));
+        }
+        types.push((name, PropertyType::from_token(token)?));
+    }
+    types.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(types)
+}
+
+fn split_type_entry(entry: &str) -> Result<(String, &str), String> {
+    let Some((name, token)) = entry.split_once(':') else {
+        return Err(format!(
+            "type {entry} must be name:string|boolean|integer|timestamp or name:decimal:<scale>"
+        ));
+    };
+    if name.is_empty() || token.is_empty() {
+        return Err(format!("type {entry} is empty"));
+    }
+    Ok((name.to_string(), token))
 }
 
 fn parse_links(entries: Vec<String>) -> Result<Vec<SchemaLink>, String> {
@@ -297,6 +409,7 @@ mod tests {
                 outgoing: true,
             }],
             sums: Vec::new(),
+            types: Vec::new(),
         }
     }
 
@@ -388,5 +501,60 @@ mod tests {
             err.contains("sum property missing is not declared"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn types_roundtrip_and_historical_rows_load() {
+        let mut schema = descriptor();
+        schema.properties = vec![
+            "affects".into(),
+            "cost".into(),
+            "name".into(),
+            "open".into(),
+        ];
+        schema.types = vec![
+            ("cost".into(), PropertyType::Decimal { scale: 2 }),
+            ("open".into(), PropertyType::Boolean),
+        ];
+        let record = schema.to_record().unwrap();
+        assert_eq!(
+            record.props.get(SCHEMA_TYPES).map(String::as_str),
+            Some("cost:decimal:2,open:boolean")
+        );
+        assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
+
+        let mut historical = descriptor().to_record().unwrap();
+        historical.props.remove(SCHEMA_TYPES);
+        let loaded = SchemaDescriptor::from_record(&historical).unwrap();
+        assert!(loaded.types.is_empty());
+
+        schema.types = vec![("missing".into(), PropertyType::Integer)];
+        let err = schema.to_record().unwrap_err();
+        assert!(
+            err.contains("typed property missing is not declared"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_non_canonical_scalars() {
+        let mut schema = descriptor();
+        schema.properties = vec!["affects".into(), "name".into(), "open".into()];
+        schema.types = vec![("open".into(), PropertyType::Boolean)];
+        schema
+            .validate(&instance(&[
+                ("name", "n"),
+                ("affects", "svc-api"),
+                ("open", "true"),
+            ]))
+            .unwrap();
+        let err = schema
+            .validate(&instance(&[
+                ("name", "n"),
+                ("affects", "svc-api"),
+                ("open", "TRUE"),
+            ]))
+            .unwrap_err();
+        assert!(err.contains("invalid boolean"), "{err}");
     }
 }

@@ -25,6 +25,11 @@ window.
 
 ### Added
 
+- Schema-declared boolean, integer, timestamp, and decimal values
+  round-trip as canonical UTF-8 in `props`. Host JSON `v=1` stays a string
+  map. Invalid values fail closed. Historical strings and M0 fields stay
+  strings ([#168](https://github.com/Sannrox/mikura/issues/168),
+  [ADR 0012](docs/decisions/0012-typed-values.md)).
 - Typed-value contract: boolean, integer, timestamp, and decimal as
   schema-declared logical types stored as canonical UTF-8 in `props`.
   No `MIKURAV1` bump. Historical strings keep their meaning. Implementation

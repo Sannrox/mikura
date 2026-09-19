@@ -5,8 +5,8 @@
 
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, SchemaDescriptor, SchemaLink, Store,
-    SCHEMA_SUMS,
+    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, PropertyType, SchemaDescriptor, SchemaLink,
+    Store, SCHEMA_SUMS, SCHEMA_TYPES,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -89,6 +89,7 @@ fn shipment_sum_schema() -> SchemaDescriptor {
             outgoing: true,
         }],
         sums: vec!["amount".into()],
+        types: Vec::new(),
     }
 }
 
@@ -706,6 +707,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
             outgoing: false,
         }],
         sums: Vec::new(),
+        types: Vec::new(),
     };
     let incident_schema = SchemaDescriptor {
         kind: "incident".into(),
@@ -717,6 +719,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
             outgoing: true,
         }],
         sums: Vec::new(),
+        types: Vec::new(),
     };
     BatchIngest::run(
         &mut store,
@@ -1170,5 +1173,131 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
             .load("incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .hidden
+    );
+}
+
+fn incident_typed_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec![
+            "affects".into(),
+            "cost".into(),
+            "name".into(),
+            "open".into(),
+            "opened_at".into(),
+            "priority".into(),
+        ],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+        sums: Vec::new(),
+        types: vec![
+            ("cost".into(), PropertyType::Decimal { scale: 2 }),
+            ("open".into(), PropertyType::Boolean),
+            ("opened_at".into(), PropertyType::Timestamp),
+            ("priority".into(), PropertyType::Integer),
+        ],
+    }
+}
+
+#[test]
+fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
+    let tmp = TempLog::new("typed-values");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let schema = incident_typed_schema();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            schema.to_record().unwrap(),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[
+                    ("name", "elevated latency"),
+                    ("affects", "svc-api"),
+                    ("open", "true"),
+                    ("priority", "2"),
+                    ("opened_at", "2026-09-19T17:00:00Z"),
+                    ("cost", "1500.00"),
+                ],
+            ),
+        ],
+    )
+    .unwrap();
+    let loaded = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        loaded.props.get("opened_at").map(String::as_str),
+        Some("2026-09-19T17:00:00.000Z")
+    );
+    let invalid = BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "incident",
+            "inc-2",
+            false,
+            &[("name", "n"), ("cost", "1.5")],
+        )],
+    )
+    .unwrap_err();
+    assert!(invalid.to_string().contains("decimal"), "{invalid}");
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("open".into(), "false".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-open".into(),
+            None,
+        )
+        .unwrap();
+    let overlayed = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        overlayed.props.get("open").map(String::as_str),
+        Some("false")
+    );
+    let descriptor = store.schema("incident").unwrap().unwrap();
+    assert!(descriptor
+        .to_record()
+        .unwrap()
+        .props
+        .get(SCHEMA_TYPES)
+        .unwrap()
+        .contains("open:boolean"));
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        reopened
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("open")
+            .map(String::as_str),
+        Some("false")
+    );
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    let rebuilt = replayed
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        rebuilt.props.get("cost").map(String::as_str),
+        Some("1500.00")
+    );
+    assert_eq!(
+        replayed.schema("incident").unwrap().unwrap().types,
+        schema.types
     );
 }
