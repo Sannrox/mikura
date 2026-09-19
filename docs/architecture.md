@@ -209,9 +209,11 @@ uncommitted tail; rebuild reads only committed pages.
    each with the request ACL, and return them as `EvaluateResponse.objects`.
    More identities than the bound fails closed. `object_bound == 0` leaves
    `objects` empty. Result-key order is intern-string sorted; that is not
-   a product sort operator. Sort keys, composed predicates, and cursors
-   stay out until a consumer fixture's expected answers are ambiguous
-   without them.
+   a product sort operator. Composed predicates, typed range, and snapshot
+   cursors are accepted in [ADR 0015](decisions/0015-composable-object-sets.md)
+   and not implemented until [#173](https://github.com/Sannrox/mikura/issues/173)
+   / [#174](https://github.com/Sannrox/mikura/issues/174). The two-object seed
+   stays unambiguous without them ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
 a filter is present, on `(root_kind, filter.property)`. Denied properties
