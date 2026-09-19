@@ -1301,3 +1301,189 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
         schema.types
     );
 }
+
+fn evolving_incident_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec!["affects".into(), "name".into(), "note".into()],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+        sums: Vec::new(),
+        types: Vec::new(),
+    }
+}
+
+#[test]
+fn schema_evolution_preserves_meaning_and_rejects_recast() {
+    let tmp = TempLog::new("schema-evolution");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let initial = evolving_incident_schema();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            initial.to_record().unwrap(),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[
+                    ("name", "elevated latency"),
+                    ("affects", "svc-api"),
+                    ("note", "acked"),
+                ],
+            ),
+        ],
+    )
+    .unwrap();
+
+    let mut recast = initial.clone();
+    recast.types = vec![("name".into(), PropertyType::Integer)];
+    let recast_err = store.append(recast.to_record().unwrap()).unwrap_err();
+    assert!(recast_err.contains("cannot recast name"), "{recast_err}");
+    let mut retarget = initial.clone();
+    retarget.links[0].far_kind = "service".into();
+    let link_err = store.append(retarget.to_record().unwrap()).unwrap_err();
+    assert!(link_err.contains("cannot retarget"), "{link_err}");
+    assert_eq!(store.schema("incident").unwrap().unwrap(), initial);
+
+    let mut evolved = initial.clone();
+    evolved
+        .properties
+        .extend(["open".into(), "priority".into()]);
+    evolved.required.push("priority".into());
+    evolved.types = vec![
+        ("open".into(), PropertyType::Boolean),
+        ("priority".into(), PropertyType::Integer),
+    ];
+    evolved.links.push(SchemaLink {
+        name: "opened_by".into(),
+        far_kind: "component".into(),
+        outgoing: false,
+    });
+    evolved.sums = vec!["name".into()];
+    store.append(evolved.to_record().unwrap()).unwrap();
+    let historical = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        historical.props.get("note").map(String::as_str),
+        Some("acked")
+    );
+    evolved.required.retain(|name| name != "priority");
+    store.append(evolved.to_record().unwrap()).unwrap();
+
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "paged".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            None,
+        )
+        .unwrap();
+    store
+        .apply_action(
+            Action {
+                id: "act-inc-1-body".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([
+                    ("name".into(), "elevated latency".into()),
+                    ("affects".into(), "svc-api".into()),
+                    ("note".into(), "paged".into()),
+                    ("open".into(), "true".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap();
+
+    let mut shrunk = evolved.clone();
+    shrunk.properties.retain(|name| name != "note");
+    store.append(shrunk.to_record().unwrap()).unwrap();
+    assert_eq!(
+        store
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("note")
+            .map(String::as_str),
+        Some("paged")
+    );
+    let overlay_err = store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "stale".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note-2".into(),
+            None,
+        )
+        .unwrap_err();
+    assert!(overlay_err.contains("unknown property"), "{overlay_err}");
+    let action_err = store
+        .apply_action(
+            Action {
+                id: "act-inc-1-stale".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([
+                    ("name".into(), "elevated latency".into()),
+                    ("affects".into(), "svc-api".into()),
+                    ("note".into(), "paged".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(action_err.contains("unknown property"), "{action_err}");
+    store
+        .apply_action(
+            Action {
+                id: "act-inc-1-body".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([
+                    ("name".into(), "elevated latency".into()),
+                    ("affects".into(), "svc-api".into()),
+                    ("note".into(), "paged".into()),
+                    ("open".into(), "true".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap();
+
+    let mut hidden = shrunk.to_record().unwrap();
+    hidden.hidden = true;
+    store.append(hidden).unwrap();
+    store.append(shrunk.to_record().unwrap()).unwrap();
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(reopened.schema("incident").unwrap().unwrap(), shrunk);
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(replayed.schema("incident").unwrap().unwrap(), shrunk);
+    assert_eq!(
+        replayed
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("open")
+            .map(String::as_str),
+        Some("true")
+    );
+}

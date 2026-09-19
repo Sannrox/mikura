@@ -360,9 +360,11 @@ impl Store {
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
     ///
     /// Visible source writes of a non-hidden identity merge a visible
-    /// `mikura.overlay` and validate a visible `mikura.schema`. Hide of the
-    /// instance also hides that overlay. [`Self::apply_action`] uses
-    /// [`Self::append_replace`] so it stays a whole-record replace.
+    /// `mikura.overlay` and validate a visible `mikura.schema`. A visible
+    /// `mikura.schema` replacement is checked against the previous visible
+    /// descriptor (ADR 0013). Hide of the instance also hides that overlay.
+    /// [`Self::apply_action`] uses [`Self::append_replace`] so it stays a
+    /// whole-record replace.
     pub fn append_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
         self.write_uncommitted(record, true)
     }
@@ -382,7 +384,12 @@ impl Store {
             Self::require_action_id(id, "empty action id")?;
         }
         if record.kind == SCHEMA_KIND {
-            SchemaDescriptor::from_record(&record)?;
+            let next = SchemaDescriptor::from_record(&record)?;
+            if !record.hidden {
+                if let Some(previous) = self.schema(&record.key)? {
+                    previous.check_replacement(&next)?;
+                }
+            }
         } else if record.kind == OVERLAY_KIND {
             OverlayPatch::from_record(&record)?;
         } else if !record.hidden {

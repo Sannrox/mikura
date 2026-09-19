@@ -13,6 +13,8 @@
 //! [`SparkCompute`] always returns [`ComputeError::UnsupportedBackend`].
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
+//! A later visible descriptor is rejected when it recasts a previously
+//! declared type or retargets an outgoing link.
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
 //! Optional `types` declare boolean, integer, timestamp, and decimal values
 //! stored as canonical UTF-8 in `props` ([`PropertyType`]).

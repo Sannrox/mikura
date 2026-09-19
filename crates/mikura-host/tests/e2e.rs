@@ -1460,3 +1460,187 @@ fn process_typed_scalars_round_trip() {
         Some("2026-09-19T17:00:00.000Z")
     );
 }
+
+fn evolving_incident_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec!["affects".into(), "name".into(), "note".into()],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+        sums: Vec::new(),
+        types: Vec::new(),
+    }
+}
+
+#[test]
+fn process_schema_evolution_preserves_meaning() {
+    let tmp = TempLog::new("schema-evolution");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let initial = evolving_incident_schema();
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            initial.to_record().unwrap(),
+            rec(
+                "incident",
+                "inc-1",
+                false,
+                &[
+                    ("name", "elevated latency"),
+                    ("affects", "svc-api"),
+                    ("note", "acked"),
+                ],
+            ),
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let mut recast = initial.clone();
+    recast.types = vec![("name".into(), PropertyType::Integer)];
+    let recast_rpc = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [recast.to_record().unwrap()]
+    }));
+    assert!(!recast_rpc.ok, "{recast_rpc:?}");
+    assert!(
+        recast_rpc
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("cannot recast name"),
+        "{recast_rpc:?}"
+    );
+
+    let mut evolved = initial.clone();
+    evolved
+        .properties
+        .extend(["open".into(), "priority".into()]);
+    evolved.types = vec![
+        ("open".into(), PropertyType::Boolean),
+        ("priority".into(), PropertyType::Integer),
+    ];
+    evolved.links.push(SchemaLink {
+        name: "opened_by".into(),
+        far_kind: "component".into(),
+        outgoing: false,
+    });
+    evolved.sums = vec!["name".into()];
+    let evolve = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [evolved.to_record().unwrap()]
+    }));
+    assert!(evolve.ok, "{evolve:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "paged"}
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let action = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-body",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "paged",
+            "open": "true"
+        }
+    }));
+    assert!(action.ok, "{action:?}");
+
+    let mut shrunk = evolved.clone();
+    shrunk.properties.retain(|name| name != "note");
+    let shrink = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [shrunk.to_record().unwrap()]
+    }));
+    assert!(shrink.ok, "{shrink:?}");
+    let stale_overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note-2",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "stale"}
+    }));
+    assert!(!stale_overlay.ok, "{stale_overlay:?}");
+    let stale_action = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-stale",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "paged"
+        }
+    }));
+    assert!(!stale_action.ok, "{stale_action:?}");
+    let replay = host.rpc(&serde_json::json!({
+        "op": "apply_action",
+        "id": "act-inc-1-body",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {
+            "name": "elevated latency",
+            "affects": "svc-api",
+            "note": "paged",
+            "open": "true"
+        }
+    }));
+    assert!(replay.ok, "{replay:?}");
+
+    let mut hidden = shrunk.to_record().unwrap();
+    hidden.hidden = true;
+    let hide = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [hidden]
+    }));
+    assert!(hide.ok, "{hide:?}");
+    let restore = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [shrunk.to_record().unwrap()]
+    }));
+    assert!(restore.ok, "{restore:?}");
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let schema = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "mikura.schema",
+        "key": "incident"
+    }));
+    assert!(schema.ok, "{schema:?}");
+    let schema = schema.load.expect("schema payload");
+    assert!(schema
+        .props
+        .get("properties")
+        .unwrap()
+        .split(',')
+        .any(|name| name == "open"));
+    assert!(!schema
+        .props
+        .get("properties")
+        .unwrap()
+        .split(',')
+        .any(|name| name == "note"));
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let loaded = replayed.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(loaded.ok, "{loaded:?}");
+    let loaded = loaded.load.expect("load payload");
+    assert_eq!(loaded.props.get("open").map(String::as_str), Some("true"));
+    assert_eq!(loaded.props.get("note").map(String::as_str), Some("paged"));
+}

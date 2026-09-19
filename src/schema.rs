@@ -1,9 +1,11 @@
-//! Clerk-supplied kind, property, and link rules (ADR 0008).
+//! Clerk-supplied kind, property, and link rules (ADR 0008, ADR 0013).
 //!
 //! Descriptors persist as ordinary objects of kind [`SCHEMA_KIND`] with key
 //! equal to the described kind. Values stay UTF-8 strings. Optional [`SCHEMA_SUMS`]
 //! names last-hop measure properties. A store with no visible schema row for
-//! a kind accepts unvalidated string records.
+//! a kind accepts unvalidated string records. A later visible descriptor is
+//! checked against the previous visible row: recasting a declared type or
+//! retargeting an outgoing link fails closed.
 
 use std::collections::{HashMap, HashSet};
 
@@ -183,6 +185,51 @@ impl SchemaDescriptor {
                 *value = ty
                     .canonicalize_write(value)
                     .map_err(|err| format!("{err} for {name} on {}", self.kind))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fail closed when `next` recasts a previously declared property type or
+    /// retargets an outgoing link (ADR 0013).
+    ///
+    /// Additive optional/required properties, shrinking `required` or the
+    /// closed set, new typed names, incoming-link and `sums` edits pass.
+    pub fn check_replacement(&self, next: &Self) -> Result<(), String> {
+        if self.kind != next.kind {
+            return Err(format!("schema {} cannot replace {}", next.kind, self.kind));
+        }
+        for name in &self.properties {
+            if !next.properties.iter().any(|prop| prop == name) {
+                continue;
+            }
+            let Some(previous) = self.property_type(name) else {
+                continue;
+            };
+            let Some(replacement) = next.property_type(name) else {
+                continue;
+            };
+            if previous != replacement {
+                return Err(format!(
+                    "cannot recast {name} from {} to {} on {}",
+                    previous.token(),
+                    replacement.token(),
+                    self.kind
+                ));
+            }
+        }
+        for link in self.links.iter().filter(|link| link.outgoing) {
+            if let Some(next_link) = next
+                .links
+                .iter()
+                .find(|candidate| candidate.name == link.name)
+            {
+                if next_link.far_kind != link.far_kind || !next_link.outgoing {
+                    return Err(format!(
+                        "cannot retarget outgoing link {} on {}",
+                        link.name, self.kind
+                    ));
+                }
             }
         }
         Ok(())
@@ -534,6 +581,59 @@ mod tests {
             err.contains("typed property missing is not declared"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn check_replacement_allows_additive_and_rejects_recast() {
+        let previous = descriptor();
+        let mut added = previous.clone();
+        added.properties.push("note".into());
+        added.required.push("note".into());
+        added.types.push(("note".into(), PropertyType::String));
+        added.sums.push("name".into());
+        added.links.push(SchemaLink {
+            name: "opened_by".into(),
+            far_kind: "component".into(),
+            outgoing: false,
+        });
+        previous.check_replacement(&added).unwrap();
+
+        let mut optional = added.clone();
+        optional.required.retain(|name| name != "note");
+        added.check_replacement(&optional).unwrap();
+
+        let mut shrunk = optional.clone();
+        shrunk.properties.retain(|name| name != "note");
+        shrunk.types.clear();
+        optional.check_replacement(&shrunk).unwrap();
+
+        previous.check_replacement(&previous).unwrap();
+
+        let mut recast = previous.clone();
+        recast.types = vec![("name".into(), PropertyType::Integer)];
+        let recast_err = previous.check_replacement(&recast).unwrap_err();
+        assert!(recast_err.contains("cannot recast name"), "{recast_err}");
+
+        let mut decimal = previous.clone();
+        decimal.properties.push("cost".into());
+        decimal.types = vec![("cost".into(), PropertyType::Decimal { scale: 2 })];
+        previous.check_replacement(&decimal).unwrap();
+        let mut scaled = decimal.clone();
+        scaled.types = vec![("cost".into(), PropertyType::Decimal { scale: 3 })];
+        let scale_err = decimal.check_replacement(&scaled).unwrap_err();
+        assert!(scale_err.contains("cannot recast cost"), "{scale_err}");
+
+        let mut retarget = previous.clone();
+        retarget.links[0].far_kind = "service".into();
+        let link_err = previous.check_replacement(&retarget).unwrap_err();
+        assert!(
+            link_err.contains("cannot retarget outgoing link affects"),
+            "{link_err}"
+        );
+        let mut inbound = previous.clone();
+        inbound.links[0].outgoing = false;
+        let dir_err = previous.check_replacement(&inbound).unwrap_err();
+        assert!(dir_err.contains("cannot retarget"), "{dir_err}");
     }
 
     #[test]
