@@ -19,6 +19,7 @@ a new ADR. Allocate the next number and list it here.
 | [0012](0012-typed-values.md) | Typed values and legacy-data compatibility | accepted |
 | [0013](0013-schema-evolution.md) | Schema evolution for typed objects and edits | accepted |
 | [0014](0014-externally-supplied-restrictions.md) | Externally supplied object visibility and operation restrictions | accepted |
+| [0015](0015-composable-object-sets.md) | Composable object-set query semantics | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should
