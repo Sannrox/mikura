@@ -83,9 +83,9 @@ No `MIKURAV1` change. No second store of record. No cluster compute.
 - [#191](https://github.com/Sannrox/mikura/issues/191) closed
   no-action: replication was not selected. Failover writes are not
   implemented.
-- [#192](https://github.com/Sannrox/mikura/issues/192) and
-  [#193](https://github.com/Sannrox/mikura/issues/193) stay blocked
-  until a named capacity miss. Availability and capacity stay separate.
+- Capacity is a separate decision
+  ([ADR 0024](0024-unpartitioned-store.md)): one unpartitioned store.
+  Availability and capacity stay separate.
 - [#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until
   a consumer names a 10¹⁰ envelope.
 - Backup, shutdown, and serial-RPC drills in

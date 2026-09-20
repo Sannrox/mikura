@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- Capacity stays one unpartitioned store. Unresolved M9 object-count
+  and disk cells are not a capacity miss and do not start a partition
+  ([#192](https://github.com/Sannrox/mikura/issues/192),
+  [ADR 0024](docs/decisions/0024-unpartitioned-store.md)).
 - Failover writes through a replica stay out. [#191](https://github.com/Sannrox/mikura/issues/191)
   closed no-action after [#190](https://github.com/Sannrox/mikura/issues/190)
   retained one process ([ADR 0023](docs/decisions/0023-single-process-availability.md)).

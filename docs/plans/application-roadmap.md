@@ -33,7 +33,7 @@ application is complete.
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs); composed predicates and snapshot pages ([#173](https://github.com/Sannrox/mikura/issues/173), [#174](https://github.com/Sannrox/mikura/issues/174), [ADR 0015](../decisions/0015-composable-object-sets.md)) | Extra operators still need a named fixture |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; Action-id replay on `apply_action` ([ADR 0011](../decisions/0011-action-id-retry-key.md)); overlay Action-id replay ([ADR 0019](../decisions/0019-overlay-retry-and-mutation-boundaries.md), [#181](https://github.com/Sannrox/mikura/issues/181)); [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123), [ADR 0020](../decisions/0020-resumable-source-reconciliation.md)). Multi-object atomic edits closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182)). |
 | Access | Request restriction document (property deny plus object hide) on load, evaluate, overlay, action, and hide ([ADR 0014](../decisions/0014-externally-supplied-restrictions.md), [#179](https://github.com/Sannrox/mikura/issues/179)); non-loopback process bearer | Clerk still owns policy authoring |
-| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests. Named workload is the product-loop; synthetic scale is not an SLO ([ADR 0016](../decisions/0016-production-workload.md), [m9-workload-acceptance.md](m9-workload-acceptance.md)). Host RPCs are serial ([ADR 0021](../decisions/0021-bounded-host-execution.md)). Health is process-local ([ADR 0022](../decisions/0022-operational-signals.md)). M9 readiness is unresolved evidence ([m9-readiness.md](m9-readiness.md)). Availability is one process plus restore ([ADR 0023](../decisions/0023-single-process-availability.md), [#190](https://github.com/Sannrox/mikura/issues/190)) | Unpublished consumer SLOs. Partitioning stays blocked until a named capacity miss |
+| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests. Named workload is the product-loop; synthetic scale is not an SLO ([ADR 0016](../decisions/0016-production-workload.md), [m9-workload-acceptance.md](m9-workload-acceptance.md)). Host RPCs are serial ([ADR 0021](../decisions/0021-bounded-host-execution.md)). Health is process-local ([ADR 0022](../decisions/0022-operational-signals.md)). M9 readiness is unresolved evidence ([m9-readiness.md](m9-readiness.md)). Availability is one process plus restore ([ADR 0023](../decisions/0023-single-process-availability.md), [#190](https://github.com/Sannrox/mikura/issues/190)). Capacity is one unpartitioned store ([ADR 0024](../decisions/0024-unpartitioned-store.md), [#192](https://github.com/Sannrox/mikura/issues/192)) | Unpublished consumer SLOs. 10¹⁰ stays blocked |
 
 The [existing roadmap](../../ROADMAP.md) records a 10⁷ hop count+sum
 **40 ms hold** after last-hop measures ([#152](https://github.com/Sannrox/mikura/issues/152)),
@@ -221,8 +221,9 @@ subscriptions, and materialized exports until a consumer justifies them.
 Current ADR and named-fixture gates still apply. Trigger log compaction on
 measured growth/recovery needs. Replication stays out until a published
 availability miss ([ADR 0023](../decisions/0023-single-process-availability.md)).
-Trigger partitioning on a named capacity miss. Cluster compute remains
-behind its existing evidence gate.
+Partitioning stays out until a published capacity miss
+([ADR 0024](../decisions/0024-unpartitioned-store.md)). Cluster compute
+remains behind its existing evidence gate.
 
 Type-catalog administration, application builders, and policy authoring
 remain in consumers. Object database capabilities can support those products
