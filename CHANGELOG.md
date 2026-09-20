@@ -52,7 +52,7 @@ window.
   [ADR 0015](docs/decisions/0015-composable-object-sets.md)).
 - Count+sum stays the only evaluate aggregate. Boolean, timestamp, and
   decimal are not admitted sum measures. [#178](https://github.com/Sannrox/mikura/issues/178)
-  stays blocked until a consumer fixture names another aggregate
+  closed no-action: there is no new aggregate to serve
   ([#177](https://github.com/Sannrox/mikura/issues/177),
   [ADR 0018](docs/decisions/0018-aggregation-semantics.md)).
 - Association objects persist and two-hop as named many-to-many

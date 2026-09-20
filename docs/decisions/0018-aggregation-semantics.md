@@ -27,7 +27,7 @@ distinct-count of a property, or group-by.
 **No-action on new aggregates. Keep `Aggregate::CountAndSum`. Record
 its type, duplicate, null, overflow, and access rules. Do not pick a
 compute backend. [#178](https://github.com/Sannrox/mikura/issues/178)
-stays blocked.**
+is closed no-action: there is no new outcome to serve.**
 
 The two-object seed is unchanged. Any other aggregate stays
 **proposed** until a consumer fixture gives an exact expected answer.
@@ -90,9 +90,12 @@ No grouping cardinality limit is added because grouping is out.
 
 - Public evaluate stays `Aggregate::CountAndSum`. No wire `v` change.
 - No `MIKURAV1` change. No new sidecar columns.
-- [#178](https://github.com/Sannrox/mikura/issues/178) remains blocked
-  until a consumer fixture names another aggregate with exact expected
-  answers. Closing this investigation does not make #178 ready.
+- [#178](https://github.com/Sannrox/mikura/issues/178) is closed
+  no-action. Count+sum is already served. A later fixture that names
+  another aggregate reopens this as new research, not this Issue.
+- [#179](https://github.com/Sannrox/mikura/issues/179) applies
+  restriction to the existing count+sum surface. It does not add an
+  aggregate.
 - Cluster compute stays out. A miss is not an engine pick.
 
 ## Validation
