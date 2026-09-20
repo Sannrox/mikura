@@ -1032,6 +1032,10 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         "unresolved SLOs must close #190 as retain-one-process, not start a replica"
     );
     assert!(
+        page.contains("[#191]") && page.contains("Closed no-action"),
+        "failover writes must close no-action when replication is not selected"
+    );
+    assert!(
         page.contains("[#192]") && page.contains("**Blocked.**"),
         "partitioning successors must stay blocked without a named capacity miss"
     );
@@ -1046,8 +1050,8 @@ fn availability_decision_retains_one_process() {
         "availability ADR must keep one process and restore-from-log"
     );
     assert!(
-        collapsed.contains("#191") && collapsed.contains("is not implemented"),
-        "failover writes stay unimplemented while one process is retained"
+        collapsed.contains("#191") && collapsed.contains("closed no-action"),
+        "failover writes close no-action while one process is retained"
     );
     assert!(
         collapsed.contains("not a quorum"),

@@ -25,6 +25,9 @@ window.
 
 ### Added
 
+- Failover writes through a replica stay out. [#191](https://github.com/Sannrox/mikura/issues/191)
+  closed no-action after [#190](https://github.com/Sannrox/mikura/issues/190)
+  retained one process ([ADR 0023](docs/decisions/0023-single-process-availability.md)).
 - Hosted availability stays one process. Restore from the object log.
   Unresolved M9 SLO cells are not an availability miss and do not
   start a replica ([#190](https://github.com/Sannrox/mikura/issues/190),
