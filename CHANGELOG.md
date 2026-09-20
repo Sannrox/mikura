@@ -25,6 +25,11 @@ window.
 
 ### Added
 
+- Host execution stays one process and one RPC at a time. A second
+  connection waits until the first request line is handled. Line-assembly
+  bounds are not evaluate/ingest deadlines. No invented mixed-load p95
+  ([#188](https://github.com/Sannrox/mikura/issues/188),
+  [ADR 0021](docs/decisions/0021-bounded-host-execution.md)).
 - Host `health` reports process-local readiness, committed pages, and
   accepted/rejected RPC counts. It is not an SLO gate
   ([#186](https://github.com/Sannrox/mikura/issues/186),

@@ -2455,3 +2455,46 @@ fn process_health_reports_ready_after_ingest() {
     assert!(health.rejected >= 1);
     drop(host);
 }
+
+#[test]
+fn process_serial_second_rpc_waits_for_first_line() {
+    let tmp = TempLog::new("serial-rpc");
+    let host = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--request-timeout-ms", "800"],
+    );
+    let mut first = host.connect();
+    first.write_all(br#"{"op":"health""#).unwrap();
+    first.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let mut second = host.connect();
+    second
+        .set_read_timeout(Some(Duration::from_millis(120)))
+        .unwrap();
+    second.write_all(br#"{"op":"health"}"#).unwrap();
+    second.write_all(b"\n").unwrap();
+    let mut buf = [0u8; 8];
+    let early = second.read(&mut buf);
+    assert!(
+        matches!(
+            early,
+            Err(ref err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut
+        ) || matches!(early, Ok(0)),
+        "second RPC must not complete while the first line is open: {early:?}"
+    );
+    drop(first);
+    second
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut body = String::new();
+    second.read_to_string(&mut body).unwrap();
+    let response: HostResponse = serde_json::from_str(body.trim()).expect("host JSON response");
+    assert!(response.ok, "{response:?}");
+    assert!(response.health.expect("health").ready);
+    drop(host);
+}

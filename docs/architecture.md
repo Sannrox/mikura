@@ -340,6 +340,12 @@ include `v`. Required and unused fields by bind:
 | loopback | yes (`--bearer`) | omit or `1` | required, must match | only under evaluate `request` |
 | non-loopback | required | omit or `1` | required, must match | only under evaluate `request` |
 
+`Host::serve_while` accepts one TCP connection, handles one JSON line
+to completion, then accepts the next
+([ADR 0021](decisions/0021-bounded-host-execution.md)). The OS listen
+backlog is the only queue. Line-assembly `--request-bound` and
+`--request-timeout-ms` are not evaluate or ingest deadlines.
+
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`. Evaluate accepts an
