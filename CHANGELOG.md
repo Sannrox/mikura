@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- Partition semantics stay out. [#193](https://github.com/Sannrox/mikura/issues/193)
+  closed no-action after [#192](https://github.com/Sannrox/mikura/issues/192)
+  kept one unpartitioned store
+  ([ADR 0024](docs/decisions/0024-unpartitioned-store.md)).
 - Capacity stays one unpartitioned store. Unresolved M9 object-count
   and disk cells are not a capacity miss and do not start a partition
   ([#192](https://github.com/Sannrox/mikura/issues/192),

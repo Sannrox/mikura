@@ -1040,6 +1040,10 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         "unresolved SLOs must close #192 as no-action, not start a partition"
     );
     assert!(
+        page.contains("[#193]") && page.contains("Closed no-action"),
+        "partition semantics must close no-action when partitioning is not selected"
+    );
+    assert!(
         page.contains("[#55]") && page.contains("**Blocked.**"),
         "10¹⁰ stays blocked until a consumer names that envelope"
     );
@@ -1054,8 +1058,8 @@ fn capacity_decision_keeps_one_store() {
         "capacity ADR must keep one identity space"
     );
     assert!(
-        collapsed.contains("#193") && collapsed.contains("is not implemented"),
-        "partition semantics stay unimplemented while the store is unpartitioned"
+        collapsed.contains("#193") && collapsed.contains("closed no-action"),
+        "partition semantics close no-action while the store is unpartitioned"
     );
 }
 
