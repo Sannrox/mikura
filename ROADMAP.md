@@ -85,6 +85,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M7 many-to-many links | Association objects ingest, load, overlay, hide, and two-hop in both directions. Product-loop `affects` is unchanged. Denied endpoint `join_property` fails closed ([#176](https://github.com/Sannrox/mikura/issues/176), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
 | M7 aggregation contract | Count+sum remains the only aggregate. No min/max/avg or group-by without a named fixture. [#178](https://github.com/Sannrox/mikura/issues/178) stays blocked ([#177](https://github.com/Sannrox/mikura/issues/177), [ADR 0018](docs/decisions/0018-aggregation-semantics.md)). |
 | M8 overlay retry contract | `apply_overlay` retries with the Action id. Same patch is a replay. Multi-object atomic edits stay out. [#182](https://github.com/Sannrox/mikura/issues/182) stays blocked ([#180](https://github.com/Sannrox/mikura/issues/180), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)). |
+| M8 source resume contract | Source offsets stay with the clerk. Resume is changelog/stream replay. No waiter or offset ledger ([#183](https://github.com/Sannrox/mikura/issues/183), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md), [#123](https://github.com/Sannrox/mikura/issues/123)). |
 
 ## Next (this repository, in order)
 
@@ -92,7 +93,7 @@ Application milestones, proposed in [the detailed plan](docs/plans/application-r
 M0 through M6 are complete for their accepted scope. Remaining items:
 
 1. **M7 features:** visibility enforcement ([#179](https://github.com/Sannrox/mikura/issues/179)) after remaining aggregation successors are accepted or amended.
-2. **M8 research:** source reconciliation ([#183](https://github.com/Sannrox/mikura/issues/183)). Overlay retry implementation waits on [#181](https://github.com/Sannrox/mikura/issues/181) dependencies.
+2. **M8 features:** overlay retry ([#181](https://github.com/Sannrox/mikura/issues/181)) and source-resume proofs ([#184](https://github.com/Sannrox/mikura/issues/184)) wait on remaining dependencies.
 3. **M9 research:** bounded execution and operational signals ([#187](https://github.com/Sannrox/mikura/issues/187), [#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
