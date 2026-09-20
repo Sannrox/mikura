@@ -211,15 +211,35 @@ fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, Co
         ));
     }
     let maps = store.joins();
-    if let Some(filter) = &request.filter {
-        return Ok(maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value));
-    }
-    let ids = maps.visible_ids(&request.root_kind);
+    let ids = if let Some(filter) = &request.filter {
+        maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value)
+    } else {
+        maps.visible_ids(&request.root_kind)
+    };
+    let ids = visible_in_view(store, request, &request.root_kind, ids);
     if let Some(pred) = &request.predicate {
         filter_ids(store, &request.root_kind, ids, pred)
     } else {
         Ok(ids)
     }
+}
+
+fn visible_in_view(
+    store: &Store,
+    request: &EvaluateRequest,
+    kind: &str,
+    ids: HashSet<u32>,
+) -> HashSet<u32> {
+    if !request.acl.hides_objects() {
+        return ids;
+    }
+    let maps = store.joins();
+    ids.into_iter()
+        .filter(|&id| {
+            maps.intern_get(id)
+                .is_some_and(|key| request.acl.object_visible(kind, key))
+        })
+        .collect()
 }
 
 fn walk_hops(
@@ -240,6 +260,14 @@ fn walk_hops(
                 &hop.join_property,
                 hop.incoming,
             ) {
+                if request.acl.hides_objects() {
+                    let Some(key) = maps.intern_get(child) else {
+                        continue;
+                    };
+                    if !request.acl.object_visible(&hop.far_kind, key) {
+                        continue;
+                    }
+                }
                 if let Some(pred) = &hop.predicate {
                     if !matches_predicate(store, &hop.far_kind, child, pred)? {
                         continue;
@@ -287,47 +315,48 @@ fn evaluate_local(
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, ComputeError> {
     let hops = hop_triples(request);
-    let (two_hop_count, sum_amount, keys) = if has_hop_predicate(request) {
-        let roots = root_ids(store, request)?;
-        let (count, sum, leaves) = walk_hops(store, request, &roots)?;
-        (count, sum, leaf_keys(store, leaves))
-    } else if request.predicate.is_some() {
-        let roots = root_ids(store, request)?;
-        let (count, sum) = store.joins().count_and_sum_roots(
-            &request.root_kind,
-            &roots,
-            &hops,
-            &request.sum_kind,
-            &request.sum_property,
-        );
-        let keys = store
-            .joins()
-            .result_keys_from_roots(&request.root_kind, &roots, &hops);
-        (count, sum, keys)
-    } else {
-        let (count, sum) = match &request.filter {
-            None => store.joins().count_and_sum(
+    let (two_hop_count, sum_amount, keys) =
+        if request.acl.hides_objects() || has_hop_predicate(request) {
+            let roots = root_ids(store, request)?;
+            let (count, sum, leaves) = walk_hops(store, request, &roots)?;
+            (count, sum, leaf_keys(store, leaves))
+        } else if request.predicate.is_some() {
+            let roots = root_ids(store, request)?;
+            let (count, sum) = store.joins().count_and_sum_roots(
                 &request.root_kind,
+                &roots,
                 &hops,
                 &request.sum_kind,
                 &request.sum_property,
-            ),
-            Some(filter) => store.joins().count_and_sum_matching(
-                &request.root_kind,
-                &hops,
-                &request.sum_kind,
-                &request.sum_property,
-                &filter.property,
-                &filter.value,
-            ),
+            );
+            let keys = store
+                .joins()
+                .result_keys_from_roots(&request.root_kind, &roots, &hops);
+            (count, sum, keys)
+        } else {
+            let (count, sum) = match &request.filter {
+                None => store.joins().count_and_sum(
+                    &request.root_kind,
+                    &hops,
+                    &request.sum_kind,
+                    &request.sum_property,
+                ),
+                Some(filter) => store.joins().count_and_sum_matching(
+                    &request.root_kind,
+                    &hops,
+                    &request.sum_kind,
+                    &request.sum_property,
+                    &filter.property,
+                    &filter.value,
+                ),
+            };
+            let filter = request
+                .filter
+                .as_ref()
+                .map(|filter| (filter.property.as_str(), filter.value.as_str()));
+            let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
+            (count, sum, keys)
         };
-        let filter = request
-            .filter
-            .as_ref()
-            .map(|filter| (filter.property.as_str(), filter.value.as_str()));
-        let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
-        (count, sum, keys)
-    };
     let (objects, cursor) = page_objects(store, request, keys)?;
     Ok(EvaluateResponse {
         two_hop_count,

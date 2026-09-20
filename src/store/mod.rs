@@ -247,6 +247,9 @@ impl Store {
     /// remaining keys keep stored values. The object log remains authority;
     /// interned sidecar props are a deletable projection.
     pub fn load(&self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<ObjectRecord, String> {
+        if !acl.object_visible(kind, key) {
+            return Err(format!("unknown identity {kind}/{key}"));
+        }
         let id = (kind.to_string(), key.to_string());
         let meta = self
             .identity
@@ -297,11 +300,32 @@ impl Store {
     /// prior overlay.
     pub fn apply_overlay(
         &mut self,
-        mut patch: OverlayPatch,
+        patch: OverlayPatch,
         action_id: String,
         expected_gen: Option<u64>,
     ) -> Result<(), String> {
+        self.apply_overlay_in_view(patch, action_id, expected_gen, &PropertyAcl::allow_all())
+    }
+
+    /// [`Self::apply_overlay`] honoring a request restriction (ADR 0014).
+    pub fn apply_overlay_in_view(
+        &mut self,
+        mut patch: OverlayPatch,
+        action_id: String,
+        expected_gen: Option<u64>,
+        acl: &PropertyAcl,
+    ) -> Result<(), String> {
         Self::require_action_id(&action_id, "action id required")?;
+        acl.require_visible(&patch.kind, &patch.key)
+            .map_err(|err| err.to_string())?;
+        for property in patch.props.keys() {
+            acl.check(&patch.kind, property)
+                .map_err(|err| err.to_string())?;
+        }
+        for property in &patch.cleared {
+            acl.check(&patch.kind, property)
+                .map_err(|err| err.to_string())?;
+        }
         let id = (patch.kind.clone(), patch.key.clone());
         self.require_expected_gen(&patch.kind, &patch.key, expected_gen)?;
         patch.action_id = Some(action_id.clone());
@@ -470,7 +494,23 @@ impl Store {
         action: Action,
         expected_gen: Option<u64>,
     ) -> Result<(), String> {
+        self.apply_action_in_view(action, expected_gen, &PropertyAcl::allow_all())
+    }
+
+    /// [`Self::apply_action`] honoring a request restriction (ADR 0014).
+    pub fn apply_action_in_view(
+        &mut self,
+        action: Action,
+        expected_gen: Option<u64>,
+        acl: &PropertyAcl,
+    ) -> Result<(), String> {
         Self::require_action_id(&action.id, "action id required")?;
+        acl.require_visible(&action.kind, &action.key)
+            .map_err(|err| err.to_string())?;
+        for property in action.props.keys() {
+            acl.check(&action.kind, property)
+                .map_err(|err| err.to_string())?;
+        }
         self.ensure_action_commits()?;
         if let Some(committed) = self.action_commits.get(&action.id).cloned() {
             if committed.kind != action.kind || committed.key != action.key {
@@ -511,6 +551,8 @@ impl Store {
     /// would copy fail closed. Overlay rows stay on the log under the
     /// existing instance-hide rule.
     pub fn hide(&mut self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<(), String> {
+        acl.require_visible(kind, key)
+            .map_err(|err| err.to_string())?;
         let current = self.load(kind, key, &PropertyAcl::allow_all())?;
         for property in current.props.keys() {
             acl.check(kind, property)

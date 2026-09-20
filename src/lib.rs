@@ -4,7 +4,8 @@
 //! that log and keeps join maps as a checksummed sidecar (rebuilt from the
 //! log if absent or stale). [`Store::load`] returns the live object for a
 //! primary key from that projection, including the optional Action id, and
-//! omits properties on the request deny list. Batch, changelog, merge, and
+//! omits properties on the request deny list and treats restriction-hidden
+//! identities as missing. Batch, changelog, merge, and
 //! stream ingest live in `mikura-ingest`.
 //! [`LocalCompute`] answers hop / count / sum from those maps, in either
 //! join direction, with an optional exact-match on root properties or a
@@ -39,7 +40,7 @@ mod schema;
 mod store;
 mod value;
 
-pub use acl::{AclError, PropertyAcl};
+pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;

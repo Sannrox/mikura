@@ -6,6 +6,9 @@
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
 //! returns snapshot pages; `cursor` binds restriction, query, and live writer stamp.
+//! Host `restriction` is the ADR 0014 document (`deny_properties`,
+//! `hide_kinds`, `hide_identities`); `deny` remains the property-only
+//! shorthand. Unknown restriction keys fail closed.
 //! Loopback bind is unauthenticated until
 //! `require_bearer` is called. Non-loopback bind requires a clerk-owned
 //! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
@@ -40,6 +43,24 @@ pub struct WireHop {
 pub struct WireDeny {
     pub kind: String,
     pub property: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireIdentity {
+    pub kind: String,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRestriction {
+    #[serde(default)]
+    pub deny_properties: Vec<WireDeny>,
+    #[serde(default)]
+    pub hide_kinds: Vec<String>,
+    #[serde(default)]
+    pub hide_identities: Vec<WireIdentity>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -91,6 +112,8 @@ pub struct WireEvaluate {
     #[serde(default)]
     pub deny: Vec<WireDeny>,
     #[serde(default)]
+    pub restriction: Option<WireRestriction>,
+    #[serde(default)]
     pub filter: Option<WireFilter>,
     #[serde(default)]
     pub predicate: Option<WirePredicate>,
@@ -131,6 +154,10 @@ pub enum HostRequest {
         props: HashMap<String, String>,
         #[serde(default)]
         expected_gen: Option<u64>,
+        #[serde(default)]
+        deny: Vec<WireDeny>,
+        #[serde(default)]
+        restriction: Option<WireRestriction>,
     },
     ApplyOverlay {
         id: String,
@@ -142,12 +169,18 @@ pub enum HostRequest {
         cleared: Vec<String>,
         #[serde(default)]
         expected_gen: Option<u64>,
+        #[serde(default)]
+        deny: Vec<WireDeny>,
+        #[serde(default)]
+        restriction: Option<WireRestriction>,
     },
     Hide {
         kind: String,
         key: String,
         #[serde(default)]
         deny: Vec<WireDeny>,
+        #[serde(default)]
+        restriction: Option<WireRestriction>,
     },
     Evaluate {
         request: WireEvaluate,
@@ -157,6 +190,8 @@ pub enum HostRequest {
         key: String,
         #[serde(default)]
         deny: Vec<WireDeny>,
+        #[serde(default)]
+        restriction: Option<WireRestriction>,
     },
 }
 
@@ -288,15 +323,23 @@ impl Host {
                 key,
                 props,
                 expected_gen,
-            } => ack(self.store.apply_action(
-                Action {
-                    id,
-                    kind,
-                    key,
-                    props,
-                },
-                expected_gen,
-            )),
+                deny,
+                restriction,
+            } => {
+                let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_action");
+                ack(acl.and_then(|acl| {
+                    self.store.apply_action_in_view(
+                        Action {
+                            id,
+                            kind,
+                            key,
+                            props,
+                        },
+                        expected_gen,
+                        &acl,
+                    )
+                }))
+            }
             HostRequest::ApplyOverlay {
                 id,
                 kind,
@@ -304,20 +347,31 @@ impl Host {
                 props,
                 cleared,
                 expected_gen,
-            } => ack(self.store.apply_overlay(
-                OverlayPatch {
-                    kind,
-                    key,
-                    props,
-                    cleared,
-                    action_id: None,
-                },
-                id,
-                expected_gen,
-            )),
-            HostRequest::Hide { kind, key, deny } => {
-                ack(hide_identity(&mut self.store, kind, key, deny))
+                deny,
+                restriction,
+            } => {
+                let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_overlay");
+                ack(acl.and_then(|acl| {
+                    self.store.apply_overlay_in_view(
+                        OverlayPatch {
+                            kind,
+                            key,
+                            props,
+                            cleared,
+                            action_id: None,
+                        },
+                        id,
+                        expected_gen,
+                        &acl,
+                    )
+                }))
             }
+            HostRequest::Hide {
+                kind,
+                key,
+                deny,
+                restriction,
+            } => ack(hide_identity(&mut self.store, kind, key, deny, restriction)),
             HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
                 Ok(response) => HostResponse {
                     v: WIRE_V,
@@ -333,18 +387,21 @@ impl Host {
                 },
                 Err(error) => fail(error),
             },
-            HostRequest::Load { kind, key, deny } => {
-                match load_record(&self.store, kind, key, deny) {
-                    Ok(record) => HostResponse {
-                        v: WIRE_V,
-                        ok: true,
-                        error: None,
-                        evaluate: None,
-                        load: Some(record),
-                    },
-                    Err(error) => fail(error),
-                }
-            }
+            HostRequest::Load {
+                kind,
+                key,
+                deny,
+                restriction,
+            } => match load_record(&self.store, kind, key, deny, restriction) {
+                Ok(record) => HostResponse {
+                    v: WIRE_V,
+                    ok: true,
+                    error: None,
+                    evaluate: None,
+                    load: Some(record),
+                },
+                Err(error) => fail(error),
+            },
         }
     }
 
@@ -455,12 +512,41 @@ fn request_bound_fail(bound: usize, bytes: usize) -> HostResponse {
     fail(format!("RequestBound {{ bound: {bound}, bytes: {bytes} }}"))
 }
 
-fn acl_from_denies(deny: &[WireDeny], op: &str) -> Result<PropertyAcl, String> {
-    match deny {
-        [] => Ok(PropertyAcl::allow_all()),
-        [deny] => Ok(PropertyAcl::deny_property(&deny.kind, &deny.property)),
-        _ => Err(format!("host {op} accepts at most one deny pair in v1")),
+fn restriction_from_wire(
+    deny: &[WireDeny],
+    restriction: Option<&WireRestriction>,
+    op: &str,
+) -> Result<PropertyAcl, String> {
+    match restriction {
+        None => acl_from_denies(deny, op),
+        Some(restriction) => {
+            if !deny.is_empty() {
+                return Err(format!("host {op} accepts deny or restriction, not both"));
+            }
+            let mut acl = PropertyAcl::allow_all();
+            for pair in &restriction.deny_properties {
+                acl.insert_deny(&pair.kind, &pair.property)
+                    .map_err(|err| err.to_string())?;
+            }
+            for kind in &restriction.hide_kinds {
+                acl.insert_hide_kind(kind).map_err(|err| err.to_string())?;
+            }
+            for id in &restriction.hide_identities {
+                acl.insert_hide_identity(&id.kind, &id.key)
+                    .map_err(|err| err.to_string())?;
+            }
+            Ok(acl)
+        }
     }
+}
+
+fn acl_from_denies(deny: &[WireDeny], op: &str) -> Result<PropertyAcl, String> {
+    let mut acl = PropertyAcl::allow_all();
+    for pair in deny {
+        acl.insert_deny(&pair.kind, &pair.property)
+            .map_err(|err| format!("host {op}: {err}"))?;
+    }
+    Ok(acl)
 }
 
 fn ok() -> HostResponse {
@@ -644,7 +730,7 @@ fn predicate_from_wire(pred: WirePredicate) -> Result<Predicate, String> {
 }
 
 fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, String> {
-    let acl = acl_from_denies(&request.deny, "evaluate")?;
+    let acl = restriction_from_wire(&request.deny, request.restriction.as_ref(), "evaluate")?;
     if let Some(filter) = &request.filter {
         if filter.property.is_empty() || filter.value.is_empty() {
             return Err("evaluate filter requires non-empty property and value".into());
@@ -695,8 +781,9 @@ fn load_record(
     kind: String,
     key: String,
     deny: Vec<WireDeny>,
+    restriction: Option<WireRestriction>,
 ) -> Result<ObjectRecord, String> {
-    let acl = acl_from_denies(&deny, "load")?;
+    let acl = restriction_from_wire(&deny, restriction.as_ref(), "load")?;
     store.load(&kind, &key, &acl)
 }
 
@@ -705,8 +792,9 @@ fn hide_identity(
     kind: String,
     key: String,
     deny: Vec<WireDeny>,
+    restriction: Option<WireRestriction>,
 ) -> Result<(), String> {
-    let acl = acl_from_denies(&deny, "hide")?;
+    let acl = restriction_from_wire(&deny, restriction.as_ref(), "hide")?;
     store.hide(&kind, &key, &acl)
 }
 

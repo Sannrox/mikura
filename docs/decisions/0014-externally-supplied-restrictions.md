@@ -139,9 +139,7 @@ user-facing write time.
 - Object visibility and property restriction are separate axes.
 - Source ingest stays unrestricted. User-facing load, evaluate, overlay,
   action, and hide honor the document.
-- Implementation is [#179](https://github.com/Sannrox/mikura/issues/179)
-  after the query/link surfaces it must cover. This ADR does not ship
-  code.
+- Implementation is [#179](https://github.com/Sannrox/mikura/issues/179).
 
 ### Implementation handoff ([#179](https://github.com/Sannrox/mikura/issues/179))
 

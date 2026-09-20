@@ -121,6 +121,17 @@ fn write_acl(out: &mut Vec<u8>, acl: &PropertyAcl) {
         write_str(out, kind);
         write_str(out, property);
     }
+    let kinds = acl.hide_kinds_sorted();
+    out.extend_from_slice(&(kinds.len() as u32).to_le_bytes());
+    for kind in kinds {
+        write_str(out, kind);
+    }
+    let identities = acl.hide_identities_sorted();
+    out.extend_from_slice(&(identities.len() as u32).to_le_bytes());
+    for (kind, key) in identities {
+        write_str(out, kind);
+        write_str(out, key);
+    }
 }
 
 fn write_hop(out: &mut Vec<u8>, hop: &Hop) {
