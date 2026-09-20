@@ -55,8 +55,8 @@ correctness check.
 | 10⁸ query / open / dual-read | **unmeasured** | A hold or miss |
 | 10⁷ `Store::open` | ~12 s after last-hop measures | A published production reopen SLO |
 | 10⁹ ingest | not required; hop count+sum already misses 500 ms at 10⁷ without declared rollups ([#54](https://github.com/Sannrox/mikura/issues/54)) | A reason to start 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) |
-| Mixed ingest vs evaluate | **unmeasured** | Concurrent-client behavior |
-| Simultaneous clients | **unmeasured** | An admission SLO beyond the request-line bound |
+| Mixed ingest vs evaluate | **unmeasured** | Concurrent-client behavior. Serial RPC is the contract ([ADR 0021](../decisions/0021-bounded-host-execution.md)) |
+| Simultaneous clients | **unmeasured** | An admission SLO beyond the request-line bound. [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked |
 
 Host admission already fail-closed: `--request-bound` (default 1 MiB)
 and `--request-timeout-ms` (default 5 s) on the request line. After a

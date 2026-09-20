@@ -326,7 +326,11 @@ rule or a hard-delete.
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
-JSON line per connection. Line-delimited JSON envelope `{ v, token?, op, … }`. Responses always
+JSON line per connection. Accept is serial: the next RPC starts after the
+current complete line has been handled. `--request-bound` and
+`--request-timeout-ms` bound line assembly only; after a complete line,
+evaluate and ingest run to completion
+([ADR 0021](decisions/0021-bounded-host-execution.md)). Line-delimited JSON envelope `{ v, token?, op, … }`. Responses always
 include `v`. Required and unused fields by bind:
 
 | Bind | Bearer stored | `v` | `token` | `filter` |
