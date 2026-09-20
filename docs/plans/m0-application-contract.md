@@ -38,7 +38,10 @@ The clerk maps the seed onto [`ObjectRecord`](../../src/store/mod.rs):
 string `props`, and each outgoing link becomes a string property named
 for the relation. `Incident.affects → Service` is stored as
 `incident/inc-1.props["affects"] = "svc-api"`. There is no separate edge
-record.
+record. A named many-to-many that cannot use one property-backed key is
+an association object with two `0..1` endpoints
+([ADR 0017](../decisions/0017-many-to-many-links.md)); that pattern is
+**proposed** and is not required by this seed.
 
 Value types required by this fixture: strings only. `tier` is an
 exact-match token. `affects` is a foreign key string. No boolean,

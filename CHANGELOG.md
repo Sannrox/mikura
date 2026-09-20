@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Named many-to-many relationships are ordinary association objects
+  with two `0..1` endpoint properties. Product-loop `affects` stays a
+  single foreign-key string. No edge records, `0..n` cardinality, or
+  graph engine
+  ([#175](https://github.com/Sannrox/mikura/issues/175),
+  [ADR 0017](docs/decisions/0017-many-to-many-links.md)).
 - Production-readiness is judged against the named product-loop
   workload. Synthetic scale envelopes stay evidence, not SLOs.
   Mixed-load and concurrent-client numbers stay unresolved
