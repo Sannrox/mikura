@@ -78,9 +78,9 @@ Availability (one process, restore-from-log) is unchanged.
 
 - [#192](https://github.com/Sannrox/mikura/issues/192) closes with this
   ADR. One identity space remains.
-- [#193](https://github.com/Sannrox/mikura/issues/193) stays a
-  conditional feature and must close no-action: partitioning was not
-  selected. This ADR does not close it.
+- [#193](https://github.com/Sannrox/mikura/issues/193) closed
+  no-action: partitioning was not selected. Partition semantics are
+  not implemented.
 - [#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until
   a consumer names a 10¹⁰ envelope.
 - Compact/checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53))
