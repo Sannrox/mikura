@@ -100,12 +100,14 @@ fn committed_schema_validates_writes_and_rebuilds() {
             far_kind: "component".into(),
             join_property: "affects".into(),
             incoming: true,
+            predicate: None,
         }],
         sum_kind: "component".into(),
         sum_property: "tier".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     };
     let hopped = ObjectSet::new(LocalCompute)
@@ -201,6 +203,7 @@ fn evaluate_returns_bounded_product_loop_objects() {
             property: "tier".into(),
             value: "prod".into(),
         }),
+        predicate: None,
         object_bound: 8,
     };
     let redacted = oss.evaluate(&store, &denied).unwrap();

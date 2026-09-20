@@ -19,7 +19,7 @@ datasets and admitted edits to `ObjectRecord`s; it does not live in this
 repository. `./build/release-images.sh` wraps `mikura-host` in a
 git-describe image; `./build/release.sh` pushes that tag. There is no
 compose stack and no cluster compute in that wrap. The destination object-set is filter, load, hop, and aggregate;
-today evaluate is hop + count/sum + optional bounded objects.
+today evaluate is hop + count/sum + optional bounded objects, with a composed predicate tree on the current kind (ADR 0015).
 
 ## Object model
 
@@ -187,19 +187,29 @@ uncommitted tail; rebuild reads only committed pages.
 2. If `request.filter` is set, look up matching visible roots in
    `by_prop[(kind, property)][value]`. Empty or uninterned match is
    count 0, sum 0. The filter does not scan every root's owned pairs.
+   `request.predicate` is the ADR 0015 tree (`eq`, `neq`, `range`,
+   `missing`, `and`, `or`, `not`) on the current kind. Filter and
+   predicate together fail closed. Typed equality uses canonical bytes
+   ([ADR 0012](decisions/0012-typed-values.md)); `integer` `1` is not
+   `string` `"1"`. Range is inclusive on integer, timestamp, decimal,
+   and string; boolean range fails closed. `missing` is key-absent, not
+   `""`.
 3. For each `Hop` except the last, join either default (`parent.key` to
    child `join_property` among visible `far_kind` children) or
    `incoming: true` (follow `props[join_property]` on the frontier to a
    visible `far_kind` key), keeping `(root, identity)` only for the
-   current frontier.
-4. The last hop folds the linked set in place: it does not store a
-   `(root, leaf)` tuple per path. When `(sum_kind, sum_property)` is a
-   schema-named sum on that last hop's `far_kind` and the hop is the
-   default (child points at parent), evaluate reads the parent rollup
-   columns instead of hashing every leaf. Undeclared pairs keep the
-   leaf walk ([#59](https://github.com/Sannrox/mikura/issues/59)).
-   Hidden rows are absent from measures; overlay or hide of a leaf or
-   parent updates the affected parent rollups.
+   current frontier. `Hop.predicate` then restricts that far set.
+   Filter-then-hop and hop-then-filter are different answers.
+4. The last hop folds the linked set in place when no hop carries a
+   predicate: it does not store a `(root, leaf)` tuple per path. When
+   `(sum_kind, sum_property)` is a schema-named sum on that last hop's
+   `far_kind` and the hop is the default (child points at parent),
+   evaluate reads the parent rollup columns instead of hashing every
+   leaf. Undeclared pairs keep the leaf walk
+   ([#59](https://github.com/Sannrox/mikura/issues/59)). A hop predicate
+   walks surviving paths instead of the last-hop fold. Hidden rows are
+   absent from measures; overlay or hide of a leaf or parent updates
+   the affected parent rollups.
 5. Count distinct roots that still have a path (`EvaluateResponse.two_hop_count`
    — the field name is historical; hop count is `request.hops.len()`).
 6. Sum `sum_property` on leaves whose kind is `sum_kind`, once per path
@@ -209,15 +219,16 @@ uncommitted tail; rebuild reads only committed pages.
    each with the request ACL, and return them as `EvaluateResponse.objects`.
    More identities than the bound fails closed. `object_bound == 0` leaves
    `objects` empty. Result-key order is intern-string sorted; that is not
-   a product sort operator. Composed predicates, typed range, and snapshot
-   cursors are accepted in [ADR 0015](decisions/0015-composable-object-sets.md)
-   and not implemented until [#173](https://github.com/Sannrox/mikura/issues/173)
-   / [#174](https://github.com/Sannrox/mikura/issues/174). The two-object seed
-   stays unambiguous without them ([#122](https://github.com/Sannrox/mikura/issues/122)).
+   a product sort operator. Snapshot cursors and sort wait for
+   [#174](https://github.com/Sannrox/mikura/issues/174). Set union /
+   intersection / difference, prefix, regex, and extra aggregates fail
+   closed. The two-object seed stays unambiguous without them
+   ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
-a filter is present, on `(root_kind, filter.property)`. Denied properties
-on returned objects are omitted.
+a filter or predicate is present, on every predicate property of that kind.
+Denied predicate properties fail closed. Denied properties on returned
+objects are omitted.
 
 `Aggregate` is only `CountAndSum`. Numeric columns already live in the
 interned `amounts` map (values that parse as `i64`). Min/max could walk that
@@ -227,7 +238,12 @@ two scalars) and stays out with query languages. Last-hop count and sum for
 a schema-named leaf property persist as parent rollups on `MKJOIN04`
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151)). Zero-hop evaluate
-is unchanged. Public `EvaluateRequest` shape is unchanged.
+is unchanged. `EvaluateRequest.predicate` and `Hop.predicate` are the
+selection subset ([#173](https://github.com/Sannrox/mikura/issues/173),
+[ADR 0015](decisions/0015-composable-object-sets.md)). Exact-match
+`filter` remains the product-loop shorthand. Host `v=1` unknown
+predicate `op` tags and unknown evaluate fields fail closed. No
+`MIKURAV1` change.
 
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 
@@ -301,8 +317,12 @@ include `v`. Required and unused fields by bind:
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
 `ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`. Evaluate accepts an
-optional exact-match `filter`. Omit or `null` filter means all visible roots.
-An empty `property` or `value` is a wire error, not a silent empty match.
+optional exact-match `filter` or a structured `predicate` tree (`op` =
+`eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
+fails closed. Omit or `null` filter and predicate means all visible roots.
+An empty filter `property` or `value` is a wire error, not a silent empty
+match. Unknown predicate `op` tags and unknown evaluate fields fail closed.
+Hops may carry a `predicate` that restricts the far set.
 `load` returns the live object for `(kind, key)`
 and omits denied properties. Missing identity fails closed. `hide` hides
 that identity from evaluate and keeps `load` defined. The request ACL deny

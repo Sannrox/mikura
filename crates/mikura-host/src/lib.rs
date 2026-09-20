@@ -3,7 +3,8 @@
 //! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
 //! `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`,
 //! `evaluate`, `load`. JSON lines are envelope `{ v, token?, op, … }`
-//! (`v` omitted or `1`). Loopback bind is unauthenticated until
+//! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
+//! tree; unknown `op` tags fail closed. Loopback bind is unauthenticated until
 //! `require_bearer` is called. Non-loopback bind requires a clerk-owned
 //! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
 //! loopback.
@@ -17,17 +18,20 @@ use std::time::{Duration, Instant};
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, Store,
+    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireHop {
     pub far_kind: String,
     pub join_property: String,
     #[serde(default)]
     pub incoming: bool,
+    #[serde(default)]
+    pub predicate: Option<WirePredicate>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -37,12 +41,46 @@ pub struct WireDeny {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireFilter {
     pub property: String,
     pub value: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WirePredicate {
+    Eq {
+        property: String,
+        value: String,
+    },
+    Neq {
+        property: String,
+        value: String,
+    },
+    Range {
+        property: String,
+        #[serde(default)]
+        min: Option<String>,
+        #[serde(default)]
+        max: Option<String>,
+    },
+    Missing {
+        property: String,
+    },
+    And {
+        args: Vec<WirePredicate>,
+    },
+    Or {
+        args: Vec<WirePredicate>,
+    },
+    Not {
+        arg: Box<WirePredicate>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireEvaluate {
     pub root_kind: String,
     pub hops: Vec<WireHop>,
@@ -52,6 +90,8 @@ pub struct WireEvaluate {
     pub deny: Vec<WireDeny>,
     #[serde(default)]
     pub filter: Option<WireFilter>,
+    #[serde(default)]
+    pub predicate: Option<WirePredicate>,
     /// Distinct result objects to return. Omit or `0` keeps count/sum only.
     #[serde(default)]
     pub object_bound: usize,
@@ -564,6 +604,26 @@ impl Host {
     }
 }
 
+fn predicate_from_wire(pred: WirePredicate) -> Result<Predicate, String> {
+    Ok(match pred {
+        WirePredicate::Eq { property, value } => Predicate::eq(property, value),
+        WirePredicate::Neq { property, value } => Predicate::neq(property, value),
+        WirePredicate::Range { property, min, max } => Predicate::Range { property, min, max },
+        WirePredicate::Missing { property } => Predicate::missing(property),
+        WirePredicate::And { args } => Predicate::and(
+            args.into_iter()
+                .map(predicate_from_wire)
+                .collect::<Result<_, _>>()?,
+        ),
+        WirePredicate::Or { args } => Predicate::or(
+            args.into_iter()
+                .map(predicate_from_wire)
+                .collect::<Result<_, _>>()?,
+        ),
+        WirePredicate::Not { arg } => !predicate_from_wire(*arg)?,
+    })
+}
+
 fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, String> {
     let acl = acl_from_denies(&request.deny, "evaluate")?;
     if let Some(filter) = &request.filter {
@@ -571,17 +631,24 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             return Err("evaluate filter requires non-empty property and value".into());
         }
     }
-    let request = EvaluateRequest {
-        root_kind: request.root_kind,
-        hops: request
-            .hops
-            .into_iter()
-            .map(|hop| Hop {
+    if request.filter.is_some() && request.predicate.is_some() {
+        return Err("evaluate accepts filter or predicate, not both".into());
+    }
+    let hops = request
+        .hops
+        .into_iter()
+        .map(|hop| {
+            Ok(Hop {
                 far_kind: hop.far_kind,
                 join_property: hop.join_property,
                 incoming: hop.incoming,
+                predicate: hop.predicate.map(predicate_from_wire).transpose()?,
             })
-            .collect(),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let request = EvaluateRequest {
+        root_kind: request.root_kind,
+        hops,
         sum_kind: request.sum_kind,
         sum_property: request.sum_property,
         aggregate: Aggregate::CountAndSum,
@@ -590,6 +657,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             property: filter.property,
             value: filter.value,
         }),
+        predicate: request.predicate.map(predicate_from_wire).transpose()?,
         object_bound: request.object_bound,
     };
     ObjectSet::new(LocalCompute)

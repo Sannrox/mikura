@@ -5,8 +5,8 @@
 
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, PropertyAcl, PropertyType, SchemaDescriptor, SchemaLink,
-    Store, SCHEMA_SUMS, SCHEMA_TYPES,
+    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType, SchemaDescriptor,
+    SchemaLink, Store, SCHEMA_SUMS, SCHEMA_TYPES,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -101,11 +101,13 @@ fn fixture_request() -> EvaluateRequest {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
                 incoming: false,
+                predicate: None,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
                 incoming: false,
+                predicate: None,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -113,6 +115,7 @@ fn fixture_request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }
@@ -124,12 +127,14 @@ fn asset_request() -> EvaluateRequest {
             far_kind: "Asset".into(),
             join_property: "owner_id".into(),
             incoming: false,
+            predicate: None,
         }],
         sum_kind: "Asset".into(),
         sum_property: "mass".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }
@@ -574,12 +579,14 @@ fn incoming_hop_follows_join_property() {
             far_kind: "Customer".into(),
             join_property: "customer_id".into(),
             incoming: true,
+            predicate: None,
         }],
         sum_kind: "Customer".into(),
         sum_property: "region".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
@@ -681,6 +688,235 @@ fn exact_match_filter_on_evaluate() {
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), response);
+}
+
+fn query_fixture_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
+    (
+        SchemaDescriptor {
+            kind: "component".into(),
+            properties: vec!["name".into(), "tier".into()],
+            required: vec!["name".into(), "tier".into()],
+            links: Vec::new(),
+            sums: Vec::new(),
+            types: Vec::new(),
+        },
+        SchemaDescriptor {
+            kind: "incident".into(),
+            properties: vec![
+                "affects".into(),
+                "name".into(),
+                "note".into(),
+                "open".into(),
+                "priority".into(),
+            ],
+            required: vec!["name".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "component".into(),
+                outgoing: true,
+            }],
+            sums: Vec::new(),
+            types: vec![
+                ("open".into(), PropertyType::Boolean),
+                ("priority".into(), PropertyType::Integer),
+            ],
+        },
+    )
+}
+
+fn query_fixture_records() -> Vec<ObjectRecord> {
+    vec![
+        rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ),
+        rec(
+            "component",
+            "svc-web",
+            false,
+            &[("name", "web"), ("tier", "prod")],
+        ),
+        rec(
+            "component",
+            "svc-batch",
+            false,
+            &[("name", "batch"), ("tier", "staging")],
+        ),
+        rec(
+            "incident",
+            "inc-1",
+            false,
+            &[
+                ("name", "elevated latency"),
+                ("affects", "svc-api"),
+                ("open", "true"),
+                ("priority", "2"),
+            ],
+        ),
+        rec(
+            "incident",
+            "inc-2",
+            false,
+            &[
+                ("name", "disk full"),
+                ("affects", "svc-api"),
+                ("open", "false"),
+                ("priority", "3"),
+                ("note", "pager"),
+            ],
+        ),
+        rec(
+            "incident",
+            "inc-3",
+            false,
+            &[
+                ("name", "job delay"),
+                ("affects", "svc-batch"),
+                ("open", "true"),
+                ("priority", "1"),
+            ],
+        ),
+    ]
+}
+
+fn listed_keys(response: &mikura::EvaluateResponse) -> Vec<&str> {
+    let mut keys: Vec<&str> = response
+        .objects
+        .iter()
+        .map(|row| row.key.as_str())
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn composed_predicates_select_typed_object_sets() {
+    let tmp = TempLog::new("predicates");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let (component_schema, incident_schema) = query_fixture_schemas();
+    let mut records = vec![
+        component_schema.to_record().unwrap(),
+        incident_schema.to_record().unwrap(),
+    ];
+    records.extend(query_fixture_records());
+    BatchIngest::run(&mut store, records).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let open = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![],
+        sum_kind: "incident".into(),
+        sum_property: "priority".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: Some(Predicate::eq("open", "true")),
+        object_bound: 8,
+    };
+    let listed = oss.evaluate(&store, &open).unwrap();
+    assert_eq!(listed_keys(&listed), ["inc-1", "inc-3"]);
+
+    let filter_then_hop = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![Hop {
+            far_kind: "component".into(),
+            join_property: "affects".into(),
+            incoming: true,
+            predicate: None,
+        }],
+        sum_kind: "component".into(),
+        sum_property: "tier".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: Some(Predicate::eq("open", "true")),
+        object_bound: 8,
+    };
+    assert_eq!(
+        listed_keys(&oss.evaluate(&store, &filter_then_hop).unwrap()),
+        ["svc-api", "svc-batch"]
+    );
+
+    let hop_then_filter = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![Hop {
+            far_kind: "component".into(),
+            join_property: "affects".into(),
+            incoming: true,
+            predicate: Some(Predicate::eq("tier", "prod")),
+        }],
+        sum_kind: "component".into(),
+        sum_property: "tier".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: None,
+        object_bound: 8,
+    };
+    let hopped = oss.evaluate(&store, &hop_then_filter).unwrap();
+    assert_eq!(listed_keys(&hopped), ["svc-api"]);
+    assert_eq!(hopped.two_hop_count, 2);
+
+    let range = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![],
+        sum_kind: "incident".into(),
+        sum_property: "priority".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: Some(Predicate::range("priority", Some("2"), Some("3"))),
+        object_bound: 8,
+    };
+    assert_eq!(
+        listed_keys(&oss.evaluate(&store, &range).unwrap()),
+        ["inc-1", "inc-2"]
+    );
+
+    let missing = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![],
+        sum_kind: "incident".into(),
+        sum_property: "priority".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: Some(Predicate::missing("note")),
+        object_bound: 8,
+    };
+    assert_eq!(
+        listed_keys(&oss.evaluate(&store, &missing).unwrap()),
+        ["inc-1", "inc-3"]
+    );
+
+    let denied = EvaluateRequest {
+        acl: PropertyAcl::deny_property("incident", "open"),
+        ..open.clone()
+    };
+    assert!(matches!(
+        oss.evaluate(&store, &denied),
+        Err(ComputeError::Acl(AclError::Denied { .. }))
+    ));
+
+    store
+        .hide("incident", "inc-3", &PropertyAcl::allow_all())
+        .unwrap();
+    let after_hide = oss.evaluate(&store, &open).unwrap();
+    assert_eq!(listed_keys(&after_hide), ["inc-1"]);
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        listed_keys(&oss.evaluate(&reopened, &open).unwrap()),
+        ["inc-1"]
+    );
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let replayed = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        listed_keys(&oss.evaluate(&replayed, &hop_then_filter).unwrap()),
+        ["svc-api"]
+    );
 }
 
 #[test]
@@ -832,6 +1068,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                     property: "tier".into(),
                     value: "prod".into(),
                 }),
+                predicate: None,
                 object_bound: 8,
             },
         )
@@ -848,12 +1085,14 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                     far_kind: "component".into(),
                     join_property: "affects".into(),
                     incoming: true,
+                    predicate: None,
                 }],
                 sum_kind: "component".into(),
                 sum_property: "tier".into(),
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                predicate: None,
                 object_bound: 8,
             },
         )
@@ -882,6 +1121,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                     property: "tier".into(),
                     value: "prod".into(),
                 }),
+                predicate: None,
                 object_bound: 1,
             },
         )
@@ -902,12 +1142,14 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                     far_kind: "component".into(),
                     join_property: "affects".into(),
                     incoming: true,
+                    predicate: None,
                 }],
                 sum_kind: "component".into(),
                 sum_property: "tier".into(),
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                predicate: None,
                 object_bound: 8,
             },
         )
@@ -932,6 +1174,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                     property: "tier".into(),
                     value: "prod".into(),
                 }),
+                predicate: None,
                 object_bound: 8,
             },
         )
@@ -1129,6 +1372,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                     property: "tier".into(),
                     value: "prod".into(),
                 }),
+                predicate: None,
                 object_bound: 8,
             },
         )
@@ -1144,12 +1388,14 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                     far_kind: "component".into(),
                     join_property: "affects".into(),
                     incoming: true,
+                    predicate: None,
                 }],
                 sum_kind: "component".into(),
                 sum_property: "tier".into(),
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                predicate: None,
                 object_bound: 8,
             },
         )

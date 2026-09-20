@@ -42,17 +42,20 @@ fn eval_req() -> WireEvaluate {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
                 incoming: false,
+                predicate: None,
             },
             WireHop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
                 incoming: false,
+                predicate: None,
             },
         ],
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
         deny: Vec::new(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }
@@ -261,6 +264,23 @@ fn bearer_line_rejects_missing_or_wrong_token() {
 }
 
 #[test]
+fn evaluate_unknown_predicate_op_fails_closed() {
+    let (dir, log) = temp_log("pred-op");
+    let mut host = Host::open(&log, 8).unwrap();
+    let ingest = host.handle(HostRequest::IngestBatch { records: fixture() });
+    assert!(ingest.ok, "{ingest:?}");
+    let union = host.handle_line(
+        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","predicate":{"op":"union","args":[]},"object_bound":8}}"#,
+    );
+    assert!(!union.ok, "{union:?}");
+    let extra = host.handle_line(
+        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","cursor":"x","object_bound":8}}"#,
+    );
+    assert!(!extra.ok, "{extra:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn loopback_ingest_evaluate_matches_in_process() {
     let (dir, log) = temp_log("match");
     let mut host = Host::open(&log, 8).unwrap();
@@ -283,11 +303,13 @@ fn loopback_ingest_evaluate_matches_in_process() {
                         far_kind: "Order".into(),
                         join_property: "customer_id".into(),
                         incoming: false,
+                        predicate: None,
                     },
                     Hop {
                         far_kind: "Shipment".into(),
                         join_property: "order_id".into(),
                         incoming: false,
+                        predicate: None,
                     },
                 ],
                 sum_kind: "Shipment".into(),
@@ -295,6 +317,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                predicate: None,
                 object_bound: 0,
             },
         )
@@ -810,6 +833,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
                 property: "tier".into(),
                 value: "prod".into(),
             }),
+            predicate: None,
             object_bound: 8,
         },
     });
@@ -824,11 +848,13 @@ fn hide_omits_from_evaluate_and_keeps_load() {
                 far_kind: "component".into(),
                 join_property: "affects".into(),
                 incoming: true,
+                predicate: None,
             }],
             sum_kind: "component".into(),
             sum_property: "tier".into(),
             deny: Vec::new(),
             filter: None,
+            predicate: None,
             object_bound: 8,
         },
     });

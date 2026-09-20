@@ -29,11 +29,13 @@ fn request() -> EvaluateRequest {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
                 incoming: false,
+                predicate: None,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
                 incoming: false,
+                predicate: None,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -41,6 +43,7 @@ fn request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }

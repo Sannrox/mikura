@@ -25,6 +25,13 @@ window.
 
 ### Added
 
+- Evaluate admits a structured predicate tree (`eq`, `neq`, `range`,
+  `missing`, `and`, `or`, `not`) on the current kind and an optional
+  predicate after each hop. Exact-match `filter` stays the product-loop
+  shorthand. Unsupported operators and unknown host `v=1` predicate
+  fields fail closed. No log-format change
+  ([#173](https://github.com/Sannrox/mikura/issues/173),
+  [ADR 0015](docs/decisions/0015-composable-object-sets.md)).
 - Schema-evolution contract: replacing `mikura.schema/<kind>` is
   additive-first. Recasting an existing property type, rename, and
   outgoing-link retarget fail at descriptor write. Implementation is

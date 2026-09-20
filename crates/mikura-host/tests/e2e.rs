@@ -233,11 +233,13 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                         far_kind: "Order".into(),
                         join_property: "customer_id".into(),
                         incoming: false,
+                        predicate: None,
                     },
                     Hop {
                         far_kind: "Shipment".into(),
                         join_property: "order_id".into(),
                         incoming: false,
+                        predicate: None,
                     },
                 ],
                 sum_kind: "Shipment".into(),
@@ -245,6 +247,7 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                 aggregate: Aggregate::CountAndSum,
                 acl: PropertyAcl::allow_all(),
                 filter: None,
+                predicate: None,
                 object_bound: 0,
             },
         )
@@ -1651,4 +1654,275 @@ fn process_schema_evolution_preserves_meaning() {
     let loaded = loaded.load.expect("load payload");
     assert_eq!(loaded.props.get("open").map(String::as_str), Some("true"));
     assert_eq!(loaded.props.get("note").map(String::as_str), Some("paged"));
+}
+
+fn query_component_schema() -> ObjectRecord {
+    SchemaDescriptor {
+        kind: "component".into(),
+        properties: vec!["name".into(), "tier".into()],
+        required: vec!["name".into(), "tier".into()],
+        links: Vec::new(),
+        sums: Vec::new(),
+        types: Vec::new(),
+    }
+    .to_record()
+    .unwrap()
+}
+
+fn query_incident_schema() -> ObjectRecord {
+    SchemaDescriptor {
+        kind: "incident".into(),
+        properties: vec![
+            "affects".into(),
+            "name".into(),
+            "note".into(),
+            "open".into(),
+            "priority".into(),
+        ],
+        required: vec!["name".into()],
+        links: vec![SchemaLink {
+            name: "affects".into(),
+            far_kind: "component".into(),
+            outgoing: true,
+        }],
+        sums: Vec::new(),
+        types: vec![
+            ("open".into(), PropertyType::Boolean),
+            ("priority".into(), PropertyType::Integer),
+        ],
+    }
+    .to_record()
+    .unwrap()
+}
+
+#[test]
+fn process_composed_predicates_select_and_fail_closed() {
+    let tmp = TempLog::new("predicates");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            query_component_schema(),
+            query_incident_schema(),
+            rec("component", "svc-api", false, &[("name", "billing-api"), ("tier", "prod")]),
+            rec("component", "svc-web", false, &[("name", "web"), ("tier", "prod")]),
+            rec("component", "svc-batch", false, &[("name", "batch"), ("tier", "staging")]),
+            rec("incident", "inc-1", false, &[
+                ("name", "elevated latency"),
+                ("affects", "svc-api"),
+                ("open", "true"),
+                ("priority", "2"),
+            ]),
+            rec("incident", "inc-2", false, &[
+                ("name", "disk full"),
+                ("affects", "svc-api"),
+                ("open", "false"),
+                ("priority", "3"),
+                ("note", "pager"),
+            ]),
+            rec("incident", "inc-3", false, &[
+                ("name", "job delay"),
+                ("affects", "svc-batch"),
+                ("open", "true"),
+                ("priority", "1"),
+            ]),
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let mut keys = evaluate_members(
+        &host,
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [],
+                "sum_kind": "incident",
+                "sum_property": "priority",
+                "predicate": {"op": "eq", "property": "open", "value": "true"},
+                "object_bound": 8
+            }
+        }),
+    );
+    keys.sort();
+    assert_eq!(keys, ["inc-1", "inc-3"]);
+
+    let filter_then_hop = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{
+                "far_kind": "component",
+                "join_property": "affects",
+                "incoming": true
+            }],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "predicate": {"op": "eq", "property": "open", "value": "true"},
+            "object_bound": 8
+        }
+    }));
+    assert!(filter_then_hop.ok, "{filter_then_hop:?}");
+    let mut keys = evaluate_members(
+        &host,
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [{
+                    "far_kind": "component",
+                    "join_property": "affects",
+                    "incoming": true
+                }],
+                "sum_kind": "component",
+                "sum_property": "tier",
+                "predicate": {"op": "eq", "property": "open", "value": "true"},
+                "object_bound": 8
+            }
+        }),
+    );
+    keys.sort();
+    assert_eq!(keys, ["svc-api", "svc-batch"]);
+
+    let hop_then_filter = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{
+                "far_kind": "component",
+                "join_property": "affects",
+                "incoming": true,
+                "predicate": {"op": "eq", "property": "tier", "value": "prod"}
+            }],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "object_bound": 8
+        }
+    }));
+    assert!(hop_then_filter.ok, "{hop_then_filter:?}");
+    let hopped = hop_then_filter.evaluate.expect("evaluate payload");
+    assert_eq!(hopped.two_hop_count, 2);
+    assert_eq!(hopped.objects.len(), 1);
+    assert_eq!(hopped.objects[0].key, "svc-api");
+
+    let range = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "predicate": {"op": "range", "property": "priority", "min": "2", "max": "3"},
+            "object_bound": 8
+        }
+    }));
+    assert!(range.ok, "{range:?}");
+    let mut keys: Vec<String> = range
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|row| row.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["inc-1", "inc-2"]);
+
+    let missing = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "predicate": {"op": "missing", "property": "note"},
+            "object_bound": 8
+        }
+    }));
+    assert!(missing.ok, "{missing:?}");
+    let mut keys: Vec<String> = missing
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|row| row.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["inc-1", "inc-3"]);
+
+    let unsupported = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "predicate": {"op": "union", "args": []},
+            "object_bound": 8
+        }
+    }));
+    assert!(!unsupported.ok, "{unsupported:?}");
+
+    let denied = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "deny": [{"kind": "incident", "property": "open"}],
+            "predicate": {"op": "eq", "property": "open", "value": "true"},
+            "object_bound": 8
+        }
+    }));
+    assert!(!denied.ok, "{denied:?}");
+
+    let hide = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "incident",
+        "key": "inc-3"
+    }));
+    assert!(hide.ok, "{hide:?}");
+    let mut keys: Vec<String> = host
+        .rpc(&serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [],
+                "sum_kind": "incident",
+                "sum_property": "priority",
+                "predicate": {"op": "eq", "property": "open", "value": "true"},
+                "object_bound": 8
+            }
+        }))
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|row| row.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["inc-1"]);
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let mut keys: Vec<String> = reopened
+        .rpc(&serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [],
+                "sum_kind": "incident",
+                "sum_property": "priority",
+                "predicate": {"op": "eq", "property": "open", "value": "true"},
+                "object_bound": 8
+            }
+        }))
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|row| row.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["inc-1"]);
 }

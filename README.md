@@ -69,14 +69,15 @@ let response = ObjectSet::new(LocalCompute).evaluate(
     &EvaluateRequest {
         root_kind: "Customer".into(),
         hops: vec![
-            Hop { far_kind: "Order".into(), join_property: "customer_id".into(), incoming: false },
-            Hop { far_kind: "Shipment".into(), join_property: "order_id".into(), incoming: false },
+            Hop { far_kind: "Order".into(), join_property: "customer_id".into(), incoming: false, predicate: None },
+            Hop { far_kind: "Shipment".into(), join_property: "order_id".into(), incoming: false, predicate: None },
         ],
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     },
 )?;
@@ -89,6 +90,8 @@ A committed `mikura.schema/<kind>` descriptor validates later writes of
 that kind; `Store::load` still returns historical unvalidated rows.
 Default hops find `far_kind` rows that point at the frontier key;
 `Hop.incoming` follows `props[join_property]` to `far_kind`.
+`EvaluateRequest.predicate` (and `Hop.predicate`) select with `eq`,
+`neq`, `range`, `missing`, `and`, `or`, and `not`.
 
 ## Layout
 

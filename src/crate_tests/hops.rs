@@ -16,12 +16,14 @@ fn incoming_hop_follows_join_property() {
             far_kind: "Order".into(),
             join_property: "customer_id".into(),
             incoming: false,
+            predicate: None,
         }],
         sum_kind: "Order".into(),
         sum_property: "customer_id".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     };
     assert_eq!(
@@ -34,12 +36,14 @@ fn incoming_hop_follows_join_property() {
             far_kind: "Customer".into(),
             join_property: "customer_id".into(),
             incoming: true,
+            predicate: None,
         }],
         sum_kind: "Customer".into(),
         sum_property: "region".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
@@ -52,12 +56,14 @@ fn incoming_hop_follows_join_property() {
             far_kind: "Customer".into(),
             join_property: "customer_id".into(),
             incoming: true,
+            predicate: None,
         }],
         sum_kind: "Customer".into(),
         sum_property: "region".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::deny_property("Customer", "region"),
         filter: None,
+        predicate: None,
         object_bound: 0,
     };
     assert!(matches!(
