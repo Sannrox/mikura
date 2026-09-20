@@ -243,7 +243,7 @@ fn overlay_and_action_follow_current_descriptor() {
         .unwrap_err();
     assert!(action_err.contains("unknown property"), "{action_err}");
 
-    store
+    let replay_err = store
         .apply_action(
             Action {
                 id: "act-inc-1-rename".into(),
@@ -257,7 +257,8 @@ fn overlay_and_action_follow_current_descriptor() {
             },
             None,
         )
-        .unwrap();
+        .unwrap_err();
+    assert!(replay_err.contains("unknown property"), "{replay_err}");
     store
         .apply_action(
             Action {
