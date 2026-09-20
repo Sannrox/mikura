@@ -25,6 +25,13 @@ window.
 
 ### Added
 
+- Request-scoped object hide: `hide_kinds` / `hide_identities` on
+  `PropertyAcl`. Load of a hidden identity matches missing. Evaluate
+  omits it from membership, hops, and count+sum. Overlay, action, and
+  hide fail closed with `not in this view`. Host `restriction` object
+  is fail-closed; `deny` remains the property-only shorthand
+  ([#179](https://github.com/Sannrox/mikura/issues/179),
+  [ADR 0014](docs/decisions/0014-externally-supplied-restrictions.md)).
 - Host execution stays one process and one RPC at a time. Request-line
   bounds are not evaluate/ingest deadlines. Mixed-load and simultaneous
   client numbers stay unresolved. [#188](https://github.com/Sannrox/mikura/issues/188)

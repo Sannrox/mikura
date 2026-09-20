@@ -54,6 +54,7 @@ fn eval_req() -> WireEvaluate {
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
         deny: Vec::new(),
+        restriction: None,
         filter: None,
         predicate: None,
         object_bound: 0,
@@ -172,6 +173,7 @@ fn serve_while_stops_without_flushing_stream() {
         kind: "incident".into(),
         key: "inc-uncommitted".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(live.ok, "{live:?}");
     let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
@@ -633,6 +635,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         kind: "Shipment".into(),
         key: "s1".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(omitted.ok, "{omitted:?}");
     assert_eq!(omitted.load.expect("load payload").action_id, None);
@@ -647,12 +650,15 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         .into_iter()
         .collect(),
         expected_gen: None,
+        deny: Vec::new(),
+        restriction: None,
     });
     assert!(written.ok, "{written:?}");
     let loaded = host.handle(HostRequest::Load {
         kind: "Shipment".into(),
         key: "s2".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(loaded.ok, "{loaded:?}");
     let loaded = loaded.load.expect("load payload");
@@ -669,12 +675,15 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         .into_iter()
         .collect(),
         expected_gen: Some(0),
+        deny: Vec::new(),
+        restriction: None,
     });
     assert!(replay.ok, "{replay:?}");
     let replayed = host.handle(HostRequest::Load {
         kind: "Shipment".into(),
         key: "s2".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert_eq!(replayed.load.expect("load payload").gen, loaded.gen);
     let conflict = host.handle(HostRequest::ApplyAction {
@@ -688,6 +697,8 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         .into_iter()
         .collect(),
         expected_gen: None,
+        deny: Vec::new(),
+        restriction: None,
     });
     assert!(!conflict.ok);
     assert!(
@@ -704,6 +715,8 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         key: "s3".into(),
         props: [("order_id".into(), "o1".into())].into_iter().collect(),
         expected_gen: None,
+        deny: Vec::new(),
+        restriction: None,
     });
     assert!(!missing.ok);
     assert!(
@@ -738,6 +751,7 @@ fn load_matches_in_process_and_omits_denied() {
         kind: "Customer".into(),
         key: "c1".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(hosted.ok, "{hosted:?}");
     let loaded = hosted.load.expect("load payload");
@@ -755,6 +769,7 @@ fn load_matches_in_process_and_omits_denied() {
             kind: "Customer".into(),
             property: "region".into(),
         }],
+        restriction: None,
     });
     assert!(omitted.ok, "{omitted:?}");
     let omitted = omitted.load.expect("load payload");
@@ -788,6 +803,7 @@ fn load_matches_in_process_and_omits_denied() {
         kind: "Customer".into(),
         key: "nope".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(!missing.ok);
     assert!(missing.load.is_none());
@@ -818,12 +834,14 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         kind: "incident".into(),
         key: "inc-1".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(hidden.ok, "{hidden:?}");
     let loaded = host.handle(HostRequest::Load {
         kind: "incident".into(),
         key: "inc-1".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(loaded.ok, "{loaded:?}");
     let loaded = loaded.load.expect("load payload");
@@ -839,6 +857,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             sum_kind: "component".into(),
             sum_property: "tier".into(),
             deny: Vec::new(),
+            restriction: None,
             filter: Some(WireFilter {
                 property: "tier".into(),
                 value: "prod".into(),
@@ -866,6 +885,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             sum_kind: "component".into(),
             sum_property: "tier".into(),
             deny: Vec::new(),
+            restriction: None,
             filter: None,
             predicate: None,
             object_bound: 8,
@@ -882,6 +902,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         kind: "incident".into(),
         key: "nope".into(),
         deny: Vec::new(),
+        restriction: None,
     });
     assert!(!unknown.ok, "{unknown:?}");
     assert!(
@@ -899,6 +920,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             kind: "component".into(),
             property: "tier".into(),
         }],
+        restriction: None,
     });
     assert!(!denied.ok, "{denied:?}");
     assert!(

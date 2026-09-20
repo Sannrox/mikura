@@ -2052,3 +2052,85 @@ fn association_objects_persist_and_traverse() {
     let replayed = oss.evaluate(&rebuilt, &hop_incident_to_labels(8)).unwrap();
     assert_eq!(replayed.objects[0].key, "sev-high");
 }
+
+#[test]
+fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
+    let tmp = TempLog::new("restriction-view");
+    let mut store = Store::create(tmp.path()).unwrap();
+    store
+        .append(rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ))
+        .unwrap();
+    store
+        .append(rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ))
+        .unwrap();
+    let mut hidden = PropertyAcl::allow_all();
+    hidden.insert_hide_identity("incident", "inc-1").unwrap();
+    assert!(store
+        .load("incident", "inc-1", &hidden)
+        .unwrap_err()
+        .contains("unknown identity"));
+    let oss = ObjectSet::new(LocalCompute);
+    let mut hop = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![Hop {
+            far_kind: "component".into(),
+            join_property: "affects".into(),
+            incoming: true,
+            predicate: None,
+        }],
+        sum_kind: "component".into(),
+        sum_property: "tier".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: hidden.clone(),
+        filter: None,
+        predicate: None,
+        object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
+    };
+    let closed = oss.evaluate(&store, &hop).unwrap();
+    assert_eq!(closed.two_hop_count, 0);
+    hop.acl = PropertyAcl::allow_all();
+    let open = oss.evaluate(&store, &hop).unwrap();
+    assert_eq!(open.two_hop_count, 1);
+    let overlay_err = store
+        .apply_overlay_in_view(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "x".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-hidden".into(),
+            None,
+            &hidden,
+        )
+        .unwrap_err();
+    assert!(overlay_err.contains("not in this view"), "{overlay_err}");
+    drop(store);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    assert!(rebuilt
+        .load("incident", "inc-1", &hidden)
+        .unwrap_err()
+        .contains("unknown identity"));
+    assert_eq!(
+        rebuilt
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .key,
+        "inc-1"
+    );
+}

@@ -2224,3 +2224,91 @@ fn process_association_objects_traverse_and_hide() {
         "sev-high"
     );
 }
+
+#[test]
+fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
+    let tmp = TempLog::new("restriction");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            {
+                "gen": 1,
+                "kind": "component",
+                "key": "svc-api",
+                "hidden": false,
+                "props": {"name": "billing-api", "tier": "prod"}
+            },
+            {
+                "gen": 1,
+                "kind": "incident",
+                "key": "inc-1",
+                "hidden": false,
+                "props": {"name": "elevated latency", "affects": "svc-api"}
+            }
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let restriction = serde_json::json!({
+        "hide_identities": [{"kind": "incident", "key": "inc-1"}]
+    });
+    let missing = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1",
+        "restriction": restriction
+    }));
+    assert!(!missing.ok, "{missing:?}");
+    assert!(
+        missing
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown identity"),
+        "{missing:?}"
+    );
+    let open = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert!(open.ok, "{open:?}");
+    let hopped = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{"far_kind": "component", "join_property": "affects", "incoming": true}],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "object_bound": 8,
+            "restriction": restriction
+        }
+    }));
+    assert!(hopped.ok, "{hopped:?}");
+    assert_eq!(hopped.evaluate.unwrap().two_hop_count, 0);
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-hidden",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "x"},
+        "restriction": restriction
+    }));
+    assert!(!overlay.ok, "{overlay:?}");
+    assert!(
+        overlay
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("not in this view"),
+        "{overlay:?}"
+    );
+    let unknown = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1",
+        "restriction": {"nope": true}
+    }));
+    assert!(!unknown.ok, "{unknown:?}");
+    drop(host);
+}

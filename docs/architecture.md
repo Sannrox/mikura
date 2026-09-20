@@ -267,34 +267,34 @@ predicate `op` tags and unknown evaluate fields fail closed. No
 
 ## ACL
 
-`PropertyAcl` is a deny set of `(kind, property)`. `allow_all()` is empty.
-`deny_property` inserts one pair. `check` errors with `AclError::Denied`.
+`PropertyAcl` is the request-scoped restriction document
+([ADR 0014](decisions/0014-externally-supplied-restrictions.md)):
+property denies plus optional `hide_kinds` / `hide_identities`.
+`allow_all()` is empty. `check` errors with `AclError::Denied`.
+Mutations of a hidden identity error with `AclError::Invisible`.
+Unknown, duplicate, or over-bound hide lists fail closed. There is no
+allow-list and no principal. Policy stays in the clerk.
 
-Load omits denied properties from the returned object; it does not invent
-substitutes. The omit walks interned owned pairs after resolving the deny
-list to `(kind, property)` intern ids; an empty deny skips the walk.
-Evaluate of a denied `(sum_kind, sum_property)` still fails
-closed. There is no allow-list and no principal. Policy stays in the clerk;
-this crate applies the request deny list.
+Load of a restriction-invisible identity matches missing. Load of a
+visible identity omits denied properties; remaining keys keep stored
+values. Evaluate omits invisible identities from membership, hops,
+count+sum, and pages. Overlay, action, and hide of an invisible
+identity fail closed without writing. Source ingest is unrestricted.
+The restriction is never stored on the log.
 
-| Surface | Denied property | Result |
+| Surface | Denied property | Invisible identity |
 | --- | --- | --- |
-| `Store::load` / host `load` | on the request deny list | key absent from `props` (never `""`) |
-| evaluate aggregate | `(sum_kind, sum_property)` denied | `AclError::Denied` |
-| `Store::hide` / host `hide` | property this hide would copy | fail closed |
-| dual-read | load with allow-all, or delete the sidecar | stored values from the log |
+| `Store::load` / host `load` | key absent from `props` (never `""`) | same error as missing |
+| evaluate membership / hops / count+sum | denied filter/join/sum fails closed | absent from results |
+| overlay / action / hide | overlay/hide copy of a denied key fails closed | `not in this view` |
+| ingest | not filtered | not filtered |
+| dual-read | load with allow-all, or delete the sidecar | stored bytes unchanged |
 
-Host `load` uses the same omit-as-absent map. The wire does not grow a
-`denied: […]` list; that would advertise properties the clerk withheld.
-Never stored and denied-on-this-request look the same on the request
-view; dual-read is how a clerk distinguishes them.
-
-Object visibility as a request-scoped hide of kinds or identities is
-accepted in [ADR 0014](decisions/0014-externally-supplied-restrictions.md)
-and not implemented until [#179](https://github.com/Sannrox/mikura/issues/179).
-Restriction-invisible identities must not confirm existence on `load` and
-must not contribute to evaluate membership or aggregates. The process
-bearer stays a process secret, not a principal.
+Host `v=1` keeps `deny` as the property-only shorthand (now more than
+one pair). Object hide uses an explicit `restriction` object; unknown
+keys on that object fail closed. `deny` and `restriction` together fail
+closed. The process bearer stays a process secret, not a principal.
+Snapshot cursors bind the whole restriction document.
 
 ## Action writeback
 

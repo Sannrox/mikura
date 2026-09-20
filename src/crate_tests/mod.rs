@@ -11,5 +11,6 @@ mod overlay;
 mod pages;
 mod persist;
 mod predicates;
+mod restriction;
 mod schema;
 mod values;
