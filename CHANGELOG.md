@@ -25,6 +25,11 @@ window.
 
 ### Added
 
+- Source resume stays with the clerk. Changelog of identical snapshots
+  does not append. Uncommitted stream records are absent after reopen.
+  No offset ledger or waiter
+  ([#184](https://github.com/Sannrox/mikura/issues/184),
+  [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md)).
 - Overlay retries use the Action id. Same id and same patch is a replay
   and does not append. A different patch or another identity fails
   closed ([#181](https://github.com/Sannrox/mikura/issues/181),
@@ -42,11 +47,6 @@ window.
   stays blocked
   ([#187](https://github.com/Sannrox/mikura/issues/187),
   [ADR 0021](docs/decisions/0021-bounded-host-execution.md)).
-- Source resume stays with the clerk. Changelog and stream replay are
-  the acknowledgement contract. No offset ledger or public waiter.
-  [#123](https://github.com/Sannrox/mikura/issues/123) is unchanged
-  ([#183](https://github.com/Sannrox/mikura/issues/183),
-  [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md)).
 - Overlay retries use the same Action id as `apply_action`. Same id and
   patch is a replay; a different patch or another identity fails closed.
   Multi-object atomic edits stay out until a fixture names a

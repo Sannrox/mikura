@@ -8,7 +8,7 @@ use mikura::{
     ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType, SchemaDescriptor,
     SchemaLink, Sort, Store, SCHEMA_SUMS, SCHEMA_TYPES,
 };
-use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
+use mikura_ingest::{snapshot_changelog, BatchIngest, ChangelogIngest, StreamIngest};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -2197,4 +2197,123 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
             .gen,
         gen
     );
+}
+
+#[test]
+fn changelog_and_stream_resume_without_an_offset_ledger() {
+    let tmp = TempLog::new("source-resume");
+    let seed = vec![
+        rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ),
+        rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ),
+    ];
+    let mut store = Store::create(tmp.path()).unwrap();
+    ChangelogIngest::run(&mut store, Vec::new(), seed.clone()).unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "acked".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            Some(1),
+        )
+        .unwrap();
+    let after_overlay = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    drop(store);
+    let mut reopened = Store::open(tmp.path()).unwrap();
+    ChangelogIngest::run(&mut reopened, seed.clone(), seed.clone()).unwrap();
+    let again = reopened
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(again.gen, after_overlay.gen);
+    assert_eq!(again.props.get("note").map(String::as_str), Some("acked"));
+
+    let mut stream = StreamIngest::new(8).unwrap();
+    stream
+        .push(
+            &mut reopened,
+            rec(
+                "incident",
+                "inc-2",
+                false,
+                &[("name", "tail"), ("affects", "svc-api")],
+            ),
+        )
+        .unwrap();
+    assert!(reopened.joins().is_visible("incident", "inc-2"));
+    drop(reopened);
+    let mut after_crash = Store::open(tmp.path()).unwrap();
+    assert!(!after_crash.joins().is_visible("incident", "inc-2"));
+    let mut stream = StreamIngest::new(8).unwrap();
+    stream
+        .push(
+            &mut after_crash,
+            rec(
+                "incident",
+                "inc-2",
+                false,
+                &[("name", "tail"), ("affects", "svc-api")],
+            ),
+        )
+        .unwrap();
+    stream.flush(&mut after_crash).unwrap();
+    assert_eq!(
+        after_crash
+            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("name")
+            .map(String::as_str),
+        Some("tail")
+    );
+    after_crash
+        .append(rec("incident", "inc-1", true, &[]))
+        .unwrap();
+    after_crash
+        .append(rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ))
+        .unwrap();
+    assert!(!after_crash
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .props
+        .contains_key("note"));
+    drop(after_crash);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        rebuilt
+            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .unwrap()
+            .key,
+        "inc-2"
+    );
+    let parent = tmp.path().parent().unwrap();
+    for entry in std::fs::read_dir(parent).unwrap() {
+        let name = entry.unwrap().file_name();
+        let name = name.to_string_lossy();
+        assert!(
+            !name.contains("offset") && !name.contains("waiter"),
+            "unexpected progress file {name}"
+        );
+    }
 }
