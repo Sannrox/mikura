@@ -82,6 +82,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M9 workload contract | One named consumer workload (product-loop). Synthetic scale is evidence, not an SLO. Mixed-load and concurrent-client numbers stay unresolved ([#185](https://github.com/Sannrox/mikura/issues/185), [ADR 0016](docs/decisions/0016-production-workload.md), [m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)). |
 | M7 many-to-many contract | Named many-to-many is ordinary association objects with two `0..1` endpoint links. No edge records, `0..n` properties, or graph engine ([#175](https://github.com/Sannrox/mikura/issues/175), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
 | M7 many-to-many links | Association objects ingest, load, overlay, hide, and two-hop in both directions. Product-loop `affects` is unchanged. Denied endpoint `join_property` fails closed ([#176](https://github.com/Sannrox/mikura/issues/176), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
+| M7 aggregation contract | Count+sum remains the only aggregate. No min/max/avg or group-by without a named fixture. [#178](https://github.com/Sannrox/mikura/issues/178) stays blocked ([#177](https://github.com/Sannrox/mikura/issues/177), [ADR 0018](docs/decisions/0018-aggregation-semantics.md)). |
 
 ## Next (this repository, in order)
 

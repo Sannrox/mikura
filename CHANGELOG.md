@@ -25,6 +25,11 @@ window.
 
 ### Added
 
+- Count+sum stays the only evaluate aggregate. Boolean, timestamp, and
+  decimal are not admitted sum measures. [#178](https://github.com/Sannrox/mikura/issues/178)
+  stays blocked until a consumer fixture names another aggregate
+  ([#177](https://github.com/Sannrox/mikura/issues/177),
+  [ADR 0018](docs/decisions/0018-aggregation-semantics.md)).
 - Association objects persist and two-hop as named many-to-many
   membership. Hide of the association vs hide of an endpoint differ.
   A denied endpoint `join_property` fails closed. Product-loop

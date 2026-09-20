@@ -214,7 +214,8 @@ consumer names 10¹⁰. Measure the application's actual scale first. No
 larger synthetic envelope is needed to justify the next application
 milestone.
 
-Defer full text, vector/geospatial search, group-by and extra aggregates,
+Defer full text, vector/geospatial search, group-by and extra aggregates
+([ADR 0018](../decisions/0018-aggregation-semantics.md)),
 multi-source mappings, general schema-edit migration, SDK generation,
 subscriptions, and materialized exports until a consumer justifies them.
 Current ADR and named-fixture gates still apply. Trigger log compaction on

@@ -32,7 +32,7 @@ membership, payloads, counts, or cursor state.
 **Keep the structured evaluate surface. The unit of composition is a
 distinct identity set of one kind. Admit a documented operator subset.
 Everything else fails closed. Do not add a query language. Count+sum
-stays the only aggregate until [#177](https://github.com/Sannrox/mikura/issues/177).**
+stays the only aggregate ([ADR 0018](0018-aggregation-semantics.md)).**
 
 [#122](https://github.com/Sannrox/mikura/issues/122) still holds for the
 two-object seed. This ADR does not change those expected answers.
@@ -137,7 +137,8 @@ replayed under a different restriction.
 
 - Product-loop exact-match + hop answers do not change.
 - #173 implements the selection subset. #174 implements sort and
-  snapshot cursors. #177 still gates new aggregates.
+  snapshot cursors. Extra aggregates stay out
+  ([ADR 0018](0018-aggregation-semantics.md)).
 - Implementation does not ship in this ADR.
 
 ### Implementation handoff
