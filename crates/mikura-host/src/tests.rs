@@ -1036,8 +1036,26 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         "failover writes must close no-action when replication is not selected"
     );
     assert!(
-        page.contains("[#192]") && page.contains("**Blocked.**"),
-        "partitioning successors must stay blocked without a named capacity miss"
+        page.contains("[#192]") && page.contains("Closed no-action"),
+        "unresolved SLOs must close #192 as no-action, not start a partition"
+    );
+    assert!(
+        page.contains("[#55]") && page.contains("**Blocked.**"),
+        "10¹⁰ stays blocked until a consumer names that envelope"
+    );
+}
+
+#[test]
+fn capacity_decision_keeps_one_store() {
+    let adr = include_str!("../../../docs/decisions/0024-unpartitioned-store.md");
+    let collapsed: String = adr.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed.contains("Keep one unpartitioned store. Do not partition."),
+        "capacity ADR must keep one identity space"
+    );
+    assert!(
+        collapsed.contains("#193") && collapsed.contains("is not implemented"),
+        "partition semantics stay unimplemented while the store is unpartitioned"
     );
 }
 

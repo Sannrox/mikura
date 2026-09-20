@@ -407,6 +407,9 @@ a typed error. `MIKURAV1` is unchanged.
 - Principals, tenants, or policy compile in this crate
 - Compact or checkpoint the log (researched no-action until a later envelope
   misses on disk or `Store::open` because of log growth; [#53](https://github.com/Sannrox/mikura/issues/53))
+- Partitioned ownership (researched no-action: one identity space remains;
+  [#192](https://github.com/Sannrox/mikura/issues/192),
+  [ADR 0024](decisions/0024-unpartitioned-store.md))
 
 Those gaps are intentional at this stage, not undocumented bugs. See
 [ROADMAP.md](../ROADMAP.md).

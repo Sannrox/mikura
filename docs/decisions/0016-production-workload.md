@@ -91,7 +91,8 @@ ADR does not change the log, the public API, or host `v=1`.
   blank. That close-out is not an availability miss.
   [#190](https://github.com/Sannrox/mikura/issues/190) closed
   retain-one-process ([ADR 0023](0023-single-process-availability.md)).
-  Partitioning stays blocked until a named capacity miss.
+  [#192](https://github.com/Sannrox/mikura/issues/192) closed
+  unpartitioned ([ADR 0024](0024-unpartitioned-store.md)).
 - 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) stays blocked
   until a consumer names that envelope. Do not start it from the 40 ms
   hold.
