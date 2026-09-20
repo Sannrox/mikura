@@ -2427,3 +2427,31 @@ fn process_source_resume_replays_without_an_offset_file() {
         );
     }
 }
+
+#[test]
+fn process_health_reports_ready_after_ingest() {
+    let tmp = TempLog::new("health");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let first = host.rpc(&serde_json::json!({"op": "health"}));
+    assert!(first.ok, "{first:?}");
+    let health = first.health.expect("health payload");
+    assert!(health.ready);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let bad = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "missing"
+    }));
+    assert!(!bad.ok, "{bad:?}");
+    let after = host.rpc(&serde_json::json!({"op": "health"}));
+    let health = after.health.expect("health payload");
+    assert!(health.ready);
+    assert!(health.committed_pages >= 1);
+    assert!(health.accepted >= 1);
+    assert!(health.rejected >= 1);
+    drop(host);
+}

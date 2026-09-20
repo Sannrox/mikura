@@ -2,7 +2,7 @@
 //!
 //! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
 //! `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`,
-//! `evaluate`, `load`. JSON lines are envelope `{ v, token?, op, … }`
+//! `evaluate`, `load`, `health`. JSON lines are envelope `{ v, token?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
 //! returns snapshot pages; `cursor` binds restriction, query, and live writer stamp.
@@ -193,6 +193,7 @@ pub enum HostRequest {
         #[serde(default)]
         restriction: Option<WireRestriction>,
     },
+    Health,
 }
 
 pub const WIRE_V: u32 = 1;
@@ -219,6 +220,16 @@ pub struct HostResponse {
     pub evaluate: Option<EvaluateWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load: Option<ObjectRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<HealthWire>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HealthWire {
+    pub ready: bool,
+    pub committed_pages: u32,
+    pub accepted: u64,
+    pub rejected: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -237,6 +248,8 @@ pub struct Host {
     bearer: Option<String>,
     request_bound: usize,
     request_timeout: Duration,
+    accepted: u64,
+    rejected: u64,
 }
 
 impl Host {
@@ -252,6 +265,8 @@ impl Host {
             bearer: None,
             request_bound: DEFAULT_REQUEST_BOUND,
             request_timeout: Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
+            accepted: 0,
+            rejected: 0,
         })
     }
 
@@ -311,6 +326,19 @@ impl Host {
     }
 
     pub fn handle(&mut self, request: HostRequest) -> HostResponse {
+        let count = !matches!(request, HostRequest::Health);
+        let response = self.dispatch(request);
+        if count {
+            if response.ok {
+                self.accepted += 1;
+            } else {
+                self.rejected += 1;
+            }
+        }
+        response
+    }
+
+    fn dispatch(&mut self, request: HostRequest) -> HostResponse {
         match request {
             HostRequest::IngestBatch { records } => ack(BatchIngest::run(&mut self.store, records)),
             HostRequest::IngestStreamPush { record } => {
@@ -384,6 +412,7 @@ impl Host {
                         cursor: response.cursor,
                     }),
                     load: None,
+                    health: None,
                 },
                 Err(error) => fail(error),
             },
@@ -399,8 +428,22 @@ impl Host {
                     error: None,
                     evaluate: None,
                     load: Some(record),
+                    health: None,
                 },
                 Err(error) => fail(error),
+            },
+            HostRequest::Health => HostResponse {
+                v: WIRE_V,
+                ok: true,
+                error: None,
+                evaluate: None,
+                load: None,
+                health: Some(HealthWire {
+                    ready: true,
+                    committed_pages: self.store.committed_pages(),
+                    accepted: self.accepted,
+                    rejected: self.rejected,
+                }),
             },
         }
     }
@@ -556,6 +599,7 @@ fn ok() -> HostResponse {
         error: None,
         evaluate: None,
         load: None,
+        health: None,
     }
 }
 
@@ -566,6 +610,7 @@ fn fail(error: impl ToString) -> HostResponse {
         error: Some(error.to_string()),
         evaluate: None,
         load: None,
+        health: None,
     }
 }
 

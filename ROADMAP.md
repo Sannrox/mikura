@@ -90,13 +90,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M8 source resume | Changelog of identical snapshots does not append. Uncommitted stream records are absent after reopen. Recreate does not revive a prior overlay. No offset ledger ([#184](https://github.com/Sannrox/mikura/issues/184), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md)). |
 | M8 source resume contract | Source offsets stay with the clerk. Resume is changelog/stream replay. No waiter or offset ledger ([#183](https://github.com/Sannrox/mikura/issues/183), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md), [#123](https://github.com/Sannrox/mikura/issues/123)). |
 | M9 host execution contract | One process, one RPC at a time. Line-assembly bounds only. No invented mixed-load SLO. [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked ([#187](https://github.com/Sannrox/mikura/issues/187), [ADR 0021](docs/decisions/0021-bounded-host-execution.md)). |
+| M9 operational signals | Host JSON `health` reports readiness, committed pages, and process-local accepted/rejected counts. Not an SLO gate ([#186](https://github.com/Sannrox/mikura/issues/186), [ADR 0022](docs/decisions/0022-operational-signals.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M6 are complete for their accepted scope. Remaining items:
 
-1. **M9:** operational signals ([#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs. Concurrent-client implementation stays blocked ([#188](https://github.com/Sannrox/mikura/issues/188)).
+1. **M9:** host `health` ([#186](https://github.com/Sannrox/mikura/issues/186), [ADR 0022](docs/decisions/0022-operational-signals.md)). Concurrent-client implementation stays blocked ([#188](https://github.com/Sannrox/mikura/issues/188)).
 2. **M8 limit:** multi-object atomic edits closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
