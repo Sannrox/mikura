@@ -162,10 +162,11 @@ that merged list through `BatchIngest`. The merge list is not authority; rebuild
 reads only the committed log. A visible source write of an identity with a visible `mikura.overlay/{kind}/{key}`
 row merges: source props, drop `cleared`, then overlay values
 ([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)). `Store::apply_overlay`
-admits the patch and rematerializes a visible instance. Hide of the instance
-hides the overlay. Recreate (visible write after hide) does not apply a prior
-overlay. `apply_action` remains a whole-record replace and does not admit an
-overlay.
+admits the patch and rematerializes a visible instance. A repeated Action id
+with the same patch is a replay ([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md)).
+Hide of the instance hides the overlay. Recreate (visible write after hide)
+does not apply a prior overlay. `apply_action` remains a whole-record replace
+and does not admit an overlay.
 
 `mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
 changed `props`/`hidden`/`action_id` emit the current row; keys that disappear emit a hide

@@ -2134,3 +2134,67 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
         "inc-1"
     );
 }
+
+#[test]
+fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
+    let tmp = TempLog::new("overlay-retry");
+    let mut store = Store::create(tmp.path()).unwrap();
+    store
+        .append(rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ))
+        .unwrap();
+    let patch = OverlayPatch {
+        kind: "incident".into(),
+        key: "inc-1".into(),
+        props: HashMap::from([("note".into(), "acked".into())]),
+        cleared: Vec::new(),
+        action_id: None,
+    };
+    store
+        .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(1))
+        .unwrap();
+    let gen = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .gen;
+    store
+        .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(0))
+        .unwrap();
+    assert_eq!(
+        store
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        gen
+    );
+    let conflict = store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "other".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            None,
+        )
+        .unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+    drop(store);
+    let mut reopened = Store::open(tmp.path()).unwrap();
+    reopened
+        .apply_overlay(patch, "act-inc-1-note".into(), Some(0))
+        .unwrap();
+    assert_eq!(
+        reopened
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        gen
+    );
+}
