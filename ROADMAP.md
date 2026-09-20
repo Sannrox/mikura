@@ -85,7 +85,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M7 many-to-many links | Association objects ingest, load, overlay, hide, and two-hop in both directions. Product-loop `affects` is unchanged. Denied endpoint `join_property` fails closed ([#176](https://github.com/Sannrox/mikura/issues/176), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
 | M7 aggregation contract | Count+sum remains the only aggregate. No min/max/avg or group-by without a named fixture. [#178](https://github.com/Sannrox/mikura/issues/178) closed no-action ([#177](https://github.com/Sannrox/mikura/issues/177), [ADR 0018](docs/decisions/0018-aggregation-semantics.md)). |
 | M7 visibility | Request-scoped hide of kinds and identities. Load matches missing; evaluate omits membership and count+sum; overlay/action/hide fail closed. Property deny still omits keys ([#179](https://github.com/Sannrox/mikura/issues/179), [ADR 0014](docs/decisions/0014-externally-supplied-restrictions.md)). |
-| M8 overlay retry contract | `apply_overlay` retries with the Action id. Same patch is a replay. Multi-object atomic edits stay out. [#182](https://github.com/Sannrox/mikura/issues/182) stays blocked ([#180](https://github.com/Sannrox/mikura/issues/180), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)). |
+| M8 overlay retry contract | `apply_overlay` retries with the Action id. Same patch is a replay. Multi-object atomic edits stay out. [#182](https://github.com/Sannrox/mikura/issues/182) closed no-action ([#180](https://github.com/Sannrox/mikura/issues/180), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)). |
 | M8 overlay retry | Same Action id and overlay patch is a replay. A different patch or another identity fails closed. Expected generation applies to new ids only ([#181](https://github.com/Sannrox/mikura/issues/181), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)). |
 | M8 source resume | Changelog of identical snapshots does not append. Uncommitted stream records are absent after reopen. Recreate does not revive a prior overlay. No offset ledger ([#184](https://github.com/Sannrox/mikura/issues/184), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md)). |
 | M8 source resume contract | Source offsets stay with the clerk. Resume is changelog/stream replay. No waiter or offset ledger ([#183](https://github.com/Sannrox/mikura/issues/183), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md), [#123](https://github.com/Sannrox/mikura/issues/123)). |
@@ -97,7 +97,7 @@ Application milestones, proposed in [the detailed plan](docs/plans/application-r
 M0 through M6 are complete for their accepted scope. Remaining items:
 
 1. **M9:** operational signals ([#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs. Concurrent-client implementation stays blocked ([#188](https://github.com/Sannrox/mikura/issues/188)).
-2. **M8 limit:** multi-object atomic edits stay out ([#182](https://github.com/Sannrox/mikura/issues/182), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
+2. **M8 limit:** multi-object atomic edits closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases

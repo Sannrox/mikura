@@ -31,7 +31,8 @@ of a page batch, not a multi-object transaction
 
 **Extend the Action-id retry rule to `apply_overlay`. Keep every
 mutation single-object. Do not add an atomic multi-object edit.
-[#182](https://github.com/Sannrox/mikura/issues/182) stays blocked.**
+[#182](https://github.com/Sannrox/mikura/issues/182) is closed
+no-action: there is no multi-object outcome to serve.**
 
 No second retry field. No `MIKURAV1` change. Hide stays a tombstone
 without its own retry key.
@@ -67,9 +68,7 @@ one identity. Coordinated workflows that need two keys stay in the
 clerk. Association create/hide is one association object.
 
 A later fixture whose expected answer is two identities that cannot
-diverge may reopen [#182](https://github.com/Sannrox/mikura/issues/182).
-Until then it stays blocked. Closing this Issue does not make #182
-ready.
+diverge may reopen this as new research, not this Issue.
 
 ## Alternatives considered
 
@@ -84,11 +83,10 @@ ready.
 ## Consequences
 
 - [#181](https://github.com/Sannrox/mikura/issues/181) implements overlay
-  replay. It remains blocked on its other GitHub dependencies, including
-  visibility enforcement.
-- [#182](https://github.com/Sannrox/mikura/issues/182) stays blocked.
-  No-action on atomic batches until a fixture names a cross-identity
-  invariant.
+  replay.
+- [#182](https://github.com/Sannrox/mikura/issues/182) is closed
+  no-action. One identity per mutation. A later fixture that names a
+  cross-identity invariant is new research.
 - Action ids stay unique across `apply_action` and `apply_overlay`.
 - ADR 0009 overlay merge, expected generation, hide, and recreate stay.
 - No log-format change.
