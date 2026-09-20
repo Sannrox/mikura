@@ -24,6 +24,7 @@ a new ADR. Allocate the next number and list it here.
 | [0017](0017-many-to-many-links.md) | Editable many-to-many via association objects | accepted |
 | [0018](0018-aggregation-semantics.md) | Count+sum only; no extra aggregate without a fixture | accepted |
 | [0019](0019-overlay-retry-and-mutation-boundaries.md) | Overlay Action-id replay; no multi-object atomic edit | accepted |
+| [0020](0020-resumable-source-reconciliation.md) | Clerk-owned source offsets; changelog/stream replay | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

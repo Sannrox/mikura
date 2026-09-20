@@ -151,6 +151,8 @@ and group-commits once via `Store::commit`. The `mikura` crate has no ingest
 types. Host `ingest_batch`, stream flush, `apply_action`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Source-sync offsets stay with the clerk.
+Long-running resume is changelog/stream replay, not an offset ledger
+([ADR 0020](decisions/0020-resumable-source-reconciliation.md)).
 
 `mikura-ingest::merge_source_and_edits` folds a source snapshot and admitted
 edits by `(kind, key)` for one write cycle. Within each input the last record
