@@ -250,7 +250,7 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
     let bytes = hex.as_bytes();
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         let hi = hex_nibble(pair[0])?;
         let lo = hex_nibble(pair[1])?;
         out.push((hi << 4) | lo);
