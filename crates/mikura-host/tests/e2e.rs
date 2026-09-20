@@ -2369,3 +2369,61 @@ fn process_overlay_replays_matching_id() {
     );
     drop(host);
 }
+
+#[test]
+fn process_source_resume_replays_without_an_offset_file() {
+    let tmp = TempLog::new("source-resume");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"}
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let push = host.rpc(&serde_json::json!({
+        "op": "ingest_stream_push",
+        "record": {
+            "gen": 1,
+            "kind": "incident",
+            "key": "inc-2",
+            "hidden": false,
+            "props": {"name": "tail", "affects": "svc-api"}
+        }
+    }));
+    assert!(push.ok, "{push:?}");
+    drop(host);
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let missing = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-2"
+    }));
+    assert!(!missing.ok, "{missing:?}");
+    let replay = reopened.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"}
+    }));
+    assert!(replay.ok, "{replay:?}");
+    let note = load_object(&reopened, "incident", "inc-1");
+    assert_eq!(note.props.get("note").map(String::as_str), Some("acked"));
+    drop(reopened);
+    let parent = tmp.path().parent().unwrap();
+    for entry in std::fs::read_dir(parent).unwrap() {
+        let name = entry.unwrap().file_name();
+        let name = name.to_string_lossy();
+        assert!(
+            !name.contains("offset") && !name.contains("waiter"),
+            "unexpected progress file {name}"
+        );
+    }
+}
