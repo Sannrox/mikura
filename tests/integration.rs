@@ -6,7 +6,7 @@
 use mikura::{
     AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
     ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType, SchemaDescriptor,
-    SchemaLink, Store, SCHEMA_SUMS, SCHEMA_TYPES,
+    SchemaLink, Sort, Store, SCHEMA_SUMS, SCHEMA_TYPES,
 };
 use mikura_ingest::{snapshot_changelog, BatchIngest, StreamIngest};
 use std::collections::HashMap;
@@ -117,6 +117,9 @@ fn fixture_request() -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -136,6 +139,9 @@ fn asset_request() -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -588,6 +594,9 @@ fn incoming_hop_follows_join_property() {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -813,6 +822,9 @@ fn composed_predicates_select_typed_object_sets() {
         filter: None,
         predicate: Some(Predicate::eq("open", "true")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let listed = oss.evaluate(&store, &open).unwrap();
     assert_eq!(listed_keys(&listed), ["inc-1", "inc-3"]);
@@ -832,6 +844,9 @@ fn composed_predicates_select_typed_object_sets() {
         filter: None,
         predicate: Some(Predicate::eq("open", "true")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &filter_then_hop).unwrap()),
@@ -853,6 +868,9 @@ fn composed_predicates_select_typed_object_sets() {
         filter: None,
         predicate: None,
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let hopped = oss.evaluate(&store, &hop_then_filter).unwrap();
     assert_eq!(listed_keys(&hopped), ["svc-api"]);
@@ -868,6 +886,9 @@ fn composed_predicates_select_typed_object_sets() {
         filter: None,
         predicate: Some(Predicate::range("priority", Some("2"), Some("3"))),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &range).unwrap()),
@@ -884,6 +905,9 @@ fn composed_predicates_select_typed_object_sets() {
         filter: None,
         predicate: Some(Predicate::missing("note")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &missing).unwrap()),
@@ -916,6 +940,85 @@ fn composed_predicates_select_typed_object_sets() {
     assert_eq!(
         listed_keys(&oss.evaluate(&replayed, &hop_then_filter).unwrap()),
         ["svc-api"]
+    );
+}
+
+fn ordered_keys(response: &mikura::EvaluateResponse) -> Vec<&str> {
+    response
+        .objects
+        .iter()
+        .map(|row| row.key.as_str())
+        .collect()
+}
+
+#[test]
+fn ordered_pages_are_snapshot_bound() {
+    let tmp = TempLog::new("pages");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let (component_schema, incident_schema) = query_fixture_schemas();
+    let mut records = vec![
+        component_schema.to_record().unwrap(),
+        incident_schema.to_record().unwrap(),
+    ];
+    records.extend(query_fixture_records());
+    BatchIngest::run(&mut store, records).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let first = EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![],
+        sum_kind: "incident".into(),
+        sum_property: "priority".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: None,
+        object_bound: 8,
+        sort: Some(Sort::by("priority")),
+        page_size: 1,
+        cursor: None,
+    };
+    let page1 = oss.evaluate(&store, &first).unwrap();
+    assert_eq!(ordered_keys(&page1), ["inc-3"]);
+    assert_eq!(page1.two_hop_count, 3);
+    let cursor = page1.cursor.clone().expect("continuation");
+
+    let page2 = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                cursor: Some(cursor.clone()),
+                ..first.clone()
+            },
+        )
+        .unwrap();
+    assert_eq!(ordered_keys(&page2), ["inc-1"]);
+
+    let ties = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                sort: Some(Sort::by("open")),
+                page_size: 0,
+                cursor: None,
+                ..first.clone()
+            },
+        )
+        .unwrap();
+    assert_eq!(ordered_keys(&ties), ["inc-2", "inc-1", "inc-3"]);
+
+    store
+        .hide("incident", "inc-2", &PropertyAcl::allow_all())
+        .unwrap();
+    let after_write = oss.evaluate(
+        &store,
+        &EvaluateRequest {
+            cursor: Some(cursor),
+            ..first
+        },
+    );
+    assert!(
+        matches!(after_write, Err(ComputeError::Page(_))),
+        "{after_write:?}"
     );
 }
 
@@ -1070,6 +1173,9 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 }),
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -1094,6 +1200,9 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 filter: None,
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -1123,6 +1232,9 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 }),
                 predicate: None,
                 object_bound: 1,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap_err();
@@ -1151,6 +1263,9 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 filter: None,
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap()
@@ -1176,6 +1291,9 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 }),
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap()
@@ -1374,6 +1492,9 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 }),
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -1397,6 +1518,9 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 filter: None,
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -1846,6 +1970,9 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -1907,6 +2034,9 @@ fn association_objects_persist_and_traverse() {
                 filter: None,
                 predicate: None,
                 object_bound: 8,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();

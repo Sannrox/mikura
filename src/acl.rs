@@ -33,6 +33,16 @@ impl PropertyAcl {
         Ok(())
     }
 
+    pub(crate) fn denied_sorted(&self) -> Vec<(&str, &str)> {
+        let mut denied: Vec<(&str, &str)> = self
+            .denied
+            .iter()
+            .map(|(kind, property)| (kind.as_str(), property.as_str()))
+            .collect();
+        denied.sort_unstable();
+        denied
+    }
+
     /// Resolve named denies to intern ids. Unknown names cannot appear on a row.
     pub(crate) fn interned_denies(
         &self,

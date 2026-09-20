@@ -8,6 +8,7 @@ mod hops;
 mod load;
 mod measures;
 mod overlay;
+mod pages;
 mod persist;
 mod predicates;
 mod schema;

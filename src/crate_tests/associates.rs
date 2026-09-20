@@ -84,6 +84,9 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -111,6 +114,9 @@ fn hop_label_to_incidents(bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -125,6 +131,9 @@ fn list_associations(bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 

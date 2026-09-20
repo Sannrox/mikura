@@ -25,6 +25,13 @@ window.
 
 ### Added
 
+- Evaluate sorts one result-kind property with `(kind, key)` ties and
+  returns snapshot pages. The opaque cursor binds the deny list, query,
+  and live writer stamp. A later write, including an uncommitted stream
+  append, or a different view fails closed.
+  Over-bound matching sets still fail closed
+  ([#174](https://github.com/Sannrox/mikura/issues/174),
+  [ADR 0015](docs/decisions/0015-composable-object-sets.md)).
 - Count+sum stays the only evaluate aggregate. Boolean, timestamp, and
   decimal are not admitted sum measures. [#178](https://github.com/Sannrox/mikura/issues/178)
   stays blocked until a consumer fixture names another aggregate

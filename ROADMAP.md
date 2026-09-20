@@ -79,6 +79,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M7 restriction contract | Trusted caller supplies a request-scoped hide/deny document. Object visibility and property restriction are separate axes. Principals stay out of the log ([#172](https://github.com/Sannrox/mikura/issues/172), [ADR 0014](docs/decisions/0014-externally-supplied-restrictions.md)). |
 | M7 object-set contract | Distinct identity sets, AND/OR/NOT and typed eq/range/missing, hop-then-filter vs filter-then-hop. Sort and snapshot cursors are specified for later pages. No query language ([#171](https://github.com/Sannrox/mikura/issues/171), [ADR 0015](docs/decisions/0015-composable-object-sets.md)). |
 | M7 composed evaluate | Predicate tree `eq`/`neq`/`range`/`missing`/`and`/`or`/`not` on the current kind and after each hop. Exact-match filter stays the product-loop shorthand. Unsupported operators fail closed ([#173](https://github.com/Sannrox/mikura/issues/173), [ADR 0015](docs/decisions/0015-composable-object-sets.md)). |
+| M7 ordered pages | One sort property plus `(kind, key)` ties. Snapshot cursor binds restriction, query, and the live writer stamp. A write or a different view fails closed ([#174](https://github.com/Sannrox/mikura/issues/174), [ADR 0015](docs/decisions/0015-composable-object-sets.md)). |
 | M9 workload contract | One named consumer workload (product-loop). Synthetic scale is evidence, not an SLO. Mixed-load and concurrent-client numbers stay unresolved ([#185](https://github.com/Sannrox/mikura/issues/185), [ADR 0016](docs/decisions/0016-production-workload.md), [m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)). |
 | M7 many-to-many contract | Named many-to-many is ordinary association objects with two `0..1` endpoint links. No edge records, `0..n` properties, or graph engine ([#175](https://github.com/Sannrox/mikura/issues/175), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
 | M7 many-to-many links | Association objects ingest, load, overlay, hide, and two-hop in both directions. Product-loop `affects` is unchanged. Denied endpoint `join_property` fails closed ([#176](https://github.com/Sannrox/mikura/issues/176), [ADR 0017](docs/decisions/0017-many-to-many-links.md)). |
@@ -89,8 +90,9 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M6 are complete for their accepted scope. Remaining items:
 
-1. **M7 features:** ordered pages ([#174](https://github.com/Sannrox/mikura/issues/174)) after remaining contract details.
-2. **M9 research:** bounded execution and operational signals ([#187](https://github.com/Sannrox/mikura/issues/187), [#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs.
+1. **M7 features:** visibility enforcement ([#179](https://github.com/Sannrox/mikura/issues/179)) after remaining page/aggregation successors are accepted or amended.
+2. **M8 research:** overlay retry and source reconciliation ([#180](https://github.com/Sannrox/mikura/issues/180), [#183](https://github.com/Sannrox/mikura/issues/183)).
+3. **M9 research:** bounded execution and operational signals ([#187](https://github.com/Sannrox/mikura/issues/187), [#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
@@ -105,7 +107,7 @@ The named production workload is the product-loop
 Synthetic envelopes do not set its SLOs. They do not block remaining
 M7 research.
 
-Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. Sort, composed filters, and snapshot-bound cursors wait the same way ([#122](https://github.com/Sannrox/mikura/issues/122)).
+Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. The two-object seed stays unambiguous without extra operators ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 ## Later (not this repository)
 

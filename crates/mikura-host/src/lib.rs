@@ -4,7 +4,9 @@
 //! `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`,
 //! `evaluate`, `load`. JSON lines are envelope `{ v, token?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
-//! tree; unknown `op` tags fail closed. Loopback bind is unauthenticated until
+//! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
+//! returns snapshot pages; `cursor` binds restriction, query, and live writer stamp.
+//! Loopback bind is unauthenticated until
 //! `require_bearer` is called. Non-loopback bind requires a clerk-owned
 //! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
 //! loopback.
@@ -18,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use mikura::{
     Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Store,
+    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -95,6 +97,20 @@ pub struct WireEvaluate {
     /// Distinct result objects to return. Omit or `0` keeps count/sum only.
     #[serde(default)]
     pub object_bound: usize,
+    #[serde(default)]
+    pub sort: Option<WireSort>,
+    #[serde(default)]
+    pub page_size: usize,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireSort {
+    pub property: String,
+    #[serde(default)]
+    pub descending: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -176,6 +192,8 @@ pub struct EvaluateWire {
     pub sum_amount: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub objects: Vec<ObjectRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 pub struct Host {
@@ -309,6 +327,7 @@ impl Host {
                         two_hop_count: response.two_hop_count,
                         sum_amount: response.sum_amount,
                         objects: response.objects,
+                        cursor: response.cursor,
                     }),
                     load: None,
                 },
@@ -659,6 +678,12 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         }),
         predicate: request.predicate.map(predicate_from_wire).transpose()?,
         object_bound: request.object_bound,
+        sort: request.sort.map(|sort| Sort {
+            property: sort.property,
+            descending: sort.descending,
+        }),
+        page_size: request.page_size,
+        cursor: request.cursor,
     };
     ObjectSet::new(LocalCompute)
         .evaluate(store, &request)

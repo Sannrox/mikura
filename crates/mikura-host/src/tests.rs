@@ -57,6 +57,9 @@ fn eval_req() -> WireEvaluate {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -274,9 +277,13 @@ fn evaluate_unknown_predicate_op_fails_closed() {
     );
     assert!(!union.ok, "{union:?}");
     let extra = host.handle_line(
-        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","cursor":"x","object_bound":8}}"#,
+        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","page_token":"x","object_bound":8}}"#,
     );
     assert!(!extra.ok, "{extra:?}");
+    let bad_cursor = host.handle_line(
+        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","sort":{"property":"region"},"page_size":1,"cursor":"x","object_bound":8}}"#,
+    );
+    assert!(!bad_cursor.ok, "{bad_cursor:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -319,6 +326,9 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 filter: None,
                 predicate: None,
                 object_bound: 0,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -835,6 +845,9 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             }),
             predicate: None,
             object_bound: 8,
+            sort: None,
+            page_size: 0,
+            cursor: None,
         },
     });
     assert!(listed.ok, "{listed:?}");
@@ -856,6 +869,9 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             filter: None,
             predicate: None,
             object_bound: 8,
+            sort: None,
+            page_size: 0,
+            cursor: None,
         },
     });
     assert!(hopped.ok, "{hopped:?}");

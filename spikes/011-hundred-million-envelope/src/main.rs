@@ -80,6 +80,9 @@ fn request() -> EvaluateRequest {
         acl: PropertyAcl::allow_all(),
         filter: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 

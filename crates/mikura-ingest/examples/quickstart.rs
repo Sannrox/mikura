@@ -45,6 +45,9 @@ fn request() -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 

@@ -19,7 +19,7 @@ datasets and admitted edits to `ObjectRecord`s; it does not live in this
 repository. `./build/release-images.sh` wraps `mikura-host` in a
 git-describe image; `./build/release.sh` pushes that tag. There is no
 compose stack and no cluster compute in that wrap. The destination object-set is filter, load, hop, and aggregate;
-today evaluate is hop + count/sum + optional bounded objects, with a composed predicate tree on the current kind (ADR 0015).
+today evaluate is hop + count/sum + optional bounded objects, with a composed predicate tree on the current kind and optional snapshot pages (ADR 0015).
 
 ## Object model
 
@@ -222,19 +222,27 @@ uncommitted tail; rebuild reads only committed pages.
 7. When `object_bound` is greater than zero, collect distinct identities of
    the last hop's `far_kind` (or `root_kind` if there are no hops), `load`
    each with the request ACL, and return them as `EvaluateResponse.objects`.
-   More identities than the bound fails closed. `object_bound == 0` leaves
-   `objects` empty. Result-key order is intern-string sorted; that is not
-   a product sort operator. Snapshot cursors and sort wait for
-   [#174](https://github.com/Sannrox/mikura/issues/174). Set union /
-   intersection / difference, prefix, regex, and extra aggregates fail
-   closed ([ADR 0018](decisions/0018-aggregation-semantics.md)). The
-   two-object seed stays unambiguous without them
+   More identities than the bound fails closed; a page is not a partial
+   answer to an over-bound set. `object_bound == 0` leaves `objects` empty.
+   Without `sort`, result-key order is intern-string sorted and is not a
+   product sort. `EvaluateRequest.sort` orders by one typed property, then
+   `(kind, key)`. Missing sort values sort after present values in both
+   directions. `page_size`
+   slices that order; the opaque cursor binds the deny list, query (including
+   sort and page size), and the live writer stamp (`committed_pages`, written
+   pages, current page used). A later write, including an uncommitted stream
+   append, a different restriction, or a different query fails closed. Reopen
+   on the same committed head with an empty uncommitted page keeps a cursor
+   valid. Set union / intersection /
+   difference, prefix, regex, and extra aggregates fail closed
+   ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
+   seed stays unambiguous without them
    ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
-a filter or predicate is present, on every predicate property of that kind.
-Denied predicate properties fail closed. Denied properties on returned
-objects are omitted.
+a filter or predicate is present, on every predicate property of that kind,
+and on a sort property of the result kind. Denied predicate or sort
+properties fail closed. Denied properties on returned objects are omitted.
 
 `Aggregate` is only `CountAndSum`. Numeric columns already live in the
 interned `amounts` map (values that parse as `i64`). Min/max could walk that
@@ -245,7 +253,9 @@ a schema-named leaf property persist as parent rollups on `MKJOIN04`
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151)). Zero-hop evaluate
 is unchanged. `EvaluateRequest.predicate` and `Hop.predicate` are the
-selection subset ([#173](https://github.com/Sannrox/mikura/issues/173),
+selection subset ([#173](https://github.com/Sannrox/mikura/issues/173)).
+`sort`, `page_size`, and `cursor` are the page subset
+([#174](https://github.com/Sannrox/mikura/issues/174),
 [ADR 0015](decisions/0015-composable-object-sets.md)). Exact-match
 `filter` remains the product-loop shorthand. Host `v=1` unknown
 predicate `op` tags and unknown evaluate fields fail closed. No

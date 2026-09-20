@@ -79,6 +79,9 @@ let response = ObjectSet::new(LocalCompute).evaluate(
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     },
 )?;
 ```
@@ -92,6 +95,8 @@ Default hops find `far_kind` rows that point at the frontier key;
 `Hop.incoming` follows `props[join_property]` to `far_kind`.
 `EvaluateRequest.predicate` (and `Hop.predicate`) select with `eq`,
 `neq`, `range`, `missing`, `and`, `or`, and `not`.
+`EvaluateRequest.sort` plus `page_size` returns snapshot pages; the
+cursor binds the restriction, query, and live writer stamp.
 
 ## Layout
 

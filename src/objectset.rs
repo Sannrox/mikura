@@ -126,6 +126,24 @@ impl std::ops::Not for Predicate {
     }
 }
 
+/// One sort property on the result kind (ADR 0015). Tie-break is `(kind, key)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sort {
+    pub property: String,
+    /// When true, reverse the typed property order. Keys still tie-break
+    /// ascending.
+    pub descending: bool,
+}
+
+impl Sort {
+    pub fn by(property: impl Into<String>) -> Self {
+        Self {
+            property: property.into(),
+            descending: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct EvaluateRequest {
     pub root_kind: String,
@@ -144,6 +162,15 @@ pub struct EvaluateRequest {
     /// many identities. Exceeding the bound fails closed. Zero keeps today's
     /// count/sum-only response.
     pub object_bound: usize,
+    /// Typed order on the result kind. Absent keeps intern-string key order,
+    /// which is not a product sort.
+    pub sort: Option<Sort>,
+    /// Page length when [`Self::sort`] is set. Zero returns the full bounded
+    /// set. Exceeding [`Self::object_bound`] still fails closed.
+    pub page_size: usize,
+    /// Opaque snapshot cursor. Binds restriction, query, and the live
+    /// writer stamp. A write or a different view fails closed.
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,7 +181,12 @@ pub struct EvaluateResponse {
     pub sum_amount: i64,
     /// Distinct current objects of the last hop's `far_kind`, or of
     /// `root_kind` when there are no hops. Empty when `object_bound` is 0.
+    /// With [`EvaluateRequest::sort`] and [`EvaluateRequest::page_size`],
+    /// this is one snapshot page.
     pub objects: Vec<ObjectRecord>,
+    /// Continuation for the next snapshot page. Absent on the final page
+    /// and when paging is not requested.
+    pub cursor: Option<String>,
 }
 
 pub struct ObjectSet<B> {

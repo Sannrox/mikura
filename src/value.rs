@@ -110,6 +110,11 @@ impl PropertyType {
         Ok(true)
     }
 
+    /// ADR 0012 order of two canonical stored forms.
+    pub fn cmp_canonical(self, left: &str, right: &str) -> Result<Ordering, String> {
+        self.cmp_values(&self.parse_canonical(left)?, &self.parse_canonical(right)?)
+    }
+
     fn cmp_values(self, left: &PropertyValue, right: &PropertyValue) -> Result<Ordering, String> {
         match (self, left, right) {
             (Self::String, PropertyValue::String(a), PropertyValue::String(b))
