@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Production-readiness is judged against the named product-loop
+  workload. Synthetic scale envelopes stay evidence, not SLOs.
+  Mixed-load and concurrent-client numbers stay unresolved
+  ([#185](https://github.com/Sannrox/mikura/issues/185),
+  [ADR 0016](docs/decisions/0016-production-workload.md),
+  [m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)).
 - Evaluate admits a structured predicate tree (`eq`, `neq`, `range`,
   `missing`, `and`, `or`, `not`) on the current kind and an optional
   predicate after each hop. Exact-match `filter` stays the product-loop

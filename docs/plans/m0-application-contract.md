@@ -104,13 +104,16 @@ their own. This fixture does not require object-visibility filtering.
 
 ## Workload budgets
 
-Unset. No published Sekai envelope names hold/miss numbers for this
-fixture. Existing Sekai object-index envelopes measure a different
-synthetic scale. Do not invent a hold or miss for two objects.
+Unset for this two-object seed. Do not invent a hold or miss for two
+objects. Production-readiness uses this fixture as the named workload
+and keeps synthetic scale separate
+([ADR 0016](../decisions/0016-production-workload.md),
+[m9-workload-acceptance.md](m9-workload-acceptance.md)). Mixed-load
+and concurrent-client numbers stay unresolved until the consumer
+publishes them.
 
 Initial size: 2 objects, 1 link, fanout 1, string properties only,
-single writer, one client. Measure a real workload before setting p95,
-memory, disk, or reopen budgets.
+single writer, one client.
 
 ## Baseline
 
