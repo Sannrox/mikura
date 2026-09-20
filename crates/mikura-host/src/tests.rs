@@ -194,6 +194,57 @@ fn serve_while_stops_without_flushing_stream() {
 }
 
 #[test]
+fn serial_second_connection_waits_for_first_line() {
+    let (dir, log) = temp_log("serial-rpc");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.set_request_limits(1 << 20, Duration::from_millis(800))
+        .unwrap();
+    let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let running = Arc::new(AtomicBool::new(true));
+    let flag = running.clone();
+    let server =
+        std::thread::spawn(move || host.serve_while(listener, || flag.load(Ordering::SeqCst)));
+    let mut first = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).unwrap();
+    first.write_all(br#"{"op":"health""#).unwrap();
+    first.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(40));
+    let mut second = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    second.write_all(br#"{"op":"health"}"#).unwrap();
+    second.write_all(b"\n").unwrap();
+    let mut buf = [0u8; 8];
+    let early = second.read(&mut buf);
+    assert!(
+        matches!(
+            early,
+            Err(ref err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut
+        ) || matches!(early, Ok(0)),
+        "second RPC must not complete while the first line is open: {early:?}"
+    );
+    drop(first);
+    second
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut body = String::new();
+    second.read_to_string(&mut body).unwrap();
+    let response: HostResponse = serde_json::from_str(body.trim()).unwrap();
+    assert!(response.ok, "{response:?}");
+    assert!(response.health.expect("health").ready);
+    running.store(false, Ordering::SeqCst);
+    let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(1));
+    server.join().unwrap().unwrap();
+    let toml = include_str!("../Cargo.toml");
+    assert!(!toml.contains("tokio"), "{toml}");
+    assert!(!toml.contains("async-std"), "{toml}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn non_loopback_serve_without_bearer_fails_closed() {
     let (dir, log) = temp_log("serve-bearer");
     let listener = Host::bind("0.0.0.0:0".parse().unwrap(), Some("secret")).unwrap();

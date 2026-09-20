@@ -29,7 +29,8 @@ published miss that one sequential process cannot serve
 **Keep one process, one `Store`, one RPC at a time. Do not add a
 worker pool, a post-accept work deadline, or a process split. Do not
 invent a concurrent-client SLO. [#188](https://github.com/Sannrox/mikura/issues/188)
-stays blocked on unresolved simultaneous-client numbers.**
+proves this serial table. Unpublished simultaneous-client numbers stay
+unresolved; they do not block that proof.**
 
 [ADR 0003](0003-hosted-service.md) is unchanged.
 
@@ -84,10 +85,9 @@ No cooperative cancel token on evaluate. No write abort after
 
 ## Consequences
 
-- [#188](https://github.com/Sannrox/mikura/issues/188) may prove this
-  table in host e2e. It must not add a scheduler or mixed-load p95. It
-  remains blocked on unresolved simultaneous-client numbers and its
-  other GitHub dependencies.
+- [#188](https://github.com/Sannrox/mikura/issues/188) proves this
+  table in host e2e. It must not add a scheduler or mixed-load p95.
+  Unpublished simultaneous-client numbers remain unresolved.
 - Product-loop one-client M4 drills do not change.
 - No `MIKURAV1` change. No public API change required by this ADR.
 
