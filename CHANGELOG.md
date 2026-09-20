@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Host execution stays one process and one RPC at a time. Request-line
+  bounds are not evaluate/ingest deadlines. Mixed-load and simultaneous
+  client numbers stay unresolved. [#188](https://github.com/Sannrox/mikura/issues/188)
+  stays blocked
+  ([#187](https://github.com/Sannrox/mikura/issues/187),
+  [ADR 0021](docs/decisions/0021-bounded-host-execution.md)).
 - Source resume stays with the clerk. Changelog and stream replay are
   the acknowledgement contract. No offset ledger or public waiter.
   [#123](https://github.com/Sannrox/mikura/issues/123) is unchanged

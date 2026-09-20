@@ -86,6 +86,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M7 aggregation contract | Count+sum remains the only aggregate. No min/max/avg or group-by without a named fixture. [#178](https://github.com/Sannrox/mikura/issues/178) stays blocked ([#177](https://github.com/Sannrox/mikura/issues/177), [ADR 0018](docs/decisions/0018-aggregation-semantics.md)). |
 | M8 overlay retry contract | `apply_overlay` retries with the Action id. Same patch is a replay. Multi-object atomic edits stay out. [#182](https://github.com/Sannrox/mikura/issues/182) stays blocked ([#180](https://github.com/Sannrox/mikura/issues/180), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)). |
 | M8 source resume contract | Source offsets stay with the clerk. Resume is changelog/stream replay. No waiter or offset ledger ([#183](https://github.com/Sannrox/mikura/issues/183), [ADR 0020](docs/decisions/0020-resumable-source-reconciliation.md), [#123](https://github.com/Sannrox/mikura/issues/123)). |
+| M9 host execution contract | One process, one RPC at a time. Line-assembly bounds only. No invented mixed-load SLO. [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked ([#187](https://github.com/Sannrox/mikura/issues/187), [ADR 0021](docs/decisions/0021-bounded-host-execution.md)). |
 
 ## Next (this repository, in order)
 
@@ -94,7 +95,7 @@ M0 through M6 are complete for their accepted scope. Remaining items:
 
 1. **M7 features:** visibility enforcement ([#179](https://github.com/Sannrox/mikura/issues/179)) after remaining aggregation successors are accepted or amended.
 2. **M8 features:** overlay retry ([#181](https://github.com/Sannrox/mikura/issues/181)) and source-resume proofs ([#184](https://github.com/Sannrox/mikura/issues/184)) wait on remaining dependencies.
-3. **M9 research:** bounded execution and operational signals ([#187](https://github.com/Sannrox/mikura/issues/187), [#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs.
+3. **M9 research:** operational signals ([#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs. Concurrent-client implementation stays blocked ([#188](https://github.com/Sannrox/mikura/issues/188)).
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
