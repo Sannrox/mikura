@@ -15,9 +15,14 @@ pilot drills pass on the named revision. Numeric mixed-load, latency,
 throughput, memory, ingest-lag, and downtime/data-loss targets remain
 **unresolved**. Filling those cells with guessed numbers is forbidden.
 
-[#190](https://github.com/Sannrox/mikura/issues/190)–[#193](https://github.com/Sannrox/mikura/issues/193)
-stay blocked. [#55](https://github.com/Sannrox/mikura/issues/55) stays
-blocked until a consumer names a 10¹⁰ envelope.
+[#190](https://github.com/Sannrox/mikura/issues/190) closed
+retain-one-process ([ADR 0023](../decisions/0023-single-process-availability.md)).
+Unresolved SLO cells are not an availability miss.
+[#191](https://github.com/Sannrox/mikura/issues/191) is not implemented.
+[#192](https://github.com/Sannrox/mikura/issues/192)–[#193](https://github.com/Sannrox/mikura/issues/193)
+stay blocked until a named capacity miss.
+[#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until a
+consumer names a 10¹⁰ envelope.
 
 ## Named revision
 
@@ -89,8 +94,8 @@ a named envelope misses on disk or `Store::open`.
 
 | Issue | After this page |
 | --- | --- |
-| [#190](https://github.com/Sannrox/mikura/issues/190) replication | **Blocked.** Unresolved evidence is not an availability miss. |
-| [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | **Blocked** on #190. |
+| [#190](https://github.com/Sannrox/mikura/issues/190) replication | **Closed retain-one-process.** Unresolved evidence is not an availability miss. |
+| [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | **Do not implement.** Replication was not selected. Close no-action. |
 | [#192](https://github.com/Sannrox/mikura/issues/192) partitioning | **Blocked.** No named capacity miss. |
 | [#193](https://github.com/Sannrox/mikura/issues/193) partition semantics | **Blocked** on #192/#191. |
 | [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Blocked** until a consumer names that envelope. |

@@ -1028,7 +1028,29 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         "p95 cells must stay unresolved, not guessed"
     );
     assert!(
-        page.contains("[#190]") && page.contains("**Blocked.**"),
-        "replication successors must stay blocked"
+        page.contains("Closed retain-one-process"),
+        "unresolved SLOs must close #190 as retain-one-process, not start a replica"
+    );
+    assert!(
+        page.contains("[#192]") && page.contains("**Blocked.**"),
+        "partitioning successors must stay blocked without a named capacity miss"
+    );
+}
+
+#[test]
+fn availability_decision_retains_one_process() {
+    let adr = include_str!("../../../docs/decisions/0023-single-process-availability.md");
+    let collapsed: String = adr.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed.contains("Retain one process. Restore from the object log. Do not replicate."),
+        "availability ADR must keep one process and restore-from-log"
+    );
+    assert!(
+        collapsed.contains("#191") && collapsed.contains("is not implemented"),
+        "failover writes stay unimplemented while one process is retained"
+    );
+    assert!(
+        collapsed.contains("not a quorum"),
+        "acknowledgement stays Store::commit, not a replica quorum"
     );
 }
