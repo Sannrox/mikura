@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- Overlay retries use the Action id. Same id and same patch is a replay
+  and does not append. A different patch or another identity fails
+  closed ([#181](https://github.com/Sannrox/mikura/issues/181),
+  [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 - Request-scoped object hide: `hide_kinds` / `hide_identities` on
   `PropertyAcl`. Load of a hidden identity matches missing. Evaluate
   omits it from membership, hops, and count+sum. Overlay, action, and

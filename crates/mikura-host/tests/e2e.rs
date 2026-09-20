@@ -1292,7 +1292,7 @@ fn process_overlay_refresh_keeps_note() {
     assert_eq!(incident.action_id.as_deref(), Some("act-inc-1-note"));
     let stale = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
-        "id": "act-inc-1-note",
+        "id": "act-inc-1-note-2",
         "kind": "incident",
         "key": "inc-1",
         "props": {"note": "again"},
@@ -2310,5 +2310,62 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
         "restriction": {"nope": true}
     }));
     assert!(!unknown.ok, "{unknown:?}");
+    drop(host);
+}
+
+#[test]
+fn process_overlay_replays_matching_id() {
+    let tmp = TempLog::new("overlay-retry");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [{
+            "gen": 1,
+            "kind": "incident",
+            "key": "inc-1",
+            "hidden": false,
+            "props": {"name": "elevated latency", "affects": "svc-api"}
+        }]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"}
+    });
+    let first = host.rpc(&overlay);
+    assert!(first.ok, "{first:?}");
+    let loaded = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    let gen = loaded.load.as_ref().unwrap().gen;
+    let replay = host.rpc(&overlay);
+    assert!(replay.ok, "{replay:?}");
+    let again = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "incident",
+        "key": "inc-1"
+    }));
+    assert_eq!(again.load.as_ref().unwrap().gen, gen);
+    let conflict = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "other"}
+    }));
+    assert!(!conflict.ok, "{conflict:?}");
+    assert!(
+        conflict
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("body conflict"),
+        "{conflict:?}"
+    );
     drop(host);
 }

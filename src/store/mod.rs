@@ -174,6 +174,42 @@ impl Store {
         Ok(())
     }
 
+    fn replay_overlay(
+        &self,
+        committed: ActionCommit,
+        patch: &OverlayPatch,
+        action_id: &str,
+    ) -> Result<(), String> {
+        if committed.kind != OVERLAY_KIND {
+            return Err(format!(
+                "action id {action_id} already committed on {}/{}",
+                committed.kind, committed.key
+            ));
+        }
+        let stored = OverlayPatch::from_record(&ObjectRecord {
+            gen: committed.gen,
+            kind: committed.kind,
+            key: committed.key,
+            hidden: committed.hidden,
+            action_id: Some(action_id.to_string()),
+            props: committed.props,
+        })?;
+        if stored.kind != patch.kind || stored.key != patch.key {
+            return Err(format!(
+                "action id {action_id} already committed on {}/{}",
+                stored.kind, stored.key
+            ));
+        }
+        let mut stored_cleared = stored.cleared.clone();
+        let mut patch_cleared = patch.cleared.clone();
+        stored_cleared.sort();
+        patch_cleared.sort();
+        if stored.props != patch.props || stored_cleared != patch_cleared {
+            return Err(format!("action id {action_id} body conflict"));
+        }
+        Ok(())
+    }
+
     fn require_expected_gen(
         &self,
         kind: &str,
@@ -295,9 +331,11 @@ impl Store {
 
     /// Admit a property overlay and rematerialize a visible instance.
     ///
-    /// `expected_gen` is the live instance generation the clerk read. Mismatch
-    /// fails closed. Hidden instances stay hidden; recreate does not apply a
-    /// prior overlay.
+    /// The Action id is a retry key (ADR 0019). The same id and the same
+    /// patch is a replay and does not consult `expected_gen`. A different
+    /// patch or another identity fails closed. `expected_gen` is the live
+    /// instance generation the clerk read on a **new** id. Hidden instances
+    /// stay hidden; recreate does not apply a prior overlay.
     pub fn apply_overlay(
         &mut self,
         patch: OverlayPatch,
@@ -325,6 +363,10 @@ impl Store {
         for property in &patch.cleared {
             acl.check(&patch.kind, property)
                 .map_err(|err| err.to_string())?;
+        }
+        self.ensure_action_commits()?;
+        if let Some(committed) = self.action_commits.get(&action_id).cloned() {
+            return self.replay_overlay(committed, &patch, &action_id);
         }
         let id = (patch.kind.clone(), patch.key.clone());
         self.require_expected_gen(&patch.kind, &patch.key, expected_gen)?;
