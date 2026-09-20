@@ -25,6 +25,13 @@ window.
 
 ### Added
 
+- Overlay retries use the same Action id as `apply_action`. Same id and
+  patch is a replay; a different patch or another identity fails closed.
+  Multi-object atomic edits stay out until a fixture names a
+  cross-identity invariant. [#182](https://github.com/Sannrox/mikura/issues/182)
+  stays blocked
+  ([#180](https://github.com/Sannrox/mikura/issues/180),
+  [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 - Evaluate sorts one result-kind property with `(kind, key)` ties and
   returns snapshot pages. The opaque cursor binds the deny list, query,
   and live writer stamp. A later write, including an uncommitted stream
