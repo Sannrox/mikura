@@ -18,7 +18,7 @@ throughput, memory, ingest-lag, and downtime/data-loss targets remain
 [#190](https://github.com/Sannrox/mikura/issues/190) closed
 retain-one-process ([ADR 0023](../decisions/0023-single-process-availability.md)).
 Unresolved SLO cells are not an availability miss.
-[#191](https://github.com/Sannrox/mikura/issues/191) is not implemented.
+[#191](https://github.com/Sannrox/mikura/issues/191) closed no-action.
 [#192](https://github.com/Sannrox/mikura/issues/192)–[#193](https://github.com/Sannrox/mikura/issues/193)
 stay blocked until a named capacity miss.
 [#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until a
@@ -95,7 +95,7 @@ a named envelope misses on disk or `Store::open`.
 | Issue | After this page |
 | --- | --- |
 | [#190](https://github.com/Sannrox/mikura/issues/190) replication | **Closed retain-one-process.** Unresolved evidence is not an availability miss. |
-| [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | **Do not implement.** Replication was not selected. Close no-action. |
+| [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | **Closed no-action.** Replication was not selected. |
 | [#192](https://github.com/Sannrox/mikura/issues/192) partitioning | **Blocked.** No named capacity miss. |
 | [#193](https://github.com/Sannrox/mikura/issues/193) partition semantics | **Blocked** on #192/#191. |
 | [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Blocked** until a consumer names that envelope. |

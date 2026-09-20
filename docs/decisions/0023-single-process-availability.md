@@ -80,9 +80,9 @@ No `MIKURAV1` change. No second store of record. No cluster compute.
 
 - [#190](https://github.com/Sannrox/mikura/issues/190) closes with this
   ADR. One process remains the hosted form.
-- [#191](https://github.com/Sannrox/mikura/issues/191) stays a
-  conditional feature and must close no-action: replication was not
-  selected. This ADR does not close it.
+- [#191](https://github.com/Sannrox/mikura/issues/191) closed
+  no-action: replication was not selected. Failover writes are not
+  implemented.
 - [#192](https://github.com/Sannrox/mikura/issues/192) and
   [#193](https://github.com/Sannrox/mikura/issues/193) stay blocked
   until a named capacity miss. Availability and capacity stay separate.
