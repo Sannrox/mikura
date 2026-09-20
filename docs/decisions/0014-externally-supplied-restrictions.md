@@ -148,8 +148,9 @@ user-facing write time.
 1. Public restriction type with `deny_properties`, `hide_kinds`, and
    bounded `hide_identities`. Unknown keys, duplicates, empty tokens, and
    overflow fail closed.
-2. Apply the matrix above on load, evaluate (membership, hops, counts,
-   sums, returned objects), overlay, action, and hide. Ingest unchanged.
+2. Apply the matrix above on load, evaluate (membership, hops, existing
+   count+sum, returned objects), overlay, action, and hide. Ingest
+   unchanged. Extra aggregates stay out ([ADR 0018](0018-aggregation-semantics.md)).
 3. Host: `restriction` object with fail-closed unknown keys; keep `deny`
    as the property-only shorthand. Do not put principals in `token`.
 4. Distinct views of the same log in public integration and host e2e:
