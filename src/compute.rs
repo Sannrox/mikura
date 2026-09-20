@@ -405,11 +405,22 @@ impl ComputeBackend for LocalCompute {
                     check_predicate_acl(request, &request.root_kind, pred)?;
                     check_predicate_types(store, &request.root_kind, pred)?;
                 }
+                let mut frontier_kind = request.root_kind.as_str();
                 for hop in &request.hops {
+                    let join_kind = if hop.incoming {
+                        frontier_kind
+                    } else {
+                        hop.far_kind.as_str()
+                    };
+                    request
+                        .acl
+                        .check(join_kind, &hop.join_property)
+                        .map_err(ComputeError::Acl)?;
                     if let Some(pred) = &hop.predicate {
                         check_predicate_acl(request, &hop.far_kind, pred)?;
                         check_predicate_types(store, &hop.far_kind, pred)?;
                     }
+                    frontier_kind = hop.far_kind.as_str();
                 }
                 evaluate_local(store, request)
             }

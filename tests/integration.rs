@@ -1734,3 +1734,191 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
         Some("true")
     );
 }
+
+fn association_schemas() -> Vec<SchemaDescriptor> {
+    vec![
+        SchemaDescriptor {
+            kind: "component".into(),
+            properties: vec!["name".into(), "tier".into()],
+            required: vec!["name".into(), "tier".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "incident".into(),
+                outgoing: false,
+            }],
+            sums: Vec::new(),
+            types: Vec::new(),
+        },
+        SchemaDescriptor {
+            kind: "incident".into(),
+            properties: vec!["affects".into(), "name".into()],
+            required: vec!["name".into()],
+            links: vec![SchemaLink {
+                name: "affects".into(),
+                far_kind: "component".into(),
+                outgoing: true,
+            }],
+            sums: Vec::new(),
+            types: Vec::new(),
+        },
+        SchemaDescriptor {
+            kind: "label".into(),
+            properties: vec!["name".into()],
+            required: vec!["name".into()],
+            links: Vec::new(),
+            sums: Vec::new(),
+            types: Vec::new(),
+        },
+        SchemaDescriptor {
+            kind: "incident_label".into(),
+            properties: vec!["incident".into(), "label".into()],
+            required: vec!["incident".into(), "label".into()],
+            links: vec![
+                SchemaLink {
+                    name: "incident".into(),
+                    far_kind: "incident".into(),
+                    outgoing: true,
+                },
+                SchemaLink {
+                    name: "label".into(),
+                    far_kind: "label".into(),
+                    outgoing: true,
+                },
+            ],
+            sums: Vec::new(),
+            types: Vec::new(),
+        },
+    ]
+}
+
+fn association_seed() -> Vec<ObjectRecord> {
+    vec![
+        rec(
+            "component",
+            "svc-api",
+            false,
+            &[("name", "billing-api"), ("tier", "prod")],
+        ),
+        rec(
+            "incident",
+            "inc-1",
+            false,
+            &[("name", "elevated latency"), ("affects", "svc-api")],
+        ),
+        rec("label", "sev-high", false, &[("name", "high")]),
+        rec("label", "region-eu", false, &[("name", "eu")]),
+        rec(
+            "incident_label",
+            "il-inc-1-sev-high",
+            false,
+            &[("incident", "inc-1"), ("label", "sev-high")],
+        ),
+        rec(
+            "incident_label",
+            "il-inc-1-region-eu",
+            false,
+            &[("incident", "inc-1"), ("label", "region-eu")],
+        ),
+    ]
+}
+
+fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
+    EvaluateRequest {
+        root_kind: "incident".into(),
+        hops: vec![
+            Hop {
+                far_kind: "incident_label".into(),
+                join_property: "incident".into(),
+                incoming: false,
+                predicate: None,
+            },
+            Hop {
+                far_kind: "label".into(),
+                join_property: "label".into(),
+                incoming: true,
+                predicate: None,
+            },
+        ],
+        sum_kind: "label".into(),
+        sum_property: "name".into(),
+        aggregate: Aggregate::CountAndSum,
+        acl: PropertyAcl::allow_all(),
+        filter: None,
+        predicate: None,
+        object_bound: bound,
+    }
+}
+
+#[test]
+fn association_objects_persist_and_traverse() {
+    let tmp = TempLog::new("associates");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut records: Vec<ObjectRecord> = association_schemas()
+        .into_iter()
+        .map(|schema| schema.to_record().unwrap())
+        .collect();
+    records.extend(association_seed());
+    BatchIngest::run(&mut store, records).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let labels = oss.evaluate(&store, &hop_incident_to_labels(8)).unwrap();
+    let mut keys: Vec<String> = labels.objects.iter().map(|row| row.key.clone()).collect();
+    keys.sort();
+    assert_eq!(keys, vec!["region-eu", "sev-high"]);
+
+    store
+        .hide(
+            "incident_label",
+            "il-inc-1-region-eu",
+            &PropertyAcl::allow_all(),
+        )
+        .unwrap();
+    let after_hide = oss.evaluate(&store, &hop_incident_to_labels(8)).unwrap();
+    assert_eq!(
+        after_hide
+            .objects
+            .iter()
+            .map(|row| row.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sev-high"]
+    );
+
+    let mut denied = hop_incident_to_labels(8);
+    denied.acl = PropertyAcl::deny_property("incident_label", "label");
+    assert!(matches!(
+        oss.evaluate(&store, &denied),
+        Err(ComputeError::Acl(AclError::Denied { .. }))
+    ));
+
+    let affects = oss
+        .evaluate(
+            &store,
+            &EvaluateRequest {
+                root_kind: "incident".into(),
+                hops: vec![Hop {
+                    far_kind: "component".into(),
+                    join_property: "affects".into(),
+                    incoming: true,
+                    predicate: None,
+                }],
+                sum_kind: "component".into(),
+                sum_property: "tier".into(),
+                aggregate: Aggregate::CountAndSum,
+                acl: PropertyAcl::allow_all(),
+                filter: None,
+                predicate: None,
+                object_bound: 8,
+            },
+        )
+        .unwrap();
+    assert_eq!(affects.objects[0].key, "svc-api");
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    let live = oss.evaluate(&reopened, &hop_incident_to_labels(8)).unwrap();
+    assert_eq!(live.objects[0].key, "sev-high");
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    let replayed = oss.evaluate(&rebuilt, &hop_incident_to_labels(8)).unwrap();
+    assert_eq!(replayed.objects[0].key, "sev-high");
+}
