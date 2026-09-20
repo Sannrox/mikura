@@ -399,7 +399,9 @@ a typed error. `MIKURAV1` is unchanged.
 ## What v1 does not do
 
 - Multi-process replication (researched no-action: one process remains enough;
-  [#56](https://github.com/Sannrox/mikura/issues/56))
+  restore from the object log; [#56](https://github.com/Sannrox/mikura/issues/56),
+  [#190](https://github.com/Sannrox/mikura/issues/190),
+  [ADR 0023](decisions/0023-single-process-availability.md))
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Principals, tenants, or policy compile in this crate

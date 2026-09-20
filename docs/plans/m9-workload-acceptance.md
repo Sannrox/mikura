@@ -107,7 +107,7 @@ machine class only.
 | [#186](https://github.com/Sannrox/mikura/issues/186) operational signals | Unblocked for signals of the accepted operations. Must not encode unresolved SLOs as pass/fail gates. |
 | [#187](https://github.com/Sannrox/mikura/issues/187) bounded execution / concurrent clients | Unblocked as research of fail-closed admission using the existing request-line bounds. Must not invent a client mix or mixed-load p95. |
 | [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved. Unpublished simultaneous-client numbers stay unresolved. |
-| [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. M10 stays blocked. |
+| [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. Availability closed retain-one-process ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](../decisions/0023-single-process-availability.md)). Partitioning stays blocked. |
 
 ## Out of this investigation
 

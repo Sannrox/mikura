@@ -103,7 +103,9 @@ time because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)).
 Compute backend only after a published in-process miss.
 
 **v10 (one process):** one process remains the hosted form
-([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)).
+([#56](https://github.com/Sannrox/mikura/issues/56), [#190](https://github.com/Sannrox/mikura/issues/190),
+[ADR 0003](docs/decisions/0003-hosted-service.md),
+[ADR 0023](docs/decisions/0023-single-process-availability.md)).
 A git tag is enough for a consumer to depend on this crate
 ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut it with prepare-release.
 crates.io stays ask-first (`publish = false`).

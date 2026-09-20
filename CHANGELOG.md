@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- Hosted availability stays one process. Restore from the object log.
+  Unresolved M9 SLO cells are not an availability miss and do not
+  start a replica ([#190](https://github.com/Sannrox/mikura/issues/190),
+  [ADR 0023](docs/decisions/0023-single-process-availability.md)).
 - M9 readiness is unresolved evidence: qualitative host e2e drills pass
   on the named revision; numeric SLOs stay blank. Not a production
   cutover ([#189](https://github.com/Sannrox/mikura/issues/189),

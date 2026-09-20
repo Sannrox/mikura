@@ -3,7 +3,8 @@
 - Status: accepted
 - Date: 2026-09-15
 - Owners: mikura maintainers
-- Related: [#5](https://github.com/Sannrox/mikura/issues/5), [#3](https://github.com/Sannrox/mikura/issues/3), [#4](https://github.com/Sannrox/mikura/issues/4), [#15](https://github.com/Sannrox/mikura/issues/15), [#18](https://github.com/Sannrox/mikura/issues/18), [#48](https://github.com/Sannrox/mikura/issues/48), [ADR 0007](0007-host-bearer.md)
+- Related: [#5](https://github.com/Sannrox/mikura/issues/5), [#3](https://github.com/Sannrox/mikura/issues/3), [#4](https://github.com/Sannrox/mikura/issues/4), [#15](https://github.com/Sannrox/mikura/issues/15), [#18](https://github.com/Sannrox/mikura/issues/18), [#48](https://github.com/Sannrox/mikura/issues/48), [#56](https://github.com/Sannrox/mikura/issues/56), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0007](0007-host-bearer.md), [ADR 0023](0023-single-process-availability.md)
+- Amended by: [ADR 0023](0023-single-process-availability.md) — M9 unresolved-evidence does not split the process or add a replica.
 - Supersedes: none
 - Superseded by: none
 
@@ -59,7 +60,11 @@ is still enough ([#56](https://github.com/Sannrox/mikura/issues/56)): there
 is no published miss that one process cannot fix. 10⁸ ingest later finished
 ([#137](https://github.com/Sannrox/mikura/issues/137)); query and open at
 that size were not reached, so ingest-versus-evaluate contention was not
-measured. Split remains out until that miss exists.
+measured. Split remains out until that miss exists. M9 closed
+unresolved-evidence ([#189](https://github.com/Sannrox/mikura/issues/189));
+that is not an availability miss. One process remains the hosted form
+([#190](https://github.com/Sannrox/mikura/issues/190),
+[ADR 0023](0023-single-process-availability.md)).
 
 ## Alternatives considered
 

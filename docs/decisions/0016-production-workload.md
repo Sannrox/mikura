@@ -88,7 +88,10 @@ ADR does not change the log, the public API, or host `v=1`.
   mix or mixed-load p95.
 - Sustained-service validation ([#189](https://github.com/Sannrox/mikura/issues/189))
   closed unresolved-evidence: qualitative drills pass; numeric SLOs stay
-  blank. That close-out does not make replication or partitioning ready.
+  blank. That close-out is not an availability miss.
+  [#190](https://github.com/Sannrox/mikura/issues/190) closed
+  retain-one-process ([ADR 0023](0023-single-process-availability.md)).
+  Partitioning stays blocked until a named capacity miss.
 - 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) stays blocked
   until a consumer names that envelope. Do not start it from the 40 ms
   hold.
