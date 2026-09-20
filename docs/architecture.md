@@ -348,7 +348,10 @@ evaluate and ingest run to completion; this one-process host has no
 post-accept work deadline. Leftover-input discard after a bound or
 timeout reply uses the same wall-clock deadline, not a fresh idle
 timeout per chunk. One disconnect does not stop the listener. No
-tenants, policy compile, receipts, or principals.
+tenants, policy compile, receipts, or principals. Production-readiness
+uses the product-loop as the named workload; synthetic scale envelopes
+are not SLOs ([ADR 0016](decisions/0016-production-workload.md),
+[m9-workload-acceptance.md](plans/m9-workload-acceptance.md)).
 
 Backup is a file copy of the object log plus the optional `{log}.joins`
 sidecar. Copy those files next to a fresh `Host::open`. There is no backup

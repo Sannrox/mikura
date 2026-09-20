@@ -30,10 +30,10 @@ application is complete.
 | --- | --- | --- |
 | Object model | `(kind, key)`, string properties including canonical boolean/integer/timestamp/decimal when `types` is declared ([ADR 0012](../decisions/0012-typed-values.md), [#168](https://github.com/Sannrox/mikura/issues/168)), generation, hidden flag, optional Action id, supplied `mikura.schema` validation and compatible descriptor replacement in [Store](../../src/store/mod.rs) ([ADR 0013](../decisions/0013-schema-evolution.md), [#170](https://github.com/Sannrox/mikura/issues/170)) | Query operators and access contracts remain later stages |
 | Links | Property-based joins in both directions in [Hop](../../src/objectset.rs); named `SchemaLink` rules with outgoing `0..1` cardinality | Dangling-link behavior; explicit edges if the workflow requires them |
-| Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs); composed-set contract in [ADR 0015](../decisions/0015-composable-object-sets.md) ([#171](https://github.com/Sannrox/mikura/issues/171)) | Implement the admitted subset ([#173](https://github.com/Sannrox/mikura/issues/173)) and snapshot pages ([#174](https://github.com/Sannrox/mikura/issues/174)) |
+| Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs); composed predicates ([#173](https://github.com/Sannrox/mikura/issues/173), [ADR 0015](../decisions/0015-composable-object-sets.md)) | Snapshot pages ([#174](https://github.com/Sannrox/mikura/issues/174)) |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; Action-id replay ([ADR 0011](../decisions/0011-action-id-retry-key.md)); [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)) |
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs); object-visibility contract in [ADR 0014](../decisions/0014-externally-supplied-restrictions.md) ([#172](https://github.com/Sannrox/mikura/issues/172)) | Enforce that document across load, evaluate, and mutations ([#179](https://github.com/Sannrox/mikura/issues/179)) |
-| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests | Capacity limits, operational visibility, representative workload budgets |
+| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests. Named workload is the product-loop; synthetic scale is not an SLO ([ADR 0016](../decisions/0016-production-workload.md), [m9-workload-acceptance.md](m9-workload-acceptance.md)) | Operational signals, concurrent-client admission, unresolved consumer SLOs |
 
 The [existing roadmap](../../ROADMAP.md) records a 10⁷ hop count+sum
 **40 ms hold** after last-hop measures ([#152](https://github.com/Sannrox/mikura/issues/152)),
@@ -55,8 +55,10 @@ reopen. Details, expected answers, and the baseline table live in
 The consumer owns its UI and policy decisions; mikura owns the tested
 storage and query contract. The contract records types, queries, the one
 edit, refresh/delete/retry/visibility, the access boundary, and that
-workload budgets stay unset until the consumer publishes numbers for this
-fixture.
+two-object performance budgets stay unset. Production-readiness uses this
+fixture as the named workload
+([ADR 0016](../decisions/0016-production-workload.md),
+[m9-workload-acceptance.md](m9-workload-acceptance.md)).
 
 ## Delivery sequence
 
@@ -179,8 +181,8 @@ assumed requirements. gRPC remains ask-first.
 | Rust and host API | String values, single-object load, hop/count/sum plus bounded listing, overlay | Version contracts and cover old/new clients; reject incompatible inputs explicitly | Silent conversion or client breakage |
 | Ingest / writeback | Overlay merge on source ingest; replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
 | Access boundary | Caller-provided property denies and process bearer | Trusted-gateway contract; integration/e2e tests across every operation | Restricted values affect observable results or edits bypass admission |
-| Hosting | Single process, request bounds, stdin-close stop, copy-the-log restore | Representative workload baseline and operational visibility | One client stalls service or resources grow without bound |
-| Scale | Existing synthetic envelopes; 10⁸ ingest finished, 10⁸ query/open not reached | Representative workload baseline and one targeted bottleneck investigation at a time | Optimizing a workload the application does not need |
+| Hosting | Single process, request bounds, stdin-close stop, copy-the-log restore | Operational signals ([#186](https://github.com/Sannrox/mikura/issues/186)) and concurrent-client admission ([#187](https://github.com/Sannrox/mikura/issues/187)) without inventing SLOs | One client stalls service or resources grow without bound |
+| Scale | Existing synthetic envelopes; 10⁸ ingest finished, 10⁸ query/open not reached. Named production workload is the product-loop ([m9-workload-acceptance.md](m9-workload-acceptance.md)) | One targeted bottleneck investigation at a time; 10¹⁰ waits for a named envelope | Optimizing a workload the application does not need |
 
 Implementation gates remain formatting, workspace tests (including named
 integration and process e2e), clippy, the quickstart when the public API

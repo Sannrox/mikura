@@ -78,6 +78,8 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M6 schema evolution | Compatible descriptor replacement preserves stored bytes; recast, rename, and outgoing-link retarget fail closed at schema write. Overlay merge and Action bodies use the current descriptor ([#170](https://github.com/Sannrox/mikura/issues/170), [ADR 0013](docs/decisions/0013-schema-evolution.md)). |
 | M7 restriction contract | Trusted caller supplies a request-scoped hide/deny document. Object visibility and property restriction are separate axes. Principals stay out of the log ([#172](https://github.com/Sannrox/mikura/issues/172), [ADR 0014](docs/decisions/0014-externally-supplied-restrictions.md)). |
 | M7 object-set contract | Distinct identity sets, AND/OR/NOT and typed eq/range/missing, hop-then-filter vs filter-then-hop. Sort and snapshot cursors are specified for later pages. No query language ([#171](https://github.com/Sannrox/mikura/issues/171), [ADR 0015](docs/decisions/0015-composable-object-sets.md)). |
+| M7 composed evaluate | Predicate tree `eq`/`neq`/`range`/`missing`/`and`/`or`/`not` on the current kind and after each hop. Exact-match filter stays the product-loop shorthand. Unsupported operators fail closed ([#173](https://github.com/Sannrox/mikura/issues/173), [ADR 0015](docs/decisions/0015-composable-object-sets.md)). |
+| M9 workload contract | One named consumer workload (product-loop). Synthetic scale is evidence, not an SLO. Mixed-load and concurrent-client numbers stay unresolved ([#185](https://github.com/Sannrox/mikura/issues/185), [ADR 0016](docs/decisions/0016-production-workload.md), [m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)). |
 
 ## Next (this repository, in order)
 
@@ -85,8 +87,8 @@ Application milestones, proposed in [the detailed plan](docs/plans/application-r
 M0 through M6 are complete for their accepted scope. Remaining items:
 
 1. **M7 research:** editable many-to-many relationships ([#175](https://github.com/Sannrox/mikura/issues/175)).
-2. **M7 features:** composable evaluate and ordered pages ([#173](https://github.com/Sannrox/mikura/issues/173), [#174](https://github.com/Sannrox/mikura/issues/174)) after their remaining dependencies.
-3. **M9 research:** production workload and service acceptance budgets ([#185](https://github.com/Sannrox/mikura/issues/185)).
+2. **M7 features:** ordered pages ([#174](https://github.com/Sannrox/mikura/issues/174)) after remaining contract details.
+3. **M9 research:** bounded execution and operational signals ([#187](https://github.com/Sannrox/mikura/issues/187), [#186](https://github.com/Sannrox/mikura/issues/186)) without inventing unresolved SLOs.
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery
 tests accompany each feature. These are planning milestones, not releases
@@ -96,8 +98,10 @@ Scale and the log remain gated research:
 
 1. 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) waits until a consumer names that envelope. 10⁹ ingest is closed ([#54](https://github.com/Sannrox/mikura/issues/54)). After last-hop measures, 10⁷ hop count+sum holds 500 ms ([#152](https://github.com/Sannrox/mikura/issues/152)). Do not start #55 from that hold. A miss is not an engine pick.
 
-Measure the application's workload first. They do not block defining and
-delivering the pilot.
+The named production workload is the product-loop
+([m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)).
+Synthetic envelopes do not set its SLOs. They do not block remaining
+M7 research.
 
 Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. Sort, composed filters, and snapshot-bound cursors wait the same way ([#122](https://github.com/Sannrox/mikura/issues/122)).
 

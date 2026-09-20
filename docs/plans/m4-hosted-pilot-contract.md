@@ -49,7 +49,10 @@ gRPC stays ask-first.
 | Shutdown and upgrade | `process_product_loop_survives_shutdown_and_reopen`: close stdin, start a current host on the same files, same load/list/hop/overlay. `process_uncommitted_stream_push_invisible_after_reopen` proves stop does not promote an uncommitted tail. Envelope mismatch stays `process_rejects_unknown_wire_v_and_accepts_omit_or_one`. No `MIKURAV1` change |
 
 Do not invent hold/miss numbers. [M0 budgets](m0-application-contract.md)
-stay unset. Qualitative fail-closed checks are enough.
+stay unset. Qualitative fail-closed checks are enough. Named production
+workload and unresolved SLOs:
+[m9-workload-acceptance.md](m9-workload-acceptance.md)
+([ADR 0016](../decisions/0016-production-workload.md)).
 
 ## Trusted caller
 
