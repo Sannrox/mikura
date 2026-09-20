@@ -202,7 +202,9 @@ uncommitted tail; rebuild reads only committed pages.
    Filter-then-hop and hop-then-filter are different answers.
    Named many-to-many is two of these hops through an association kind,
    not a `0..n` property or edge record
-   ([ADR 0017](decisions/0017-many-to-many-links.md)).
+   ([ADR 0017](decisions/0017-many-to-many-links.md)). A denied
+   `join_property` fails closed: default hops check `far_kind`, incoming
+   hops check the frontier kind.
 4. The last hop folds the linked set in place when no hop carries a
    predicate: it does not store a `(root, leaf)` tuple per path. When
    `(sum_kind, sum_property)` is a schema-named sum on that last hop's

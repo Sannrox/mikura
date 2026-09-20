@@ -25,6 +25,12 @@ window.
 
 ### Added
 
+- Association objects persist and two-hop as named many-to-many
+  membership. Hide of the association vs hide of an endpoint differ.
+  A denied endpoint `join_property` fails closed. Product-loop
+  `affects` is unchanged
+  ([#176](https://github.com/Sannrox/mikura/issues/176),
+  [ADR 0017](docs/decisions/0017-many-to-many-links.md)).
 - Named many-to-many relationships are ordinary association objects
   with two `0..1` endpoint properties. Product-loop `affects` stays a
   single foreign-key string. No edge records, `0..n` cardinality, or

@@ -1926,3 +1926,174 @@ fn process_composed_predicates_select_and_fail_closed() {
     keys.sort();
     assert_eq!(keys, ["inc-1"]);
 }
+
+fn association_records() -> Vec<ObjectRecord> {
+    let mut records = product_loop_schema_records();
+    records.push(
+        SchemaDescriptor {
+            kind: "label".into(),
+            properties: vec!["name".into()],
+            required: vec!["name".into()],
+            links: Vec::new(),
+            sums: Vec::new(),
+            types: Vec::new(),
+        }
+        .to_record()
+        .unwrap(),
+    );
+    records.push(
+        SchemaDescriptor {
+            kind: "incident_label".into(),
+            properties: vec!["incident".into(), "label".into()],
+            required: vec!["incident".into(), "label".into()],
+            links: vec![
+                SchemaLink {
+                    name: "incident".into(),
+                    far_kind: "incident".into(),
+                    outgoing: true,
+                },
+                SchemaLink {
+                    name: "label".into(),
+                    far_kind: "label".into(),
+                    outgoing: true,
+                },
+            ],
+            sums: Vec::new(),
+            types: Vec::new(),
+        }
+        .to_record()
+        .unwrap(),
+    );
+    records.extend(product_loop_source());
+    records.push(rec("label", "sev-high", false, &[("name", "high")]));
+    records.push(rec("label", "region-eu", false, &[("name", "eu")]));
+    records.push(rec(
+        "incident_label",
+        "il-inc-1-sev-high",
+        false,
+        &[("incident", "inc-1"), ("label", "sev-high")],
+    ));
+    records.push(rec(
+        "incident_label",
+        "il-inc-1-region-eu",
+        false,
+        &[("incident", "inc-1"), ("label", "region-eu")],
+    ));
+    records
+}
+
+fn evaluate_incident_labels() -> serde_json::Value {
+    serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [
+                {"far_kind": "incident_label", "join_property": "incident"},
+                {"far_kind": "label", "join_property": "label", "incoming": true}
+            ],
+            "sum_kind": "label",
+            "sum_property": "name",
+            "object_bound": 8
+        }
+    })
+}
+
+#[test]
+fn process_association_objects_traverse_and_hide() {
+    let tmp = TempLog::new("associates");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": association_records(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let mut keys: Vec<String> = host
+        .rpc(&evaluate_incident_labels())
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|row| row.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["region-eu", "sev-high"]);
+
+    let affects = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [{
+                "far_kind": "component",
+                "join_property": "affects",
+                "incoming": true
+            }],
+            "sum_kind": "component",
+            "sum_property": "tier",
+            "object_bound": 8
+        }
+    }));
+    assert!(affects.ok, "{affects:?}");
+    assert_eq!(affects.evaluate.unwrap().objects[0].key, "svc-api");
+
+    let hidden = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "incident_label",
+        "key": "il-inc-1-region-eu"
+    }));
+    assert!(hidden.ok, "{hidden:?}");
+    let after_hide = host.rpc(&evaluate_incident_labels());
+    assert_eq!(after_hide.evaluate.unwrap().objects[0].key, "sev-high");
+
+    let denied = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [
+                {"far_kind": "incident_label", "join_property": "incident"},
+                {"far_kind": "label", "join_property": "label", "incoming": true}
+            ],
+            "sum_kind": "label",
+            "sum_property": "name",
+            "object_bound": 8,
+            "deny": [{"kind": "incident_label", "property": "label"}]
+        }
+    }));
+    assert!(!denied.ok, "{denied:?}");
+    assert!(
+        denied.error.as_deref().unwrap_or("").contains("Denied"),
+        "{denied:?}"
+    );
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(
+        reopened
+            .rpc(&evaluate_incident_labels())
+            .evaluate
+            .unwrap()
+            .objects[0]
+            .key,
+        "sev-high"
+    );
+    drop(reopened);
+
+    let sidecar = Store::join_map_path(tmp.path());
+    if sidecar.is_file() {
+        std::fs::remove_file(&sidecar).expect("delete sidecar");
+    }
+    let delta = Store::join_delta_path(tmp.path());
+    if delta.is_file() {
+        std::fs::remove_file(&delta).expect("delete join delta");
+    }
+    let rebuilt = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(
+        rebuilt
+            .rpc(&evaluate_incident_labels())
+            .evaluate
+            .unwrap()
+            .objects[0]
+            .key,
+        "sev-high"
+    );
+}
