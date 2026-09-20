@@ -21,6 +21,7 @@ a new ADR. Allocate the next number and list it here.
 | [0014](0014-externally-supplied-restrictions.md) | Externally supplied object visibility and operation restrictions | accepted |
 | [0015](0015-composable-object-sets.md) | Composable object-set query semantics | accepted |
 | [0016](0016-production-workload.md) | Production workload and service acceptance | accepted |
+| [0017](0017-many-to-many-links.md) | Editable many-to-many via association objects | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

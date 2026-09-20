@@ -29,7 +29,7 @@ application is complete.
 | Surface | Present implementation | Gap for the first application |
 | --- | --- | --- |
 | Object model | `(kind, key)`, string properties including canonical boolean/integer/timestamp/decimal when `types` is declared ([ADR 0012](../decisions/0012-typed-values.md), [#168](https://github.com/Sannrox/mikura/issues/168)), generation, hidden flag, optional Action id, supplied `mikura.schema` validation and compatible descriptor replacement in [Store](../../src/store/mod.rs) ([ADR 0013](../decisions/0013-schema-evolution.md), [#170](https://github.com/Sannrox/mikura/issues/170)) | Query operators and access contracts remain later stages |
-| Links | Property-based joins in both directions in [Hop](../../src/objectset.rs); named `SchemaLink` rules with outgoing `0..1` cardinality | Dangling-link behavior; explicit edges if the workflow requires them |
+| Links | Property-based joins in both directions in [Hop](../../src/objectset.rs); named `SchemaLink` rules with outgoing `0..1` cardinality. Named many-to-many is an association kind with two `0..1` endpoints ([ADR 0017](../decisions/0017-many-to-many-links.md)) | Implement association objects ([#176](https://github.com/Sannrox/mikura/issues/176)); dangling keys stay clerk-owned |
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs); composed predicates ([#173](https://github.com/Sannrox/mikura/issues/173), [ADR 0015](../decisions/0015-composable-object-sets.md)) | Snapshot pages ([#174](https://github.com/Sannrox/mikura/issues/174)) |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; Action-id replay ([ADR 0011](../decisions/0011-action-id-retry-key.md)); [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle | Source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123)) |
 | Access | Request property denies; non-loopback process bearer in [host](../../crates/mikura-host/src/lib.rs); object-visibility contract in [ADR 0014](../decisions/0014-externally-supplied-restrictions.md) ([#172](https://github.com/Sannrox/mikura/issues/172)) | Enforce that document across load, evaluate, and mutations ([#179](https://github.com/Sannrox/mikura/issues/179)) |
@@ -106,9 +106,11 @@ Do not silently reinterpret old string data. ADR 0012 types new properties
 only; `Store::load` still returns stored bytes. Hidden records stay ADR 0008
 tombstones: `load` returns them, evaluate excludes them.
 
-Start with required property-backed links. Add explicit edge records and
-many-to-many editing when the consumer needs them, with a defined identity,
-duplicate, deletion, and dangling-reference contract.
+Start with required property-backed `0..1` links. Named many-to-many is
+ordinary association objects with two endpoint properties, not edge
+records or `0..n` cardinality
+([ADR 0017](../decisions/0017-many-to-many-links.md)). Implementation is
+[#176](https://github.com/Sannrox/mikura/issues/176).
 
 ### Source data and edits
 
