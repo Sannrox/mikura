@@ -381,7 +381,12 @@ impl JoinMaps {
         })
     }
 
-    fn matching_root_ids(&self, root_kind: &str, property: &str, value: &str) -> HashSet<u32> {
+    pub(crate) fn matching_root_ids(
+        &self,
+        root_kind: &str,
+        property: &str,
+        value: &str,
+    ) -> HashSet<u32> {
         let (Some(&kind_id), Some(&prop_id), Some(&value_id)) = (
             self.intern_ix.get(root_kind),
             self.intern_ix.get(property),
@@ -472,6 +477,107 @@ impl JoinMaps {
     pub(crate) fn reserve(&mut self, additional: usize) {
         self.intern.reserve(additional);
         self.intern_ix.reserve(additional);
+    }
+
+    pub(crate) fn visible_ids(&self, kind: &str) -> HashSet<u32> {
+        let Some(&kind_id) = self.intern_ix.get(kind) else {
+            return HashSet::new();
+        };
+        self.by_kind.get(&kind_id).cloned().unwrap_or_default()
+    }
+
+    pub(crate) fn hop_targets(
+        &self,
+        frontier_kind: &str,
+        parent: u32,
+        far_kind: &str,
+        join_property: &str,
+        incoming: bool,
+    ) -> Vec<u32> {
+        if incoming {
+            let Some(&kind_id) = self.intern_ix.get(frontier_kind) else {
+                return Vec::new();
+            };
+            let Some(&prop_id) = self.intern_ix.get(join_property) else {
+                return Vec::new();
+            };
+            let Some(&far_kind_id) = self.intern_ix.get(far_kind) else {
+                return Vec::new();
+            };
+            let Some(owned) = self.owned.get(&(kind_id, parent)) else {
+                return Vec::new();
+            };
+            let Some((_, value_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
+                return Vec::new();
+            };
+            if self
+                .by_kind
+                .get(&far_kind_id)
+                .is_some_and(|keys| keys.contains(value_id))
+            {
+                vec![*value_id]
+            } else {
+                Vec::new()
+            }
+        } else {
+            let Some(&far_id) = self.intern_ix.get(far_kind) else {
+                return Vec::new();
+            };
+            let Some(&prop_id) = self.intern_ix.get(join_property) else {
+                return Vec::new();
+            };
+            self.by_prop
+                .get(&(far_id, prop_id))
+                .and_then(|by_val| by_val.get(&parent))
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+
+    pub(crate) fn leaf_amount(&self, kind: &str, key_id: u32, property: &str) -> Option<i64> {
+        let kind_id = *self.intern_ix.get(kind)?;
+        let prop_id = *self.intern_ix.get(property)?;
+        self.amounts.get(&(kind_id, prop_id))?.get(&key_id).copied()
+    }
+
+    pub(crate) fn count_and_sum_roots(
+        &self,
+        root_kind: &str,
+        roots: &HashSet<u32>,
+        hops: &[(&str, &str, bool)],
+        sum_kind: &str,
+        sum_property: &str,
+    ) -> (usize, i64) {
+        if roots.is_empty() {
+            return (0, 0);
+        }
+        COUNT_SCRATCH.with(|scratch| {
+            scratch
+                .borrow_mut()
+                .count_and_sum(self, roots, hops, root_kind, sum_kind, sum_property)
+        })
+    }
+
+    pub(crate) fn result_keys_from_roots(
+        &self,
+        root_kind: &str,
+        roots: &HashSet<u32>,
+        hops: &[(&str, &str, bool)],
+    ) -> Vec<String> {
+        if roots.is_empty() {
+            return Vec::new();
+        }
+        COUNT_SCRATCH.with(|scratch| {
+            let ids = scratch
+                .borrow_mut()
+                .collect_leaves(self, roots, hops, root_kind);
+            let mut keys: Vec<String> = ids
+                .into_iter()
+                .filter_map(|id| self.intern_get(id).map(str::to_string))
+                .collect();
+            keys.sort();
+            keys
+        })
     }
 
     pub(crate) fn intern_existing(&self, value: &str) -> Option<u32> {

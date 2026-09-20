@@ -4,6 +4,7 @@
 //! helpers parse and format the accepted subset. Writes may normalize a
 //! timestamp with an offset; other types require the canonical form.
 
+use std::cmp::Ordering;
 use std::fmt;
 
 /// Clerk-declared logical type of one property.
@@ -81,6 +82,49 @@ impl PropertyType {
         }
     }
 
+    /// Inclusive ADR 0012 order. `None` bound is unbounded that side.
+    /// Boolean has no range. A stored value that is not canonical is not a
+    /// match rather than a request error.
+    pub fn in_range(
+        self,
+        stored: &str,
+        min: Option<&str>,
+        max: Option<&str>,
+    ) -> Result<bool, String> {
+        if matches!(self, Self::Boolean) {
+            return Err("range is not defined for boolean".into());
+        }
+        let Ok(value) = self.parse_canonical(stored) else {
+            return Ok(false);
+        };
+        if let Some(min) = min {
+            if self.cmp_values(&value, &self.parse_canonical(min)?)? == Ordering::Less {
+                return Ok(false);
+            }
+        }
+        if let Some(max) = max {
+            if self.cmp_values(&value, &self.parse_canonical(max)?)? == Ordering::Greater {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn cmp_values(self, left: &PropertyValue, right: &PropertyValue) -> Result<Ordering, String> {
+        match (self, left, right) {
+            (Self::String, PropertyValue::String(a), PropertyValue::String(b))
+            | (Self::Timestamp, PropertyValue::Timestamp(a), PropertyValue::Timestamp(b)) => {
+                Ok(a.cmp(b))
+            }
+            (Self::Integer, PropertyValue::Integer(a), PropertyValue::Integer(b)) => Ok(a.cmp(b)),
+            (Self::Boolean, PropertyValue::Boolean(a), PropertyValue::Boolean(b)) => Ok(a.cmp(b)),
+            (Self::Decimal { .. }, PropertyValue::Decimal(a), PropertyValue::Decimal(b)) => {
+                Ok(decimal_units(a)?.cmp(&decimal_units(b)?))
+            }
+            _ => Err("typed comparison mixed property types".into()),
+        }
+    }
+
     /// Form stored on write. Timestamps with a timezone offset normalize to
     /// `Z`; every other type must already be canonical.
     pub fn canonicalize_write(self, raw: &str) -> Result<String, String> {
@@ -137,6 +181,16 @@ fn is_canonical_integer(raw: &str) -> bool {
         return digits == "0" && !raw.starts_with('-');
     }
     true
+}
+
+fn decimal_units(raw: &str) -> Result<i128, String> {
+    let neg = raw.starts_with('-');
+    let body = raw.strip_prefix('-').unwrap_or(raw);
+    let compact: String = body.chars().filter(|ch| *ch != '.').collect();
+    let n: i128 = compact
+        .parse()
+        .map_err(|_| format!("decimal {raw} overflows comparison"))?;
+    Ok(if neg { -n } else { n })
 }
 
 fn parse_decimal(raw: &str, scale: u8) -> Result<PropertyValue, String> {
@@ -474,6 +528,33 @@ mod tests {
                 .canonical(),
             "1970-01-01T00:00:00.000Z"
         );
+    }
+
+    #[test]
+    fn range_uses_typed_order() {
+        let int = PropertyType::Integer;
+        assert!(int.in_range("2", Some("1"), Some("3")).unwrap());
+        assert!(!int.in_range("2", Some("3"), None).unwrap());
+        assert!(int.in_range("2", None, Some("2")).unwrap());
+        assert!(!int.in_range("not-int", Some("1"), Some("3")).unwrap());
+        let cost = PropertyType::Decimal { scale: 2 };
+        assert!(cost.in_range("10.00", Some("2.00"), None).unwrap());
+        assert!(!cost.in_range("2.00", Some("10.00"), None).unwrap());
+        let ts = PropertyType::Timestamp;
+        assert!(ts
+            .in_range(
+                "2026-09-19T17:00:00.000Z",
+                Some("2026-09-19T16:00:00.000Z"),
+                Some("2026-09-19T18:00:00.000Z"),
+            )
+            .unwrap());
+        assert!(PropertyType::Boolean.in_range("true", None, None).is_err());
+        assert!(PropertyType::String
+            .in_range("prod", None, Some("prod"))
+            .unwrap());
+        assert!(!PropertyType::String
+            .in_range("staging", None, Some("prod"))
+            .unwrap());
     }
 
     #[test]

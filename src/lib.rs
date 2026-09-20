@@ -7,9 +7,11 @@
 //! omits properties on the request deny list. Batch, changelog, merge, and
 //! stream ingest live in `mikura-ingest`.
 //! [`LocalCompute`] answers hop / count / sum from those maps, in either
-//! join direction, with an optional exact-match on root properties.
-//! `EvaluateRequest.object_bound` greater than zero also returns the
-//! distinct matching objects and fails closed if the set is larger.
+//! join direction, with an optional exact-match on root properties or a
+//! composed [`Predicate`] tree (ADR 0015). Optional predicates after each
+//! hop restrict the far set. `EvaluateRequest.object_bound` greater than
+//! zero also returns the distinct matching objects and fails closed if
+//! the set is larger.
 //! [`SparkCompute`] always returns [`ComputeError::UnsupportedBackend`].
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
@@ -39,7 +41,9 @@ pub use acl::{AclError, PropertyAcl};
 pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;
-pub use objectset::{Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet};
+pub use objectset::{
+    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet, Predicate,
+};
 pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
 pub use schema::{
     SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,

@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use crate::acl::AclError;
-use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse};
+use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Predicate};
 use crate::store::Store;
+use crate::value::PropertyType;
 
 fn hop_triples(request: &EvaluateRequest) -> Vec<(&str, &str, bool)> {
     request
@@ -24,35 +27,308 @@ fn result_kind(request: &EvaluateRequest) -> &str {
         .unwrap_or(request.root_kind.as_str())
 }
 
+fn has_hop_predicate(request: &EvaluateRequest) -> bool {
+    request.hops.iter().any(|hop| hop.predicate.is_some())
+}
+
+fn property_type(store: &Store, kind: &str, property: &str) -> Result<PropertyType, ComputeError> {
+    match store.schema(kind) {
+        Ok(Some(schema)) => Ok(schema
+            .property_type(property)
+            .unwrap_or(PropertyType::String)),
+        Ok(None) => Ok(PropertyType::String),
+        Err(err) => Err(ComputeError::Load(err)),
+    }
+}
+
+fn check_predicate_shape(pred: &Predicate) -> Result<(), ComputeError> {
+    match pred {
+        Predicate::Eq { property, .. }
+        | Predicate::Neq { property, .. }
+        | Predicate::Range { property, .. }
+        | Predicate::Missing { property } => {
+            if property.is_empty() {
+                return Err(ComputeError::Predicate(
+                    "predicate property must be non-empty".into(),
+                ));
+            }
+            Ok(())
+        }
+        Predicate::And(args) | Predicate::Or(args) => {
+            if args.is_empty() {
+                return Err(ComputeError::Predicate(
+                    "boolean predicate requires at least one argument".into(),
+                ));
+            }
+            for arg in args {
+                check_predicate_shape(arg)?;
+            }
+            Ok(())
+        }
+        Predicate::Not(inner) => check_predicate_shape(inner),
+    }
+}
+
+fn parse_predicate_value(
+    store: &Store,
+    kind: &str,
+    property: &str,
+    raw: &str,
+) -> Result<(), ComputeError> {
+    let ty = property_type(store, kind, property)?;
+    ty.parse_canonical(raw).map_err(ComputeError::Predicate)?;
+    Ok(())
+}
+
+fn check_predicate_types(store: &Store, kind: &str, pred: &Predicate) -> Result<(), ComputeError> {
+    check_predicate_shape(pred)?;
+    match pred {
+        Predicate::Eq { property, value } | Predicate::Neq { property, value } => {
+            parse_predicate_value(store, kind, property, value)
+        }
+        Predicate::Range { property, min, max } => {
+            let ty = property_type(store, kind, property)?;
+            if matches!(ty, PropertyType::Boolean) {
+                return Err(ComputeError::Predicate(format!(
+                    "range is not defined for boolean {kind}.{property}"
+                )));
+            }
+            if let Some(bound) = min {
+                ty.parse_canonical(bound).map_err(ComputeError::Predicate)?;
+            }
+            if let Some(bound) = max {
+                ty.parse_canonical(bound).map_err(ComputeError::Predicate)?;
+            }
+            Ok(())
+        }
+        Predicate::Missing { .. } => Ok(()),
+        Predicate::And(args) | Predicate::Or(args) => {
+            for arg in args {
+                check_predicate_types(store, kind, arg)?;
+            }
+            Ok(())
+        }
+        Predicate::Not(inner) => check_predicate_types(store, kind, inner),
+    }
+}
+
+fn check_predicate_acl(
+    request: &EvaluateRequest,
+    kind: &str,
+    pred: &Predicate,
+) -> Result<(), ComputeError> {
+    for property in pred.properties() {
+        request
+            .acl
+            .check(kind, property)
+            .map_err(ComputeError::Acl)?;
+    }
+    Ok(())
+}
+
+fn stored_eq(ty: PropertyType, stored: &str, expected: &str) -> bool {
+    match (ty.parse_canonical(stored), ty.parse_canonical(expected)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn matches_predicate(
+    store: &Store,
+    kind: &str,
+    key_id: u32,
+    pred: &Predicate,
+) -> Result<bool, ComputeError> {
+    let maps = store.joins();
+    let Some(key) = maps.intern_get(key_id) else {
+        return Ok(false);
+    };
+    match pred {
+        Predicate::Eq { property, value } => {
+            let Some(stored) = maps.prop(kind, key, property) else {
+                return Ok(false);
+            };
+            let ty = property_type(store, kind, property)?;
+            Ok(stored_eq(ty, stored, value))
+        }
+        Predicate::Neq { property, value } => {
+            let Some(stored) = maps.prop(kind, key, property) else {
+                return Ok(false);
+            };
+            let ty = property_type(store, kind, property)?;
+            Ok(!stored_eq(ty, stored, value))
+        }
+        Predicate::Range { property, min, max } => {
+            let Some(stored) = maps.prop(kind, key, property) else {
+                return Ok(false);
+            };
+            let ty = property_type(store, kind, property)?;
+            ty.in_range(stored, min.as_deref(), max.as_deref())
+                .map_err(ComputeError::Predicate)
+        }
+        Predicate::Missing { property } => Ok(maps.prop(kind, key, property).is_none()),
+        Predicate::And(args) => {
+            for arg in args {
+                if !matches_predicate(store, kind, key_id, arg)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Predicate::Or(args) => {
+            for arg in args {
+                if matches_predicate(store, kind, key_id, arg)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Predicate::Not(inner) => Ok(!matches_predicate(store, kind, key_id, inner)?),
+    }
+}
+
+fn filter_ids(
+    store: &Store,
+    kind: &str,
+    ids: HashSet<u32>,
+    pred: &Predicate,
+) -> Result<HashSet<u32>, ComputeError> {
+    let mut kept = HashSet::new();
+    for id in ids {
+        if matches_predicate(store, kind, id, pred)? {
+            kept.insert(id);
+        }
+    }
+    Ok(kept)
+}
+
+fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, ComputeError> {
+    if request.filter.is_some() && request.predicate.is_some() {
+        return Err(ComputeError::Predicate(
+            "evaluate accepts filter or predicate, not both".into(),
+        ));
+    }
+    let maps = store.joins();
+    if let Some(filter) = &request.filter {
+        return Ok(maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value));
+    }
+    let ids = maps.visible_ids(&request.root_kind);
+    if let Some(pred) = &request.predicate {
+        filter_ids(store, &request.root_kind, ids, pred)
+    } else {
+        Ok(ids)
+    }
+}
+
+fn walk_hops(
+    store: &Store,
+    request: &EvaluateRequest,
+    roots: &HashSet<u32>,
+) -> Result<(usize, i64, Vec<u32>), ComputeError> {
+    let maps = store.joins();
+    let mut paths: Vec<(u32, u32)> = roots.iter().map(|&id| (id, id)).collect();
+    let mut frontier_kind = request.root_kind.as_str();
+    for hop in &request.hops {
+        let mut next = Vec::new();
+        for (root, parent) in &paths {
+            for child in maps.hop_targets(
+                frontier_kind,
+                *parent,
+                &hop.far_kind,
+                &hop.join_property,
+                hop.incoming,
+            ) {
+                if let Some(pred) = &hop.predicate {
+                    if !matches_predicate(store, &hop.far_kind, child, pred)? {
+                        continue;
+                    }
+                }
+                next.push((*root, child));
+            }
+        }
+        paths = next;
+        frontier_kind = hop.far_kind.as_str();
+    }
+    let mut seen_roots = HashSet::new();
+    let mut seen_leaves = HashSet::new();
+    let mut count = 0usize;
+    let mut total = 0i64;
+    let mut leaves = Vec::new();
+    for (root, leaf) in paths {
+        if seen_roots.insert(root) {
+            count += 1;
+        }
+        if frontier_kind == request.sum_kind {
+            if let Some(amount) = maps.leaf_amount(frontier_kind, leaf, &request.sum_property) {
+                total += amount;
+            }
+        }
+        if seen_leaves.insert(leaf) {
+            leaves.push(leaf);
+        }
+    }
+    Ok((count, total, leaves))
+}
+
+fn leaf_keys(store: &Store, ids: Vec<u32>) -> Vec<String> {
+    let maps = store.joins();
+    let mut keys: Vec<String> = ids
+        .into_iter()
+        .filter_map(|id| maps.intern_get(id).map(str::to_string))
+        .collect();
+    keys.sort();
+    keys
+}
+
 fn evaluate_local(
     store: &Store,
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, ComputeError> {
     let hops = hop_triples(request);
-    let (two_hop_count, sum_amount) = match &request.filter {
-        None => store.joins().count_and_sum(
+    let (two_hop_count, sum_amount, keys) = if has_hop_predicate(request) {
+        let roots = root_ids(store, request)?;
+        let (count, sum, leaves) = walk_hops(store, request, &roots)?;
+        (count, sum, leaf_keys(store, leaves))
+    } else if request.predicate.is_some() {
+        let roots = root_ids(store, request)?;
+        let (count, sum) = store.joins().count_and_sum_roots(
             &request.root_kind,
+            &roots,
             &hops,
             &request.sum_kind,
             &request.sum_property,
-        ),
-        Some(filter) => store.joins().count_and_sum_matching(
-            &request.root_kind,
-            &hops,
-            &request.sum_kind,
-            &request.sum_property,
-            &filter.property,
-            &filter.value,
-        ),
-    };
-    let objects = if request.object_bound == 0 {
-        Vec::new()
+        );
+        let keys = store
+            .joins()
+            .result_keys_from_roots(&request.root_kind, &roots, &hops);
+        (count, sum, keys)
     } else {
+        let (count, sum) = match &request.filter {
+            None => store.joins().count_and_sum(
+                &request.root_kind,
+                &hops,
+                &request.sum_kind,
+                &request.sum_property,
+            ),
+            Some(filter) => store.joins().count_and_sum_matching(
+                &request.root_kind,
+                &hops,
+                &request.sum_kind,
+                &request.sum_property,
+                &filter.property,
+                &filter.value,
+            ),
+        };
         let filter = request
             .filter
             .as_ref()
             .map(|filter| (filter.property.as_str(), filter.value.as_str()));
         let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
+        (count, sum, keys)
+    };
+    let objects = if request.object_bound == 0 {
+        Vec::new()
+    } else {
         if keys.len() > request.object_bound {
             return Err(ComputeError::ObjectBound {
                 bound: request.object_bound,
@@ -83,6 +359,7 @@ pub enum ComputeError {
     UnsupportedBackend { name: &'static str },
     ObjectBound { bound: usize, count: usize },
     Load(String),
+    Predicate(String),
 }
 
 pub trait ComputeBackend {
@@ -113,11 +390,26 @@ impl ComputeBackend for LocalCompute {
                     .acl
                     .check(&request.sum_kind, &request.sum_property)
                     .map_err(ComputeError::Acl)?;
+                if request.filter.is_some() && request.predicate.is_some() {
+                    return Err(ComputeError::Predicate(
+                        "evaluate accepts filter or predicate, not both".into(),
+                    ));
+                }
                 if let Some(filter) = &request.filter {
                     request
                         .acl
                         .check(&request.root_kind, &filter.property)
                         .map_err(ComputeError::Acl)?;
+                }
+                if let Some(pred) = &request.predicate {
+                    check_predicate_acl(request, &request.root_kind, pred)?;
+                    check_predicate_types(store, &request.root_kind, pred)?;
+                }
+                for hop in &request.hops {
+                    if let Some(pred) = &hop.predicate {
+                        check_predicate_acl(request, &hop.far_kind, pred)?;
+                        check_predicate_types(store, &hop.far_kind, pred)?;
+                    }
                 }
                 evaluate_local(store, request)
             }

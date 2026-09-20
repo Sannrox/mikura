@@ -23,11 +23,13 @@ pub(super) fn fixture_request() -> EvaluateRequest {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
                 incoming: false,
+                predicate: None,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
                 incoming: false,
+                predicate: None,
             },
         ],
         sum_kind: "Shipment".into(),
@@ -35,6 +37,7 @@ pub(super) fn fixture_request() -> EvaluateRequest {
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }
@@ -84,12 +87,14 @@ pub(super) fn asset_request() -> EvaluateRequest {
             far_kind: "Asset".into(),
             join_property: "owner_id".into(),
             incoming: false,
+            predicate: None,
         }],
         sum_kind: "Asset".into(),
         sum_property: "mass".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: 0,
     }
 }
@@ -181,6 +186,7 @@ pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
             property: "tier".into(),
             value: "prod".into(),
         }),
+        predicate: None,
         object_bound: bound,
     }
 }
@@ -192,12 +198,14 @@ pub(super) fn hop_incident_to_component(bound: usize) -> EvaluateRequest {
             far_kind: "component".into(),
             join_property: "affects".into(),
             incoming: true,
+            predicate: None,
         }],
         sum_kind: "component".into(),
         sum_property: "tier".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
         filter: None,
+        predicate: None,
         object_bound: bound,
     }
 }

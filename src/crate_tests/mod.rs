@@ -8,5 +8,6 @@ mod load;
 mod measures;
 mod overlay;
 mod persist;
+mod predicates;
 mod schema;
 mod values;
