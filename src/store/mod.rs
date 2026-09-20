@@ -530,6 +530,22 @@ impl Store {
         &self.joins
     }
 
+    /// Superblock `committed_pages`. Snapshot cursors bind this value
+    /// together with the uncommitted writer head.
+    pub fn committed_pages(&self) -> u32 {
+        self.writer.committed_pages()
+    }
+
+    /// `(committed_pages, written_pages, current page used)`. Cursors bind
+    /// this so an uncommitted stream append invalidates the snapshot.
+    pub fn snapshot_stamp(&self) -> (u32, u32, u32) {
+        (
+            self.writer.committed_pages(),
+            self.writer.written_pages(),
+            self.writer.page_used() as u32,
+        )
+    }
+
     fn hidden_props_omitting(
         &self,
         kind: &str,

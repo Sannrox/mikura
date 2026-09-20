@@ -114,6 +114,9 @@ fn list_incidents(predicate: Predicate, bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: Some(predicate),
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -186,6 +189,9 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         filter: None,
         predicate: Some(Predicate::eq("open", "true")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let hopped = oss.evaluate(&store, &filter_then_hop).unwrap();
     assert_eq!(keys(&hopped), ["svc-api", "svc-batch"]);
@@ -205,6 +211,9 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         filter: None,
         predicate: None,
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let filtered = oss.evaluate(&store, &hop_then_filter).unwrap();
     assert_eq!(keys(&filtered), ["svc-api"]);
@@ -227,6 +236,9 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         filter: None,
         predicate: Some(Predicate::eq("open", "true")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert!(matches!(
         oss.evaluate(&store, &denied),
@@ -255,6 +267,9 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         }),
         predicate: Some(Predicate::eq("open", "true")),
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert!(matches!(
         oss.evaluate(&store, &both),

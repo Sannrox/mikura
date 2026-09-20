@@ -95,6 +95,14 @@ impl LogWriter {
         self.committed
     }
 
+    pub fn written_pages(&self) -> u32 {
+        self.written
+    }
+
+    pub fn page_used(&self) -> usize {
+        self.used
+    }
+
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
         let body = encode_body(record)?;
         let framed = framed_record(&body)?;

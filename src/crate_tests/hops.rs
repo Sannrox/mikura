@@ -25,6 +25,9 @@ fn incoming_hop_follows_join_property() {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert_eq!(
         oss.evaluate(&store, &from_customer).unwrap().two_hop_count,
@@ -45,6 +48,9 @@ fn incoming_hop_follows_join_property() {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -65,6 +71,9 @@ fn incoming_hop_follows_join_property() {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     assert!(matches!(
         oss.evaluate(&store, &denied),

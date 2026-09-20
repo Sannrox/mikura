@@ -39,6 +39,9 @@ pub(super) fn fixture_request() -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -96,6 +99,9 @@ pub(super) fn asset_request() -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -188,6 +194,9 @@ pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
         }),
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }
 
@@ -207,5 +216,8 @@ pub(super) fn hop_incident_to_component(bound: usize) -> EvaluateRequest {
         filter: None,
         predicate: None,
         object_bound: bound,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     }
 }

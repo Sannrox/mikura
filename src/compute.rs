@@ -1,8 +1,10 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use crate::acl::AclError;
-use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Predicate};
-use crate::store::Store;
+use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Predicate, Sort};
+use crate::page::{decode_cursor, encode_cursor};
+use crate::store::{ObjectRecord, Store};
 use crate::value::PropertyType;
 
 fn hop_triples(request: &EvaluateRequest) -> Vec<(&str, &str, bool)> {
@@ -326,31 +328,204 @@ fn evaluate_local(
         let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
         (count, sum, keys)
     };
-    let objects = if request.object_bound == 0 {
-        Vec::new()
-    } else {
-        if keys.len() > request.object_bound {
-            return Err(ComputeError::ObjectBound {
-                bound: request.object_bound,
-                count: keys.len(),
-            });
-        }
-        let kind = result_kind(request);
-        let mut objects = Vec::with_capacity(keys.len());
-        for key in keys {
-            objects.push(
-                store
-                    .load(kind, &key, &request.acl)
-                    .map_err(ComputeError::Load)?,
-            );
-        }
-        objects
-    };
+    let (objects, cursor) = page_objects(store, request, keys)?;
     Ok(EvaluateResponse {
         two_hop_count,
         sum_amount,
         objects,
+        cursor,
     })
+}
+
+struct RankedKey {
+    key: String,
+    missing: bool,
+    value: String,
+}
+
+fn check_page_request(request: &EvaluateRequest) -> Result<(), ComputeError> {
+    if request.sort.is_none() && request.page_size == 0 && request.cursor.is_none() {
+        return Ok(());
+    }
+    if request.object_bound == 0 {
+        return Err(ComputeError::Page(
+            "sort and pages require object_bound".into(),
+        ));
+    }
+    let Some(sort) = &request.sort else {
+        return Err(ComputeError::Page(
+            "page_size and cursor require sort".into(),
+        ));
+    };
+    if sort.property.is_empty() {
+        return Err(ComputeError::Page("sort property must be non-empty".into()));
+    }
+    if request.cursor.is_some() && request.page_size == 0 {
+        return Err(ComputeError::Page("cursor requires page_size".into()));
+    }
+    Ok(())
+}
+
+fn page_objects(
+    store: &Store,
+    request: &EvaluateRequest,
+    keys: Vec<String>,
+) -> Result<(Vec<ObjectRecord>, Option<String>), ComputeError> {
+    if request.object_bound == 0 {
+        return Ok((Vec::new(), None));
+    }
+    if keys.len() > request.object_bound {
+        return Err(ComputeError::ObjectBound {
+            bound: request.object_bound,
+            count: keys.len(),
+        });
+    }
+    let kind = result_kind(request);
+    let ranked = match &request.sort {
+        Some(sort) => rank_keys(store, kind, keys, sort)?,
+        None => keys
+            .into_iter()
+            .map(|key| RankedKey {
+                key,
+                missing: true,
+                value: String::new(),
+            })
+            .collect(),
+    };
+    let ranked = apply_cursor(store, request, ranked)?;
+    let (page, has_more) = split_page(ranked, request.page_size);
+    let cursor = if has_more {
+        let last = page
+            .last()
+            .expect("a continuation requires a non-empty page");
+        Some(encode_cursor(
+            request,
+            store.snapshot_stamp(),
+            &last.key,
+            last.missing,
+            &last.value,
+        ))
+    } else {
+        None
+    };
+    let mut objects = Vec::with_capacity(page.len());
+    for row in page {
+        objects.push(
+            store
+                .load(kind, &row.key, &request.acl)
+                .map_err(ComputeError::Load)?,
+        );
+    }
+    Ok((objects, cursor))
+}
+
+fn rank_keys(
+    store: &Store,
+    kind: &str,
+    keys: Vec<String>,
+    sort: &Sort,
+) -> Result<Vec<RankedKey>, ComputeError> {
+    let ty = property_type(store, kind, &sort.property)?;
+    let maps = store.joins();
+    let mut ranked = Vec::with_capacity(keys.len());
+    for key in keys {
+        match maps.prop(kind, &key, &sort.property) {
+            None => ranked.push(RankedKey {
+                key,
+                missing: true,
+                value: String::new(),
+            }),
+            Some(stored) => {
+                ty.parse_canonical(stored).map_err(ComputeError::Page)?;
+                ranked.push(RankedKey {
+                    key,
+                    missing: false,
+                    value: stored.to_string(),
+                });
+            }
+        }
+    }
+    ranked.sort_by(|left, right| {
+        cmp_ranked(ty, sort.descending, left, right).expect("ranked values were parsed")
+    });
+    Ok(ranked)
+}
+
+fn cmp_ranked(
+    ty: PropertyType,
+    descending: bool,
+    left: &RankedKey,
+    right: &RankedKey,
+) -> Result<Ordering, String> {
+    // Missing values stay last; descending reverses only present values.
+    let value_order = match (left.missing, right.missing) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        (false, false) => {
+            let order = ty.cmp_canonical(&left.value, &right.value)?;
+            if descending {
+                order.reverse()
+            } else {
+                order
+            }
+        }
+    };
+    Ok(value_order.then_with(|| left.key.cmp(&right.key)))
+}
+
+fn apply_cursor(
+    store: &Store,
+    request: &EvaluateRequest,
+    ranked: Vec<RankedKey>,
+) -> Result<Vec<RankedKey>, ComputeError> {
+    let Some(token) = request.cursor.as_deref() else {
+        return Ok(ranked);
+    };
+    let cursor =
+        decode_cursor(token, request, store.snapshot_stamp()).map_err(ComputeError::Page)?;
+    let ty = property_type(
+        store,
+        result_kind(request),
+        &request
+            .sort
+            .as_ref()
+            .expect("cursor requires sort")
+            .property,
+    )?;
+    let descending = request
+        .sort
+        .as_ref()
+        .map(|sort| sort.descending)
+        .unwrap_or(false);
+    if !cursor.after_missing {
+        ty.parse_canonical(&cursor.after_value)
+            .map_err(ComputeError::Page)?;
+    }
+    let after = RankedKey {
+        key: cursor.after_key,
+        missing: cursor.after_missing,
+        value: cursor.after_value,
+    };
+    let mut kept = Vec::new();
+    for row in ranked {
+        if cmp_ranked(ty, descending, &row, &after).map_err(ComputeError::Page)?
+            == Ordering::Greater
+        {
+            kept.push(row);
+        }
+    }
+    Ok(kept)
+}
+
+fn split_page(ranked: Vec<RankedKey>, page_size: usize) -> (Vec<RankedKey>, bool) {
+    if page_size == 0 || ranked.len() <= page_size {
+        return (ranked, false);
+    }
+    let rest = ranked.len() - page_size;
+    let mut page = ranked;
+    page.truncate(page_size);
+    (page, rest > 0)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,6 +535,7 @@ pub enum ComputeError {
     ObjectBound { bound: usize, count: usize },
     Load(String),
     Predicate(String),
+    Page(String),
 }
 
 pub trait ComputeBackend {
@@ -404,6 +580,14 @@ impl ComputeBackend for LocalCompute {
                 if let Some(pred) = &request.predicate {
                     check_predicate_acl(request, &request.root_kind, pred)?;
                     check_predicate_types(store, &request.root_kind, pred)?;
+                }
+                check_page_request(request)?;
+                if let Some(sort) = &request.sort {
+                    let kind = result_kind(request);
+                    request
+                        .acl
+                        .check(kind, &sort.property)
+                        .map_err(ComputeError::Acl)?;
                 }
                 let mut frontier_kind = request.root_kind.as_str();
                 for hop in &request.hops {

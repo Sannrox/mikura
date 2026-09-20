@@ -109,6 +109,9 @@ fn committed_schema_validates_writes_and_rebuilds() {
         filter: None,
         predicate: None,
         object_bound: 0,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let hopped = ObjectSet::new(LocalCompute)
         .evaluate(&store, &incoming)
@@ -205,6 +208,9 @@ fn evaluate_returns_bounded_product_loop_objects() {
         }),
         predicate: None,
         object_bound: 8,
+        sort: None,
+        page_size: 0,
+        cursor: None,
     };
     let redacted = oss.evaluate(&store, &denied).unwrap();
     assert_eq!(redacted.objects.len(), 2);

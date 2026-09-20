@@ -11,7 +11,8 @@
 //! composed [`Predicate`] tree (ADR 0015). Optional predicates after each
 //! hop restrict the far set. `EvaluateRequest.object_bound` greater than
 //! zero also returns the distinct matching objects and fails closed if
-//! the set is larger.
+//! the set is larger. [`Sort`] plus `page_size` returns snapshot pages;
+//! the opaque cursor binds the restriction, query, and live writer stamp.
 //! [`SparkCompute`] always returns [`ComputeError::UnsupportedBackend`].
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
@@ -33,6 +34,7 @@ mod joins;
 mod log;
 mod objectset;
 mod overlay;
+mod page;
 mod schema;
 mod store;
 mod value;
@@ -42,7 +44,7 @@ pub use actions::Action;
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;
 pub use objectset::{
-    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet, Predicate,
+    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet, Predicate, Sort,
 };
 pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
 pub use schema::{

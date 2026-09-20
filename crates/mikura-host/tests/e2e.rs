@@ -249,6 +249,9 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                 filter: None,
                 predicate: None,
                 object_bound: 0,
+                sort: None,
+                page_size: 0,
+                cursor: None,
             },
         )
         .unwrap();
@@ -1925,6 +1928,130 @@ fn process_composed_predicates_select_and_fail_closed() {
         .collect();
     keys.sort();
     assert_eq!(keys, ["inc-1"]);
+}
+
+#[test]
+fn process_ordered_pages_bind_snapshot() {
+    let tmp = TempLog::new("pages");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            query_component_schema(),
+            query_incident_schema(),
+            rec("component", "svc-api", false, &[("name", "billing-api"), ("tier", "prod")]),
+            rec("component", "svc-web", false, &[("name", "web"), ("tier", "prod")]),
+            rec("component", "svc-batch", false, &[("name", "batch"), ("tier", "staging")]),
+            rec("incident", "inc-1", false, &[
+                ("name", "elevated latency"),
+                ("affects", "svc-api"),
+                ("open", "true"),
+                ("priority", "2"),
+            ]),
+            rec("incident", "inc-2", false, &[
+                ("name", "disk full"),
+                ("affects", "svc-api"),
+                ("open", "false"),
+                ("priority", "3"),
+                ("note", "pager"),
+            ]),
+            rec("incident", "inc-3", false, &[
+                ("name", "job delay"),
+                ("affects", "svc-batch"),
+                ("open", "true"),
+                ("priority", "1"),
+            ]),
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let page1 = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "sort": {"property": "priority"},
+            "page_size": 1,
+            "object_bound": 8
+        }
+    }));
+    assert!(page1.ok, "{page1:?}");
+    let first = page1.evaluate.expect("evaluate payload");
+    assert_eq!(first.objects.len(), 1);
+    assert_eq!(first.objects[0].key, "inc-3");
+    assert_eq!(first.two_hop_count, 3);
+    let cursor = first.cursor.clone().expect("continuation");
+
+    let page2 = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "sort": {"property": "priority"},
+            "page_size": 1,
+            "cursor": cursor,
+            "object_bound": 8
+        }
+    }));
+    assert!(page2.ok, "{page2:?}");
+    let second = page2.evaluate.expect("evaluate payload");
+    assert_eq!(second.objects[0].key, "inc-1");
+
+    let ties = evaluate_members(
+        &host,
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "root_kind": "incident",
+                "hops": [],
+                "sum_kind": "incident",
+                "sum_property": "priority",
+                "sort": {"property": "open"},
+                "object_bound": 8
+            }
+        }),
+    );
+    assert_eq!(ties, ["inc-2", "inc-1", "inc-3"]);
+
+    let denied = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "deny": [{"kind": "incident", "property": "priority"}],
+            "sort": {"property": "priority"},
+            "page_size": 1,
+            "object_bound": 8
+        }
+    }));
+    assert!(!denied.ok, "{denied:?}");
+
+    let hide = host.rpc(&serde_json::json!({
+        "op": "hide",
+        "kind": "incident",
+        "key": "inc-2"
+    }));
+    assert!(hide.ok, "{hide:?}");
+    let stale = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "incident",
+            "hops": [],
+            "sum_kind": "incident",
+            "sum_property": "priority",
+            "sort": {"property": "priority"},
+            "page_size": 1,
+            "cursor": first.cursor,
+            "object_bound": 8
+        }
+    }));
+    assert!(!stale.ok, "{stale:?}");
 }
 
 fn association_records() -> Vec<ObjectRecord> {
