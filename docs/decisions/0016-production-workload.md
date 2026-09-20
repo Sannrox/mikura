@@ -87,8 +87,8 @@ ADR does not change the log, the public API, or host `v=1`.
   may use existing request-line admission; it must not invent a client
   mix or mixed-load p95.
 - Sustained-service validation ([#189](https://github.com/Sannrox/mikura/issues/189))
-  stays blocked on unresolved consumer numbers even if other
-  prerequisites land.
+  closed unresolved-evidence: qualitative drills pass; numeric SLOs stay
+  blank. That close-out does not make replication or partitioning ready.
 - 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) stays blocked
   until a consumer names that envelope. Do not start it from the 40 ms
   hold.
