@@ -92,13 +92,14 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M9 host execution contract | One process, one RPC at a time. Line-assembly bounds only. No invented mixed-load SLO ([#187](https://github.com/Sannrox/mikura/issues/187), [ADR 0021](docs/decisions/0021-bounded-host-execution.md)). |
 | M9 serial host | A second connection waits until the first request line is handled. Disconnect before a complete line mutates nothing. Uncommitted stream is visible to the next RPC on this process and absent after reopen ([#188](https://github.com/Sannrox/mikura/issues/188), [ADR 0021](docs/decisions/0021-bounded-host-execution.md)). |
 | M9 operational signals | Host JSON `health` reports readiness, committed pages, and process-local accepted/rejected counts. Not an SLO gate ([#186](https://github.com/Sannrox/mikura/issues/186), [ADR 0022](docs/decisions/0022-operational-signals.md)). |
+| M9 readiness | Qualitative product-loop and pilot drills pass. Numeric SLOs stay unresolved. Not a production-readiness claim ([#189](https://github.com/Sannrox/mikura/issues/189), [m9-readiness.md](docs/plans/m9-readiness.md)). |
 
 ## Next (this repository, in order)
 
 Application milestones, proposed in [the detailed plan](docs/plans/application-roadmap.md).
 M0 through M6 are complete for their accepted scope. Remaining items:
 
-1. **M9:** serial host RPC ([#188](https://github.com/Sannrox/mikura/issues/188), [ADR 0021](docs/decisions/0021-bounded-host-execution.md)). Sustained-service validation stays blocked on unpublished consumer SLOs ([#189](https://github.com/Sannrox/mikura/issues/189)).
+1. **M9:** readiness report closed unresolved-evidence ([#189](https://github.com/Sannrox/mikura/issues/189), [m9-readiness.md](docs/plans/m9-readiness.md)). M10 replication/partitioning stays blocked. 10¹⁰ stays blocked ([#55](https://github.com/Sannrox/mikura/issues/55)).
 2. **M8 limit:** multi-object atomic edits closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182), [ADR 0019](docs/decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 
 M2 and M3 share M1 contracts and both feed M4. Access checks and recovery

@@ -1015,3 +1015,20 @@ fn health_reports_ready_and_counts_without_slo_gates() {
     assert_eq!(again.health.unwrap().accepted, 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn readiness_report_keeps_slo_cells_unresolved() {
+    let page = include_str!("../../../docs/plans/m9-readiness.md");
+    assert!(
+        page.contains("Do not claim production-readiness"),
+        "readiness report must refuse a production cutover"
+    );
+    assert!(
+        page.contains("| p95/p99 load / evaluate / ingest | unresolved |"),
+        "p95 cells must stay unresolved, not guessed"
+    );
+    assert!(
+        page.contains("[#190]") && page.contains("**Blocked.**"),
+        "replication successors must stay blocked"
+    );
+}

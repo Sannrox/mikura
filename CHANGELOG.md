@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- M9 readiness is unresolved evidence: qualitative host e2e drills pass
+  on the named revision; numeric SLOs stay blank. Not a production
+  cutover ([#189](https://github.com/Sannrox/mikura/issues/189),
+  [m9-readiness.md](docs/plans/m9-readiness.md)).
 - Host execution stays one process and one RPC at a time. A second
   connection waits until the first request line is handled. Line-assembly
   bounds are not evaluate/ingest deadlines. No invented mixed-load p95
