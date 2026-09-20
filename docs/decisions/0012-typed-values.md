@@ -212,7 +212,7 @@ Schema `types` uses the existing descriptor body, same pattern as `sums`.
 - Descriptor property `types` is reserved on `mikura.schema` once [#168](https://github.com/Sannrox/mikura/issues/168) lands. Older binaries fail closed on it.
 - Implementation is [#168](https://github.com/Sannrox/mikura/issues/168). This ADR does not ship code, change `MIKURAV1`, or complete M6.
 - [#169](https://github.com/Sannrox/mikura/issues/169) / [ADR 0013](0013-schema-evolution.md) owns descriptor replacement: recasting an existing property type is rejected; additive optional properties are allowed. [#171](https://github.com/Sannrox/mikura/issues/171) / [#175](https://github.com/Sannrox/mikura/issues/175) / [#177](https://github.com/Sannrox/mikura/issues/177) / [#180](https://github.com/Sannrox/mikura/issues/180) / [#183](https://github.com/Sannrox/mikura/issues/183) consume this subset; they do not reopen it.
-- Last-hop undeclared sums keep parsing today's strings. Declared integer/decimal sums use this encoding after [#168](https://github.com/Sannrox/mikura/issues/168); extra aggregates stay [#177](https://github.com/Sannrox/mikura/issues/177).
+- Last-hop undeclared sums keep parsing today's strings. Declared integer sums use this encoding. Extra aggregates stay out ([ADR 0018](0018-aggregation-semantics.md)).
 
 ### Implementation handoff ([#168](https://github.com/Sannrox/mikura/issues/168))
 

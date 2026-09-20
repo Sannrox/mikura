@@ -227,7 +227,8 @@ uncommitted tail; rebuild reads only committed pages.
    a product sort operator. Snapshot cursors and sort wait for
    [#174](https://github.com/Sannrox/mikura/issues/174). Set union /
    intersection / difference, prefix, regex, and extra aggregates fail
-   closed. The two-object seed stays unambiguous without them
+   closed ([ADR 0018](decisions/0018-aggregation-semantics.md)). The
+   two-object seed stays unambiguous without them
    ([#122](https://github.com/Sannrox/mikura/issues/122)).
 
 Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when

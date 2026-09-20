@@ -89,7 +89,8 @@ process, one `Store`.
 **v8 (incoming hop done):** hop either from parent key to pointing children or
 follow a join property to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)).
 Count+sum stays the evaluate aggregate; extra aggregates wait for a named
-consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51)).
+consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51),
+[ADR 0018](docs/decisions/0018-aggregation-semantics.md)).
 Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
 wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
