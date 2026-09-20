@@ -460,9 +460,11 @@ impl Store {
     ///
     /// A repeated id with the same body (`kind`, `key`, `hidden = false`,
     /// `props`) is a replay: no append (ADR 0011). The same id with a
-    /// different body or on another identity fails closed. Ids are unique
-    /// in the store; lookup rebuilds from the log. `expected_gen` still
-    /// applies to a new id. A replay that already committed does not append.
+    /// different body or on another identity fails closed. A replay whose
+    /// body is illegal under the current descriptor also fails closed
+    /// (ADR 0013). Ids are unique in the store; lookup rebuilds from the
+    /// log. `expected_gen` still applies to a new id. A legal replay that
+    /// already committed does not append.
     pub fn apply_action(
         &mut self,
         action: Action,
@@ -479,6 +481,16 @@ impl Store {
             }
             if committed.hidden || committed.props != action.props {
                 return Err(format!("action id {} body conflict", action.id));
+            }
+            if let Some(schema) = self.schema(&action.kind)? {
+                schema.validate(&ObjectRecord {
+                    gen: 0,
+                    kind: action.kind,
+                    key: action.key,
+                    hidden: false,
+                    action_id: Some(action.id),
+                    props: action.props,
+                })?;
             }
             return Ok(());
         }

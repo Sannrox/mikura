@@ -271,6 +271,8 @@ Source ingest may omit `action_id`; an empty string fails closed. Hop/sum
 indexes ignore the id. [ADR 0006](decisions/0006-action-provenance.md).
 A repeated Action id is a replay when the body matches and fails closed
 when it does not ([ADR 0011](decisions/0011-action-id-retry-key.md)).
+A matching body that the current descriptor rejects also fails closed
+([ADR 0013](decisions/0013-schema-evolution.md)).
 Lookup rebuilds from the log. Host `apply_action` honors the same rule;
 `expected_gen` still applies to a new id. Overlay and hide stay on their
 current contracts.

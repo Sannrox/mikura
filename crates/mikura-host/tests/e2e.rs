@@ -1595,7 +1595,15 @@ fn process_schema_evolution_preserves_meaning() {
             "open": "true"
         }
     }));
-    assert!(replay.ok, "{replay:?}");
+    assert!(!replay.ok, "{replay:?}");
+    assert!(
+        replay
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown property"),
+        "{replay:?}"
+    );
 
     let mut hidden = shrunk.to_record().unwrap();
     hidden.hidden = true;

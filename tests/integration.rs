@@ -1448,7 +1448,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
         )
         .unwrap_err();
     assert!(action_err.contains("unknown property"), "{action_err}");
-    store
+    let replay_err = store
         .apply_action(
             Action {
                 id: "act-inc-1-body".into(),
@@ -1463,7 +1463,8 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
             },
             None,
         )
-        .unwrap();
+        .unwrap_err();
+    assert!(replay_err.contains("unknown property"), "{replay_err}");
 
     let mut hidden = shrunk.to_record().unwrap();
     hidden.hidden = true;
