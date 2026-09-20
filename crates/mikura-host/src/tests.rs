@@ -935,3 +935,32 @@ fn hide_omits_from_evaluate_and_keeps_load() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn health_reports_ready_and_counts_without_slo_gates() {
+    let (dir, log) = temp_log("health");
+    let mut host = Host::open(&log, 8).unwrap();
+    let before = host.handle(HostRequest::Health);
+    assert!(before.ok, "{before:?}");
+    let health = before.health.expect("health payload");
+    assert!(health.ready);
+    assert_eq!(health.accepted, 0);
+    assert_eq!(health.rejected, 0);
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    let missing = host.handle(HostRequest::Load {
+        kind: "Customer".into(),
+        key: "nope".into(),
+        deny: Vec::new(),
+        restriction: None,
+    });
+    assert!(!missing.ok);
+    let after = host.handle(HostRequest::Health);
+    let health = after.health.expect("health payload");
+    assert!(health.ready);
+    assert!(health.committed_pages >= 1);
+    assert_eq!(health.accepted, 1);
+    assert_eq!(health.rejected, 1);
+    let again = host.handle(HostRequest::Health);
+    assert_eq!(again.health.unwrap().accepted, 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

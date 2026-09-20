@@ -342,7 +342,7 @@ include `v`. Required and unused fields by bind:
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`. Evaluate accepts an
 optional exact-match `filter` or a structured `predicate` tree (`op` =
 `eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
 fails closed. Omit or `null` filter and predicate means all visible roots.

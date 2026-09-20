@@ -25,6 +25,10 @@ window.
 
 ### Added
 
+- Host `health` reports process-local readiness, committed pages, and
+  accepted/rejected RPC counts. It is not an SLO gate
+  ([#186](https://github.com/Sannrox/mikura/issues/186),
+  [ADR 0022](docs/decisions/0022-operational-signals.md)).
 - Source resume stays with the clerk. Changelog of identical snapshots
   does not append. Uncommitted stream records are absent after reopen.
   No offset ledger or waiter
