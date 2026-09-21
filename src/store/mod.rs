@@ -33,6 +33,8 @@ struct ActionCommit {
     key: String,
     gen: u64,
     hidden: bool,
+    /// A later hide copied this id's payload onto the same identity.
+    hide_applied: bool,
     props: HashMap<String, String>,
 }
 
@@ -158,15 +160,25 @@ impl Store {
         let Some(id) = record.action_id.as_deref().filter(|id| !id.is_empty()) else {
             return;
         };
-        self.action_commits
+        let commit = self
+            .action_commits
             .entry(id.to_string())
             .or_insert_with(|| ActionCommit {
                 kind: record.kind.clone(),
                 key: record.key.clone(),
                 gen: record.gen,
                 hidden: record.hidden,
+                hide_applied: false,
                 props: record.props.clone(),
             });
+        if record.hidden
+            && !commit.hidden
+            && commit.kind == record.kind
+            && commit.key == record.key
+            && commit.props == record.props
+        {
+            commit.hide_applied = true;
+        }
     }
 
     fn ensure_action_commits(&mut self) -> Result<(), String> {
@@ -178,7 +190,10 @@ impl Store {
             self.remember_action(&record);
         }
         for (id, commit) in since_open {
-            self.action_commits.entry(id).or_insert(commit);
+            self.action_commits
+                .entry(id)
+                .and_modify(|logged| logged.hide_applied |= commit.hide_applied)
+                .or_insert(commit);
         }
         self.action_commits_from_log = true;
         Ok(())
@@ -290,23 +305,30 @@ impl Store {
                 committed.kind, committed.key
             ));
         }
-        if hidden {
-            return Ok(ActionClaim::New);
-        }
-        if committed.hidden || committed.props != *props {
+        if committed.props != *props {
             return Err(format!("action id {action_id} body conflict"));
         }
-        if !hidden {
-            if let Some(schema) = self.schema(kind)? {
-                schema.validate(&ObjectRecord {
-                    gen: 0,
-                    kind: kind.to_string(),
-                    key: key.to_string(),
-                    hidden: false,
-                    action_id: Some(action_id.to_string()),
-                    props: props.clone(),
-                })?;
-            }
+        if hidden {
+            // A hide under a claimed id copies the claimed payload; the first
+            // one appends, a retry after it is a replay.
+            return Ok(if committed.hidden || committed.hide_applied {
+                ActionClaim::Replay
+            } else {
+                ActionClaim::New
+            });
+        }
+        if committed.hidden {
+            return Err(format!("action id {action_id} body conflict"));
+        }
+        if let Some(schema) = self.schema(kind)? {
+            schema.validate(&ObjectRecord {
+                gen: 0,
+                kind: kind.to_string(),
+                key: key.to_string(),
+                hidden: false,
+                action_id: Some(action_id.to_string()),
+                props: props.clone(),
+            })?;
         }
         Ok(ActionClaim::Replay)
     }
@@ -483,9 +505,10 @@ impl Store {
     ///
     /// A supplied Action id is unique in the store (ADR 0025). The same id and
     /// the same body (`kind`, `key`, `hidden`, `props`) is a no-op. A remapped
-    /// identity or a different body fails closed. Source ingest may omit the
-    /// id. Hide and overlay rematerialize copy provenance and do not claim a
-    /// new id.
+    /// identity or a different body fails closed. A hidden record under a
+    /// claimed id must copy the claimed `props`; its retry is a no-op. Source
+    /// ingest may omit the id. Hide and overlay rematerialize copy provenance
+    /// and do not claim a new id.
     ///
     /// Visible source writes of a non-hidden identity merge a visible
     /// `mikura.overlay` and validate a visible `mikura.schema`. A visible

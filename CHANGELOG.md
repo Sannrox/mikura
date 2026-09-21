@@ -295,6 +295,12 @@ window.
 
 ### Fixed
 
+- A hidden record under an already-claimed Action id is held to the same
+  body rule as a visible one. A hide that does not copy the claimed `props`
+  fails closed instead of appending; a retry of an applied hide, or of a
+  hidden first claim, is a no-op and no longer bumps the generation
+  ([#227](https://github.com/Sannrox/mikura/issues/227),
+  [ADR 0025](docs/decisions/0025-ingest-action-id-uniqueness.md)).
 - After `RequestBound`, leftover-input discard stops at the request
   wall-clock deadline instead of resetting idle timeout on every chunk
   ([#140](https://github.com/Sannrox/mikura/issues/140)).
