@@ -9,6 +9,12 @@ window.
 
 ### Changed
 
+- Host `health` `ready` is documented as process-serving only, not
+  production, capacity, durability, or latency health. Nothing should gate
+  traffic on it until published SLOs back a readiness that can fail; the
+  field and wire `v=1` are unchanged
+  ([#224](https://github.com/Sannrox/mikura/issues/224),
+  [ADR 0022](docs/decisions/0022-operational-signals.md)).
 - A supplied Action id is unique on ingest append as well as
   `apply_action` / `apply_overlay`. A remapped id fails closed; the same
   body is a no-op ([#222](https://github.com/Sannrox/mikura/issues/222),
