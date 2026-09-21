@@ -94,9 +94,10 @@ overlay merge, and Action body must satisfy the current descriptor.
 
 - `Store::append` of one record flushes the writer, then persists join maps.
   A single-record append is a complete commit.
-- `mikura-ingest::BatchIngest::run` appends every record onto the writer, then flushes once.
-  Under `Group(32)` that fsyncs data pages in batches of 32, then the
-  superblock. A crash mid-batch drops the uncommitted tail; rebuild reads
+- `mikura-ingest::BatchIngest::run` appends every record onto the writer, then flushes once
+  (`Store::append_batch`, [ADR 0026](decisions/0026-atomic-ingest-batch.md)).
+  Under `Group(32)` that fsyncs data pages in batches of 32; the superblock
+  moves only when the batch ends. A crash mid-batch drops the uncommitted tail; rebuild reads
   only `1..=committed_pages`.
 - Orphan pages after `committed_pages` are ignored. Missing committed pages
   fail closed.
@@ -146,8 +147,11 @@ hop/sum. `LocalCompute` answers from these maps, not from a hot object map.
 
 ## Ingest
 
-`mikura-ingest::BatchIngest::run` buffers records with `Store::append_uncommitted`
-and group-commits once via `Store::commit`. The `mikura` crate has no ingest
+`mikura-ingest::BatchIngest::run` hands the batch to `Store::append_batch`,
+which group-commits once. A batch is all or nothing: any error drops every
+record of it and rebuilds the live projection from the committed log
+([ADR 0026](decisions/0026-atomic-ingest-batch.md)). Stream push keeps
+`Store::append_uncommitted` and its own per-push outcome. The `mikura` crate has no ingest
 types. Host `ingest_batch`, stream flush, `apply_action`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Source-sync offsets stay with the clerk.
@@ -314,8 +318,9 @@ Action id and patch are a no-op
 ([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 The same unique-id rule covers ingest append: a remapped id fails closed
 and an identical body is a no-op
-([ADR 0025](decisions/0025-ingest-action-id-uniqueness.md)). Hide stays a
-tombstone without its own retry key. Multi-object atomic edits stay out.
+([ADR 0025](decisions/0025-ingest-action-id-uniqueness.md)). A hidden
+record under a claimed id must copy the claimed payload; a retry of that
+hide is a no-op. Hide stays a tombstone without its own retry key. Multi-object atomic edits stay out.
 Host JSON exposes the same writeback as `apply_action`. Ingest stays the
 source-snapshot path and does not become governed writeback.
 
@@ -374,6 +379,10 @@ Required CLI `--log PATH`. `--bind` defaults to `127.0.0.1:0`.
 `--stream-bound` defaults to 8 outstanding uncommitted stream records.
 Host `evaluate` / `load` / `hide` accept at most one wire `deny` pair
 (`kind` + `property`); a longer list fails closed.
+Host `health` `ready` means the log is open and the process is serving. It
+stays true after rejected RPCs and carries no capacity, durability, or
+latency check, so nothing should gate traffic on it until published SLOs
+back a readiness that can fail ([ADR 0022](decisions/0022-operational-signals.md)).
 A JSON line larger than `--request-bound` (default 1 MiB) fails closed
 with `RequestBound`. Assembling that line is a wall-clock budget of
 `--request-timeout-ms` (default 5 s), not an idle gap between bytes;

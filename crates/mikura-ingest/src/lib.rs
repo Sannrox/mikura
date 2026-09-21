@@ -18,13 +18,13 @@ pub use stream::StreamIngest;
 pub struct BatchIngest;
 
 impl BatchIngest {
+    /// Append `records` and group-commit them as one unit. Any error drops the
+    /// whole batch and leaves the store as it was (ADR 0026). This also covers
+    /// [`ChangelogIngest`] and [`MergeIngest`], which delegate here.
     pub fn run(store: &mut Store, records: Vec<ObjectRecord>) -> Result<(), String> {
         let tokens = records.iter().map(common::intern_token_budget).sum();
         store.reserve_intern(tokens);
-        for record in records {
-            store.append_uncommitted(record)?;
-        }
-        store.commit()
+        store.append_batch(records)
     }
 }
 

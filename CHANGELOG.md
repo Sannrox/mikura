@@ -9,6 +9,12 @@ window.
 
 ### Changed
 
+- Host `health` `ready` is documented as process-serving only, not
+  production, capacity, durability, or latency health. Nothing should gate
+  traffic on it until published SLOs back a readiness that can fail; the
+  field and wire `v=1` are unchanged
+  ([#224](https://github.com/Sannrox/mikura/issues/224),
+  [ADR 0022](docs/decisions/0022-operational-signals.md)).
 - A supplied Action id is unique on ingest append as well as
   `apply_action` / `apply_overlay`. A remapped id fails closed; the same
   body is a no-op ([#222](https://github.com/Sannrox/mikura/issues/222),
@@ -29,6 +35,13 @@ window.
 
 ### Added
 
+- A new overlay keeps rematerializing the instance. [#223](https://github.com/Sannrox/mikura/issues/223)
+  measured a patch-only projection update as a hypothesis: a new overlay costs
+  the same as a whole-record write within fsync jitter, and the log grows by
+  one page per commit either way, so no code changes. Deriving the patched
+  instance on replay was rejected because it broke schema-evolution replay
+  ([spike 012](spikes/012-overlay-apply/NOTES.md),
+  [ADR 0027](docs/decisions/0027-overlay-apply-keeps-rematerialization.md)).
 - Partition semantics stay out. [#193](https://github.com/Sannrox/mikura/issues/193)
   closed no-action after [#192](https://github.com/Sannrox/mikura/issues/192)
   kept one unpartitioned store
@@ -289,6 +302,20 @@ window.
 
 ### Fixed
 
+- An ingest batch is all or nothing. A mid-batch error (Action-id remap,
+  schema failure, oversize record) used to leave the earlier records live
+  and let the next commit persist them; a batch spanning several commit
+  groups could even become partly durable. `Store::append_batch` now drops
+  the whole batch and rebuilds the live projection from the committed log,
+  and `BatchIngest`, `ChangelogIngest`, and `MergeIngest` use it
+  ([#226](https://github.com/Sannrox/mikura/issues/226),
+  [ADR 0026](docs/decisions/0026-atomic-ingest-batch.md)).
+- A hidden record under an already-claimed Action id is held to the same
+  body rule as a visible one. A hide that does not copy the claimed `props`
+  fails closed instead of appending; a retry of an applied hide, or of a
+  hidden first claim, is a no-op and no longer bumps the generation
+  ([#227](https://github.com/Sannrox/mikura/issues/227),
+  [ADR 0025](docs/decisions/0025-ingest-action-id-uniqueness.md)).
 - After `RequestBound`, leftover-input discard stops at the request
   wall-clock deadline instead of resetting idle timeout on every chunk
   ([#140](https://github.com/Sannrox/mikura/issues/140)).

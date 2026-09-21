@@ -495,6 +495,149 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
 }
 
 #[test]
+fn process_ingest_hide_under_a_claimed_action_id_conflicts_and_replays() {
+    let tmp = TempLog::new("ingest-action-hide");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let mut visible = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    visible.action_id = Some("act-ingest-1".into());
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&visible],
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let load = || {
+        host.rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "Shipment",
+            "key": "s2"
+        }))
+        .load
+        .expect("load payload")
+    };
+    let visible_gen = load().gen;
+
+    let mut conflicting = visible.clone();
+    conflicting.hidden = true;
+    conflicting.props.insert("amount".into(), "999".into());
+    let conflict = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&conflicting],
+    }));
+    assert!(!conflict.ok, "{conflict:?}");
+    assert!(
+        conflict
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("body conflict"),
+        "{conflict:?}"
+    );
+    let unchanged = load();
+    assert!(!unchanged.hidden);
+    assert_eq!(unchanged.gen, visible_gen);
+
+    let mut hide = visible.clone();
+    hide.hidden = true;
+    let hidden = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&hide],
+    }));
+    assert!(hidden.ok, "{hidden:?}");
+    let hidden_gen = load().gen;
+    assert_eq!(hidden_gen, visible_gen + 1);
+    let retry = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&hide],
+    }));
+    assert!(retry.ok, "{retry:?}");
+    assert_eq!(load().gen, hidden_gen);
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let after_open = reopened.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&hide],
+    }));
+    assert!(after_open.ok, "{after_open:?}");
+    let reloaded = reopened
+        .rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "Shipment",
+            "key": "s2"
+        }))
+        .load
+        .expect("load payload");
+    assert_eq!(reloaded.gen, hidden_gen);
+}
+
+#[test]
+fn process_failed_ingest_batch_leaves_nothing_behind() {
+    let tmp = TempLog::new("ingest-batch-abort");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let mut owner = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    owner.action_id = Some("act-ingest-1".into());
+    let first = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&owner],
+    }));
+    assert!(first.ok, "{first:?}");
+
+    let visible = rec("Shipment", "s7", false, &[("order_id", "o1")]);
+    let mut remapped = rec(
+        "Shipment",
+        "s8",
+        false,
+        &[("order_id", "o1"), ("amount", "7")],
+    );
+    remapped.action_id = Some("act-ingest-1".into());
+    let failed = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [&visible, &remapped],
+    }));
+    assert!(!failed.ok, "{failed:?}");
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("already committed"),
+        "{failed:?}"
+    );
+    let load = |host: &HostProcess, key: &str| {
+        host.rpc(&serde_json::json!({
+            "op": "load",
+            "kind": "Shipment",
+            "key": key
+        }))
+    };
+    assert!(!load(&host, "s7").ok);
+
+    let later = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec("Shipment", "s9", false, &[("order_id", "o1")])],
+    }));
+    assert!(later.ok, "{later:?}");
+    assert!(!load(&host, "s7").ok);
+    assert!(load(&host, "s9").ok);
+    drop(host);
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert!(!load(&reopened, "s7").ok);
+    assert!(!load(&reopened, "s8").ok);
+    assert!(load(&reopened, "s9").ok);
+}
+
+#[test]
 fn process_acl_deny_returns_error_not_guess() {
     let tmp = TempLog::new("acl");
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 4);

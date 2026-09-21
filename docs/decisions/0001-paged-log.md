@@ -50,9 +50,10 @@ per-page sync was ~175×.
 - Restart is “verify committed pages, decode records, rebuild live maps.”
 - Compaction / checkpoints are not specified and are not implemented.
 - `Store::append` of one record is a complete commit (flush writer, persist
-  join maps). Multi-record ingest uses `Store::append_uncommitted` then one
-  `Store::commit` (`mikura-ingest::BatchIngest`). That is implementation
-  work on top of this format, not a format change.
+  join maps). Multi-record ingest uses `Store::append_batch`, one group commit
+  that is all or nothing ([ADR 0026](0026-atomic-ingest-batch.md)); stream
+  ingest uses `Store::append_uncommitted` then `Store::commit`. That is
+  implementation work on top of this format, not a format change.
 
 ## Validation
 

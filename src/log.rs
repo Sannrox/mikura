@@ -16,6 +16,8 @@ const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
 const SUPER_COMMIT_OFF: usize = CRC_LEN + 8 + 2;
+const UNCERTAIN_COMMIT: &str =
+    "log state uncertain after a failed commit or rollback; reopen the store";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncPolicy {
@@ -46,6 +48,9 @@ pub struct LogWriter {
     committed: u32,
     sync: SyncPolicy,
     fsync_count: u64,
+    hold_commits: bool,
+    synced: u32,
+    failed: bool,
 }
 
 impl LogWriter {
@@ -62,6 +67,9 @@ impl LogWriter {
             committed: 0,
             sync,
             fsync_count: 0,
+            hold_commits: false,
+            synced: 0,
+            failed: false,
         };
         writer.write_superblock()?;
         Ok(writer)
@@ -84,6 +92,9 @@ impl LogWriter {
             committed,
             sync,
             fsync_count: 0,
+            hold_commits: false,
+            synced: committed,
+            failed: false,
         })
     }
 
@@ -103,7 +114,55 @@ impl LogWriter {
         self.used
     }
 
+    /// True after a superblock write failed and left the commit point unknown,
+    /// or after a rollback failed and left the live projection unreliable.
+    pub fn is_failed(&self) -> bool {
+        self.failed
+    }
+
+    /// Refuse every further write until the log is reopened.
+    pub fn poison(&mut self) {
+        self.failed = true;
+    }
+
+    fn ensure_usable(&self) -> Result<(), String> {
+        if self.failed {
+            return Err(UNCERTAIN_COMMIT.into());
+        }
+        Ok(())
+    }
+
+    /// Appended records the superblock does not cover yet.
+    pub fn has_pending(&self) -> bool {
+        self.used > 0 || self.written > self.committed
+    }
+
+    /// While held, full pages are still written and data-synced in group
+    /// sized steps, but nothing advances the superblock (the commit point),
+    /// so only an explicit [`Self::flush`] makes them part of the log.
+    pub fn hold_commits(&mut self, hold: bool) {
+        self.hold_commits = hold;
+        self.synced = self.committed;
+    }
+
+    /// Drop every page and record the superblock does not cover, as a crash
+    /// before commit would (ADR 0001).
+    pub fn discard_pending(&mut self) -> Result<(), String> {
+        self.ensure_usable()?;
+        self.page = vec![0u8; PAGE];
+        self.used = 0;
+        self.written = self.committed;
+        self.synced = self.committed;
+        let end = PAGE as u64 * u64::from(1 + self.committed);
+        self.file.set_len(end).map_err(|e| e.to_string())?;
+        self.file
+            .seek(SeekFrom::Start(end))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
+        self.ensure_usable()?;
         let body = encode_body(record)?;
         let framed = framed_record(&body)?;
         if PAGE_HDR + framed.len() > PAGE {
@@ -119,6 +178,7 @@ impl LogWriter {
     }
 
     pub fn flush(&mut self) -> Result<(), String> {
+        self.ensure_usable()?;
         self.flush_page()?;
         self.commit_pending()?;
         self.file.flush().map_err(|e| e.to_string())
@@ -134,6 +194,13 @@ impl LogWriter {
         self.written += 1;
         self.page = vec![0u8; PAGE];
         self.used = 0;
+        if self.hold_commits {
+            if self.sync.durable() && self.written - self.synced >= self.sync.group_size() {
+                self.sync_data()?;
+                self.synced = self.written;
+            }
+            return Ok(());
+        }
         if self.sync == SyncPolicy::None {
             self.committed = self.written;
             return self.write_superblock();
@@ -154,7 +221,18 @@ impl LogWriter {
         self.write_superblock()
     }
 
+    /// A failed superblock write leaves the on-disk commit point unknown: the
+    /// new superblock may or may not have landed. The writer refuses every
+    /// further write and never truncates, so the next open recovers from
+    /// whatever the disk holds.
     fn write_superblock(&mut self) -> Result<(), String> {
+        self.write_superblock_body().map_err(|error| {
+            self.failed = true;
+            format!("{UNCERTAIN_COMMIT}: {error}")
+        })
+    }
+
+    fn write_superblock_body(&mut self) -> Result<(), String> {
         let mut superblock = vec![0u8; PAGE];
         superblock[CRC_LEN..CRC_LEN + 8].copy_from_slice(MAGIC);
         superblock[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
@@ -363,6 +441,82 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let after = read_records(&path).unwrap();
         assert_eq!(after.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn wide_record(key: usize) -> ObjectRecord {
+        ObjectRecord {
+            gen: 1,
+            kind: "Item".into(),
+            key: format!("k{key:02}"),
+            hidden: false,
+            action_id: None,
+            props: HashMap::from([("payload".into(), "x".repeat(1500))]),
+        }
+    }
+
+    #[test]
+    fn held_pages_sync_in_groups_but_only_flush_commits_them() {
+        let dir = std::env::temp_dir().join("mikura-log-hold");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("objects.mikura");
+        let mut writer = LogWriter::create(&path, SyncPolicy::Group(2)).unwrap();
+        writer.hold_commits(true);
+        for key in 0..12 {
+            writer.append_record(&wide_record(key)).unwrap();
+        }
+        assert!(writer.written_pages() >= 4);
+        assert_eq!(writer.committed_pages(), 0);
+        assert!(writer.fsync_count() >= 2, "data syncs keep their cadence");
+        assert!(writer.has_pending());
+
+        writer.discard_pending().unwrap();
+        assert!(!writer.has_pending());
+        assert_eq!(writer.written_pages(), 0);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), PAGE as u64);
+        assert!(read_records(&path).unwrap().is_empty());
+
+        for key in 0..12 {
+            writer.append_record(&wide_record(key)).unwrap();
+        }
+        writer.hold_commits(false);
+        writer.flush().unwrap();
+        assert_eq!(writer.committed_pages(), writer.written_pages());
+        assert_eq!(read_records(&path).unwrap().len(), 12);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_superblock_write_poisons_the_writer_and_never_truncates() {
+        let dir = std::env::temp_dir().join("mikura-log-uncertain");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("objects.mikura");
+        let mut writer = LogWriter::create(&path, SyncPolicy::Group(2)).unwrap();
+        writer.append_record(&wide_record(0)).unwrap();
+        writer.flush().unwrap();
+        writer.hold_commits(true);
+        for key in 1..4 {
+            writer.append_record(&wide_record(key)).unwrap();
+        }
+        writer.flush_page().unwrap();
+        writer.hold_commits(false);
+        let length = std::fs::metadata(&path).unwrap().len();
+
+        writer.file = File::open(&path).unwrap();
+        let error = writer.flush().unwrap_err();
+        assert!(error.contains("uncertain"), "{error}");
+        assert!(writer.is_failed());
+        assert!(writer.append_record(&wide_record(4)).is_err());
+        assert!(writer.flush().is_err());
+        assert!(writer.discard_pending().is_err());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), length);
+
+        let mut reopened = LogWriter::open(&path, SyncPolicy::Group(2)).unwrap();
+        assert!(!reopened.is_failed());
+        assert_eq!(read_records(&path).unwrap().len(), 1);
+        reopened.append_record(&wide_record(5)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
