@@ -36,6 +36,16 @@ struct ActionCommit {
     props: HashMap<String, String>,
 }
 
+enum ActionClaim {
+    New,
+    Replay,
+}
+
+enum ActionIdWrite {
+    Claim,
+    Copy,
+}
+
 pub struct Store {
     log: PathBuf,
     writer: LogWriter,
@@ -259,6 +269,48 @@ impl Store {
         }
     }
 
+    /// One clerk-assigned Action id is the retry key on every write path
+    /// (ADR 0011, ADR 0019, ADR 0025). Matching body is a no-op. A remapped
+    /// identity or different body fails closed.
+    fn action_claim(
+        &mut self,
+        action_id: &str,
+        kind: &str,
+        key: &str,
+        hidden: bool,
+        props: &HashMap<String, String>,
+    ) -> Result<ActionClaim, String> {
+        self.ensure_action_commits()?;
+        let Some(committed) = self.action_commits.get(action_id).cloned() else {
+            return Ok(ActionClaim::New);
+        };
+        if committed.kind != kind || committed.key != key {
+            return Err(format!(
+                "action id {action_id} already committed on {}/{}",
+                committed.kind, committed.key
+            ));
+        }
+        if hidden {
+            return Ok(ActionClaim::New);
+        }
+        if committed.hidden || committed.props != *props {
+            return Err(format!("action id {action_id} body conflict"));
+        }
+        if !hidden {
+            if let Some(schema) = self.schema(kind)? {
+                schema.validate(&ObjectRecord {
+                    gen: 0,
+                    kind: kind.to_string(),
+                    key: key.to_string(),
+                    hidden: false,
+                    action_id: Some(action_id.to_string()),
+                    props: props.clone(),
+                })?;
+            }
+        }
+        Ok(ActionClaim::Replay)
+    }
+
     fn load_reserved<T>(
         &self,
         kind: &str,
@@ -382,14 +434,18 @@ impl Store {
                 HashMap::new()
             };
             let props = patch.apply(source);
-            self.append_uncommitted(ObjectRecord {
-                gen: 0,
-                kind: patch.kind,
-                key: patch.key,
-                hidden: false,
-                action_id: Some(action_id),
-                props,
-            })?;
+            self.write_uncommitted(
+                ObjectRecord {
+                    gen: 0,
+                    kind: patch.kind,
+                    key: patch.key,
+                    hidden: false,
+                    action_id: Some(action_id),
+                    props,
+                },
+                true,
+                ActionIdWrite::Copy,
+            )?;
         }
         self.commit()
     }
@@ -425,6 +481,12 @@ impl Store {
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
     /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
     ///
+    /// A supplied Action id is unique in the store (ADR 0025). The same id and
+    /// the same body (`kind`, `key`, `hidden`, `props`) is a no-op. A remapped
+    /// identity or a different body fails closed. Source ingest may omit the
+    /// id. Hide and overlay rematerialize copy provenance and do not claim a
+    /// new id.
+    ///
     /// Visible source writes of a non-hidden identity merge a visible
     /// `mikura.overlay` and validate a visible `mikura.schema`. A visible
     /// `mikura.schema` replacement is checked against the previous visible
@@ -432,21 +494,26 @@ impl Store {
     /// [`Self::apply_action`] uses [`Self::append_replace`] so it stays a
     /// whole-record replace.
     pub fn append_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
-        self.write_uncommitted(record, true)
+        self.write_uncommitted(record, true, ActionIdWrite::Claim)
     }
 
     /// Buffer a whole-record replace. Overlay merge is skipped; schema
     /// validation still runs on a visible instance.
     pub(crate) fn append_replace(&mut self, record: ObjectRecord) -> Result<(), String> {
-        self.write_uncommitted(record, false)
+        self.write_uncommitted(record, false, ActionIdWrite::Claim)
     }
 
     fn write_uncommitted(
         &mut self,
         mut record: ObjectRecord,
         merge_overlay: bool,
+        action_id_write: ActionIdWrite,
     ) -> Result<(), String> {
-        if let Some(id) = record.action_id.as_deref() {
+        let claim_id = match action_id_write {
+            ActionIdWrite::Claim => record.action_id.clone(),
+            ActionIdWrite::Copy => None,
+        };
+        if let Some(id) = claim_id.as_deref().or(record.action_id.as_deref()) {
             Self::require_action_id(id, "empty action id")?;
         }
         if record.kind == SCHEMA_KIND {
@@ -474,6 +541,14 @@ impl Store {
             if let Some(schema) = self.schema(&record.kind)? {
                 schema.canonicalize_instance(&mut record)?;
                 schema.validate(&record)?;
+            }
+        }
+        if let Some(id) = claim_id.as_deref() {
+            if matches!(
+                self.action_claim(id, &record.kind, &record.key, record.hidden, &record.props)?,
+                ActionClaim::Replay
+            ) {
+                return Ok(());
             }
         }
         let hide_overlay =
@@ -553,28 +628,9 @@ impl Store {
             acl.check(&action.kind, property)
                 .map_err(|err| err.to_string())?;
         }
-        self.ensure_action_commits()?;
-        if let Some(committed) = self.action_commits.get(&action.id).cloned() {
-            if committed.kind != action.kind || committed.key != action.key {
-                return Err(format!(
-                    "action id {} already committed on {}/{}",
-                    action.id, committed.kind, committed.key
-                ));
-            }
-            if committed.hidden || committed.props != action.props {
-                return Err(format!("action id {} body conflict", action.id));
-            }
-            if let Some(schema) = self.schema(&action.kind)? {
-                schema.validate(&ObjectRecord {
-                    gen: 0,
-                    kind: action.kind,
-                    key: action.key,
-                    hidden: false,
-                    action_id: Some(action.id),
-                    props: action.props,
-                })?;
-            }
-            return Ok(());
+        match self.action_claim(&action.id, &action.kind, &action.key, false, &action.props)? {
+            ActionClaim::Replay => return Ok(()),
+            ActionClaim::New => {}
         }
         self.require_expected_gen(&action.kind, &action.key, expected_gen)?;
         self.append_replace(ObjectRecord {
@@ -600,14 +656,19 @@ impl Store {
             acl.check(kind, property)
                 .map_err(|err| format!("{err:?}"))?;
         }
-        self.append(ObjectRecord {
-            gen: 0,
-            kind: current.kind,
-            key: current.key,
-            hidden: true,
-            action_id: current.action_id,
-            props: current.props,
-        })
+        self.write_uncommitted(
+            ObjectRecord {
+                gen: 0,
+                kind: current.kind,
+                key: current.key,
+                hidden: true,
+                action_id: current.action_id,
+                props: current.props,
+            },
+            true,
+            ActionIdWrite::Copy,
+        )?;
+        self.commit()
     }
 
     pub fn joins(&self) -> &JoinMaps {
