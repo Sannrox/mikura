@@ -35,6 +35,13 @@ window.
 
 ### Added
 
+- A new overlay keeps rematerializing the instance. [#223](https://github.com/Sannrox/mikura/issues/223)
+  measured a patch-only projection update as a hypothesis: a new overlay costs
+  the same as a whole-record write within fsync jitter, and the log grows by
+  one page per commit either way, so no code changes. Deriving the patched
+  instance on replay was rejected because it broke schema-evolution replay
+  ([spike 012](spikes/012-overlay-apply/NOTES.md),
+  [ADR 0027](docs/decisions/0027-overlay-apply-keeps-rematerialization.md)).
 - Partition semantics stay out. [#193](https://github.com/Sannrox/mikura/issues/193)
   closed no-action after [#192](https://github.com/Sannrox/mikura/issues/192)
   kept one unpartitioned store
