@@ -5,6 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#180](https://github.com/Sannrox/mikura/issues/180), [#181](https://github.com/Sannrox/mikura/issues/181), [#182](https://github.com/Sannrox/mikura/issues/182), [#158](https://github.com/Sannrox/mikura/issues/158), [#159](https://github.com/Sannrox/mikura/issues/159), [ADR 0009](0009-refresh-safe-edit-overlay.md), [ADR 0011](0011-action-id-retry-key.md), [ADR 0017](0017-many-to-many-links.md)
 - Amends: [ADR 0009](0009-refresh-safe-edit-overlay.md) — Action id on `apply_overlay` is a retry key, not provenance only. [ADR 0011](0011-action-id-retry-key.md) — the same unique-id rule covers overlay patches as well as `apply_action` bodies.
+- Amended by: [ADR 0025](0025-ingest-action-id-uniqueness.md) — uniqueness is one store-wide index, including source append.
 - Supersedes: none
 - Superseded by: none
 

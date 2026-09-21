@@ -9,6 +9,10 @@ window.
 
 ### Changed
 
+- A supplied Action id is unique on ingest append as well as
+  `apply_action` / `apply_overlay`. A remapped id fails closed; the same
+  body is a no-op ([#222](https://github.com/Sannrox/mikura/issues/222),
+  [ADR 0025](docs/decisions/0025-ingest-action-id-uniqueness.md)).
 - Shared live-row install, sidecar CRC, CSV split, and host deny/bearer
   helpers. Crate tests live under `src/crate_tests/`. Docs match
   `MKJOIN04`, overlay, bounded listing, last-hop measures, and clerk bearer.

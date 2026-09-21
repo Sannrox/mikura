@@ -310,9 +310,11 @@ A matching body that the current descriptor rejects also fails closed
 ([ADR 0013](decisions/0013-schema-evolution.md)).
 Lookup rebuilds from the log. Host `apply_action` honors the same rule;
 `expected_gen` still applies to a new id. Overlay retries with the same
-Action id are accepted and not implemented
-([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md),
-[#181](https://github.com/Sannrox/mikura/issues/181)). Hide stays a
+Action id and patch are a no-op
+([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md)).
+The same unique-id rule covers ingest append: a remapped id fails closed
+and an identical body is a no-op
+([ADR 0025](decisions/0025-ingest-action-id-uniqueness.md)). Hide stays a
 tombstone without its own retry key. Multi-object atomic edits stay out.
 Host JSON exposes the same writeback as `apply_action`. Ingest stays the
 source-snapshot path and does not become governed writeback.

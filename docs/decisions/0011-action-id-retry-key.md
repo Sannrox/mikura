@@ -6,6 +6,7 @@
 - Related: [#158](https://github.com/Sannrox/mikura/issues/158), [#159](https://github.com/Sannrox/mikura/issues/159), [ADR 0006](0006-action-provenance.md), [ADR 0009](0009-refresh-safe-edit-overlay.md), [M0 contract](../plans/m0-application-contract.md)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0025](0025-ingest-action-id-uniqueness.md) — the unique-id rule also covers ingest append.
 
 ## Context
 
@@ -53,7 +54,8 @@ must not append. A stale expected generation still fails closed and
 still does not append.
 
 Overlay ([ADR 0009](0009-refresh-safe-edit-overlay.md)) and hide stay.
-This rule is `apply_action` only. No principals. No log-format change:
+This record accepted the rule for `apply_action`. [ADR 0025](0025-ingest-action-id-uniqueness.md)
+extends uniqueness to ingest append. No principals. No log-format change:
 the id is already on the generation. Lookup rebuilds from the log.
 
 ## Alternatives considered

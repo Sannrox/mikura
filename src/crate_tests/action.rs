@@ -276,3 +276,227 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ingest_append_replays_matching_action_id_and_fails_closed_on_remap() {
+    let (dir, log) = temp_log("ingest-action-unique");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let mut first = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    first.action_id = Some("act-ingest-1".into());
+    store.append(first.clone()).unwrap();
+    let committed = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(committed.action_id.as_deref(), Some("act-ingest-1"));
+    let pages = store.committed_pages();
+
+    store.append_uncommitted(first.clone()).unwrap();
+    let replayed = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(replayed.gen, committed.gen);
+    assert_eq!(replayed.props.get("amount").map(String::as_str), Some("5"));
+    assert_eq!(store.committed_pages(), pages);
+
+    let mut remapped = rec(
+        "Shipment",
+        "s3",
+        false,
+        &[("order_id", "o1"), ("amount", "7")],
+    );
+    remapped.action_id = Some("act-ingest-1".into());
+    let remap = store.append_uncommitted(remapped).unwrap_err();
+    assert!(remap.contains("already committed"), "{remap}");
+    assert!(store
+        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .is_err());
+
+    let mut conflict = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "9")],
+    );
+    conflict.action_id = Some("act-ingest-1".into());
+    let body = store.append_uncommitted(conflict).unwrap_err();
+    assert!(body.contains("body conflict"), "{body}");
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
+
+    store
+        .hide("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    let hidden = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
+    drop(store);
+
+    let mut reopened = Store::open(&log).unwrap();
+    let mut steal = rec(
+        "Shipment",
+        "s4",
+        false,
+        &[("order_id", "o1"), ("amount", "1")],
+    );
+    steal.action_id = Some("act-ingest-1".into());
+    let after_open = reopened.append_uncommitted(steal.clone()).unwrap_err();
+    assert!(after_open.contains("already committed"), "{after_open}");
+    drop(reopened);
+
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let mut rebuilt = Store::open(&log).unwrap();
+    let after_rebuild = rebuilt.append_uncommitted(steal).unwrap_err();
+    assert!(
+        after_rebuild.contains("already committed"),
+        "{after_rebuild}"
+    );
+    rebuilt.append_uncommitted(first).unwrap();
+    assert_eq!(
+        rebuilt
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        hidden.gen
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
+    let (dir, log) = temp_log("ingest-action-transform");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, product_loop_seed());
+    store
+        .apply_overlay(
+            OverlayPatch {
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("note".into(), "acked".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+            },
+            "act-inc-1-note".into(),
+            Some(1),
+        )
+        .unwrap();
+    let mut source = rec(
+        "incident",
+        "inc-1",
+        false,
+        &[("name", "elevated latency"), ("affects", "svc-api")],
+    );
+    source.action_id = Some("act-src-1".into());
+    store.append(source.clone()).unwrap();
+    let merged = store
+        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(merged.props.get("note").map(String::as_str), Some("acked"));
+    assert_eq!(merged.action_id.as_deref(), Some("act-src-1"));
+    let merged_gen = merged.gen;
+    store.append_uncommitted(source).unwrap();
+    assert_eq!(
+        store
+            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        merged_gen
+    );
+
+    store
+        .append(
+            SchemaDescriptor {
+                kind: "incident".into(),
+                properties: vec!["affects".into(), "name".into(), "opened_at".into()],
+                required: vec!["name".into()],
+                links: vec![SchemaLink {
+                    name: "affects".into(),
+                    far_kind: "component".into(),
+                    outgoing: true,
+                }],
+                sums: Vec::new(),
+                types: vec![("opened_at".into(), PropertyType::Timestamp)],
+            }
+            .to_record()
+            .unwrap(),
+        )
+        .unwrap();
+    let mut typed = rec(
+        "incident",
+        "inc-2",
+        false,
+        &[
+            ("name", "other"),
+            ("affects", "svc-api"),
+            ("opened_at", "2026-09-19T18:00:00+01:00"),
+        ],
+    );
+    typed.action_id = Some("act-typed-1".into());
+    store.append(typed.clone()).unwrap();
+    let canonical = store
+        .load("incident", "inc-2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        canonical.props.get("opened_at").map(String::as_str),
+        Some("2026-09-19T17:00:00.000Z")
+    );
+    let typed_gen = canonical.gen;
+    store.append_uncommitted(typed).unwrap();
+    assert_eq!(
+        store
+            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        typed_gen
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ingest_hide_copies_action_id_without_claiming_a_new_identity() {
+    let (dir, log) = temp_log("ingest-action-hide");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let mut first = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    first.action_id = Some("act-ingest-1".into());
+    store.append(first.clone()).unwrap();
+    let mut hide = first.clone();
+    hide.hidden = true;
+    store.append_uncommitted(hide).unwrap();
+    store.commit().unwrap();
+    let hidden = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
+    let mut stolen = rec(
+        "Shipment",
+        "s3",
+        true,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    stolen.action_id = Some("act-ingest-1".into());
+    let remap = store.append_uncommitted(stolen).unwrap_err();
+    assert!(remap.contains("already committed"), "{remap}");
+    assert!(store
+        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

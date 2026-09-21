@@ -327,6 +327,106 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
 }
 
 #[test]
+fn ingest_action_id_is_unique_across_batch_and_stream() {
+    let tmp = TempLog::new("ingest-action-unique");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let mut first = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    first.action_id = Some("act-ingest-1".into());
+    BatchIngest::run(&mut store, vec![first.clone()]).unwrap();
+    let committed = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(committed.action_id.as_deref(), Some("act-ingest-1"));
+
+    BatchIngest::run(&mut store, vec![first.clone()]).unwrap();
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
+
+    let mut remapped = rec(
+        "Shipment",
+        "s3",
+        false,
+        &[("order_id", "o1"), ("amount", "7")],
+    );
+    remapped.action_id = Some("act-ingest-1".into());
+    let batch_remap = BatchIngest::run(&mut store, vec![remapped.clone()]).unwrap_err();
+    assert!(batch_remap.contains("already committed"), "{batch_remap}");
+    assert!(store
+        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .is_err());
+
+    let mut stream = StreamIngest::new(8).unwrap();
+    stream.push(&mut store, first.clone()).unwrap();
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
+    let stream_remap = stream.push(&mut store, remapped).unwrap_err();
+    assert!(stream_remap.contains("already committed"), "{stream_remap}");
+    stream.flush(&mut store).unwrap();
+    drop(store);
+
+    let mut reopened = Store::open(tmp.path()).unwrap();
+    assert!(reopened
+        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .is_err());
+    BatchIngest::run(&mut reopened, vec![first]).unwrap();
+    assert_eq!(
+        reopened
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        committed.gen
+    );
+}
+
+#[test]
+fn changelog_hide_keeps_action_id_and_does_not_remap() {
+    let tmp = TempLog::new("changelog-action-hide");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut previous = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    previous.action_id = Some("act-ingest-1".into());
+    BatchIngest::run(&mut store, vec![previous.clone()]).unwrap();
+    ChangelogIngest::run(&mut store, vec![previous], Vec::new()).unwrap();
+    let hidden = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
+    let mut stolen = rec(
+        "Shipment",
+        "s3",
+        true,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    stolen.action_id = Some("act-ingest-1".into());
+    let remap = BatchIngest::run(&mut store, vec![stolen]).unwrap_err();
+    assert!(remap.contains("already committed"), "{remap}");
+    assert!(store
+        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .is_err());
+}
+
+#[test]
 fn changelog_treats_action_id_as_payload() {
     let mut previous = rec("Shipment", "s1", false, &[("amount", "10")]);
     previous.action_id = Some("act-a".into());
