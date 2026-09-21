@@ -224,11 +224,19 @@ pub struct HostResponse {
     pub health: Option<HealthWire>,
 }
 
+/// Process-local operational signal ([ADR 0022](../../docs/decisions/0022-operational-signals.md)).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HealthWire {
+    /// The host opened the log and is serving. This is a process-serving
+    /// signal, not production, capacity, durability, or latency health: it
+    /// stays `true` while the process is up, including after rejected RPCs.
+    /// Do not gate traffic on it until published SLOs back it.
     pub ready: bool,
+    /// Superblock committed page count.
     pub committed_pages: u32,
+    /// Completed RPCs with `ok: true` since process start, excluding `health`.
     pub accepted: u64,
+    /// Completed RPCs with `ok: false` since process start, excluding `health`.
     pub rejected: u64,
 }
 

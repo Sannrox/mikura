@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-20
 - Owners: mikura maintainers
-- Related: [#186](https://github.com/Sannrox/mikura/issues/186), [#185](https://github.com/Sannrox/mikura/issues/185), [ADR 0016](0016-production-workload.md), [ADR 0003](0003-hosted-service.md), [ADR 0007](0007-host-bearer.md)
+- Related: [#224](https://github.com/Sannrox/mikura/issues/224) (clarifies `ready`), [#186](https://github.com/Sannrox/mikura/issues/186), [#185](https://github.com/Sannrox/mikura/issues/185), [ADR 0016](0016-production-workload.md), [ADR 0003](0003-hosted-service.md), [ADR 0007](0007-host-bearer.md)
 - Amends: none. Unresolved SLOs in [ADR 0016](0016-production-workload.md) stay unresolved.
 - Supersedes: none
 - Superseded by: none
@@ -29,7 +29,7 @@ unresolved SLOs as pass/fail. Do not add a metrics ecosystem.**
 
 | Field | Meaning |
 | --- | --- |
-| `ready` | The host opened the log and is serving. False is not used while the process is up; a log that cannot open never binds. |
+| `ready` | The host opened the log and is serving. False is not used while the process is up; a log that cannot open never binds. This is process-serving only, not production, capacity, durability, or latency health. |
 | `committed_pages` | Superblock committed page count. |
 | `accepted` | Completed RPCs with `ok: true` since process start, excluding `health`. |
 | `rejected` | Completed RPCs with `ok: false` since process start, excluding `health`. |
@@ -53,6 +53,13 @@ durability, latency, or mixed-load proof.
 ## Consequences
 
 - Host `op: health` is part of `v=1`.
+- `ready` is not a production-green signal. It cannot be `false` while
+  the process is up, so it has no information beyond "the process
+  answered." Consumers must not gate traffic, autoscaling, or deploy
+  promotion on it. A readiness that can fail needs published SLOs and a
+  new ADR ([#224](https://github.com/Sannrox/mikura/issues/224),
+  [ADR 0016](0016-production-workload.md)). Until then the field keeps
+  its name so `v=1` consumers do not break.
 - [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked on
   unresolved simultaneous-client numbers ([ADR 0021](0021-bounded-host-execution.md)).
 - No `MIKURAV1` change.

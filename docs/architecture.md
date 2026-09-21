@@ -374,6 +374,10 @@ Required CLI `--log PATH`. `--bind` defaults to `127.0.0.1:0`.
 `--stream-bound` defaults to 8 outstanding uncommitted stream records.
 Host `evaluate` / `load` / `hide` accept at most one wire `deny` pair
 (`kind` + `property`); a longer list fails closed.
+Host `health` `ready` means the log is open and the process is serving. It
+stays true after rejected RPCs and carries no capacity, durability, or
+latency check, so nothing should gate traffic on it until published SLOs
+back a readiness that can fail ([ADR 0022](decisions/0022-operational-signals.md)).
 A JSON line larger than `--request-bound` (default 1 MiB) fails closed
 with `RequestBound`. Assembling that line is a wall-clock budget of
 `--request-timeout-ms` (default 5 s), not an idle gap between bytes;
