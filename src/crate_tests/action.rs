@@ -500,3 +500,87 @@ fn ingest_hide_copies_action_id_without_claiming_a_new_identity() {
         .is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn stored(store: &Store, kind: &str, key: &str) -> ObjectRecord {
+    store.load(kind, key, &PropertyAcl::allow_all()).unwrap()
+}
+
+#[test]
+fn hide_under_a_claimed_action_id_checks_the_body_and_replays() {
+    let (dir, log) = temp_log("ingest-action-hide-body");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let mut first = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    first.action_id = Some("act-ingest-1".into());
+    store.append(first.clone()).unwrap();
+    let visible_gen = stored(&store, "Shipment", "s2").gen;
+
+    let mut conflicting = first.clone();
+    conflicting.hidden = true;
+    conflicting.props.insert("amount".into(), "999".into());
+    let conflict = store.append_uncommitted(conflicting).unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+    let unchanged = stored(&store, "Shipment", "s2");
+    assert!(!unchanged.hidden);
+    assert_eq!(unchanged.gen, visible_gen);
+
+    let mut hide = first.clone();
+    hide.hidden = true;
+    store.append(hide.clone()).unwrap();
+    let hidden = stored(&store, "Shipment", "s2");
+    assert!(hidden.hidden);
+    assert_eq!(hidden.gen, visible_gen + 1);
+
+    store.append(hide.clone()).unwrap();
+    assert_eq!(stored(&store, "Shipment", "s2").gen, hidden.gen);
+
+    let mut reshow = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "6")],
+    );
+    reshow.action_id = Some("act-ingest-2".into());
+    store.append(reshow).unwrap();
+    let reshown = stored(&store, "Shipment", "s2");
+    assert!(!reshown.hidden);
+    store.append(hide.clone()).unwrap();
+    assert_eq!(stored(&store, "Shipment", "s2"), reshown);
+    drop(store);
+
+    let mut reopened = Store::open(&log).unwrap();
+    reopened.append(hide).unwrap();
+    assert_eq!(stored(&reopened, "Shipment", "s2"), reshown);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_hidden_first_claim_replays_and_conflicts_on_the_full_body() {
+    let (dir, log) = temp_log("ingest-action-hidden-first");
+    let mut store = Store::create(&log).unwrap();
+    let mut first = rec("Customer", "c9", true, &[("region", "eu")]);
+    first.action_id = Some("act-hide-first".into());
+    store.append(first.clone()).unwrap();
+    let hidden = stored(&store, "Customer", "c9");
+    assert!(hidden.hidden);
+
+    store.append(first.clone()).unwrap();
+    assert_eq!(stored(&store, "Customer", "c9"), hidden);
+
+    let mut other_props = first.clone();
+    other_props.props.insert("region".into(), "us".into());
+    let conflict = store.append_uncommitted(other_props).unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+
+    let mut visible = first;
+    visible.hidden = false;
+    let conflict = store.append_uncommitted(visible).unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+    assert_eq!(stored(&store, "Customer", "c9"), hidden);
+    let _ = std::fs::remove_dir_all(&dir);
+}

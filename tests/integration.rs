@@ -427,6 +427,64 @@ fn changelog_hide_keeps_action_id_and_does_not_remap() {
 }
 
 #[test]
+fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
+    let tmp = TempLog::new("ingest-action-hide-body");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut visible = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    visible.action_id = Some("act-ingest-1".into());
+    BatchIngest::run(&mut store, vec![visible.clone()]).unwrap();
+    let visible_gen = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap()
+        .gen;
+
+    let mut conflicting = visible.clone();
+    conflicting.hidden = true;
+    conflicting.props.insert("amount".into(), "999".into());
+    let conflict = BatchIngest::run(&mut store, vec![conflicting]).unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+    let unchanged = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(!unchanged.hidden);
+    assert_eq!(unchanged.gen, visible_gen);
+
+    let mut hide = visible.clone();
+    hide.hidden = true;
+    BatchIngest::run(&mut store, vec![hide.clone()]).unwrap();
+    let hidden = store
+        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(hidden.hidden);
+    assert_eq!(hidden.gen, visible_gen + 1);
+
+    BatchIngest::run(&mut store, vec![hide.clone()]).unwrap();
+    assert_eq!(
+        store
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        hidden.gen
+    );
+    drop(store);
+
+    let mut reopened = Store::open(tmp.path()).unwrap();
+    BatchIngest::run(&mut reopened, vec![hide]).unwrap();
+    assert_eq!(
+        reopened
+            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        hidden.gen
+    );
+}
+
+#[test]
 fn changelog_treats_action_id_as_payload() {
     let mut previous = rec("Shipment", "s1", false, &[("amount", "10")]);
     previous.action_id = Some("act-a".into());

@@ -40,7 +40,12 @@ overlay merge and schema canonicalize, not a second wire field. Lookup
 rebuilds from the log. No `MIKURAV1` change.
 
 Hide copies the last payload and does not claim a new id, including a
-changelog tombstone that keeps the prior id. Overlay rematerialize writes
+changelog tombstone that keeps the prior id. A hidden record that carries
+a claimed id is held to that rule: it must copy the claimed payload
+(`props`), or it fails closed as a body conflict. The first such hide
+appends. A retry of it, or a hidden record that was the first claim of the
+id, is a no-op and does not bump the generation, even after a later write
+re-showed the identity. Overlay rematerialize writes
 the visible instance under the overlay's already-claimed id and does not
 remap it. Source refresh that omits `action_id` may inherit overlay
 provenance after merge ([ADR 0009](0009-refresh-safe-edit-overlay.md)).
@@ -76,5 +81,8 @@ The implementation Issue must prove:
 4. `apply_overlay` rematerialize and `hide` of an Action-written identity
    still succeed.
 5. No `MIKURAV1` magic or second trailer appears.
+6. A hidden record under a claimed id with different `props` fails closed
+   and leaves the identity unchanged. The same hide retried does not bump
+   the generation, including after reopen ([#227](https://github.com/Sannrox/mikura/issues/227)).
 
 Revisit if a fixture names an ingest retry that is not a clerk Action id.
