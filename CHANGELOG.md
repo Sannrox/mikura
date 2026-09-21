@@ -295,6 +295,14 @@ window.
 
 ### Fixed
 
+- An ingest batch is all or nothing. A mid-batch error (Action-id remap,
+  schema failure, oversize record) used to leave the earlier records live
+  and let the next commit persist them; a batch spanning several commit
+  groups could even become partly durable. `Store::append_batch` now drops
+  the whole batch and rebuilds the live projection from the committed log,
+  and `BatchIngest`, `ChangelogIngest`, and `MergeIngest` use it
+  ([#226](https://github.com/Sannrox/mikura/issues/226),
+  [ADR 0026](docs/decisions/0026-atomic-ingest-batch.md)).
 - A hidden record under an already-claimed Action id is held to the same
   body rule as a visible one. A hide that does not copy the claimed `props`
   fails closed instead of appending; a retry of an applied hide, or of a
