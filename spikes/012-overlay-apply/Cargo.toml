@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-overlay-apply-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway cost of applying a new overlay to an existing identity, against the mikura Store. Not the store of record."
+
+[[bin]]
+name = "mikura-overlay-apply-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
