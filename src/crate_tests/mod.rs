@@ -1,5 +1,6 @@
 mod action;
 mod associates;
+mod batch;
 mod delta;
 mod evolution;
 mod helpers;

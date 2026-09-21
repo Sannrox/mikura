@@ -30,6 +30,7 @@ a new ADR. Allocate the next number and list it here.
 | [0023](0023-single-process-availability.md) | Retain one-process availability; no replication without a published miss | accepted |
 | [0024](0024-unpartitioned-store.md) | Retain one unpartitioned store; no split without a published capacity miss | accepted |
 | [0025](0025-ingest-action-id-uniqueness.md) | Action id uniqueness on ingest append | accepted |
+| [0026](0026-atomic-ingest-batch.md) | An ingest batch is all or nothing | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

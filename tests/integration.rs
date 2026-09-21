@@ -395,6 +395,62 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
 }
 
 #[test]
+fn failed_batch_is_dropped_whole_and_keeps_a_pushed_stream_tail() {
+    let tmp = TempLog::new("batch-abort");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    let mut owner = rec(
+        "Shipment",
+        "s2",
+        false,
+        &[("order_id", "o1"), ("amount", "5")],
+    );
+    owner.action_id = Some("act-ingest-1".into());
+    BatchIngest::run(&mut store, vec![owner]).unwrap();
+
+    let mut stream = StreamIngest::new(8).unwrap();
+    stream
+        .push(
+            &mut store,
+            rec("Shipment", "s6", false, &[("order_id", "o1")]),
+        )
+        .unwrap();
+
+    let first = rec("Shipment", "s7", false, &[("order_id", "o1")]);
+    let mut remapped = rec(
+        "Shipment",
+        "s8",
+        false,
+        &[("order_id", "o1"), ("amount", "7")],
+    );
+    remapped.action_id = Some("act-ingest-1".into());
+    let error = BatchIngest::run(&mut store, vec![first, remapped]).unwrap_err();
+    assert!(error.contains("already committed"), "{error}");
+    let absent = |store: &Store, key: &str| {
+        store
+            .load("Shipment", key, &PropertyAcl::allow_all())
+            .is_err()
+    };
+    assert!(absent(&store, "s7"));
+    assert!(absent(&store, "s8"));
+    assert!(!absent(&store, "s6"));
+
+    stream.flush(&mut store).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec("Shipment", "s9", false, &[("order_id", "o1")])],
+    )
+    .unwrap();
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert!(absent(&reopened, "s7"));
+    assert!(absent(&reopened, "s8"));
+    assert!(!absent(&reopened, "s6"));
+    assert!(!absent(&reopened, "s9"));
+}
+
+#[test]
 fn changelog_hide_keeps_action_id_and_does_not_remap() {
     let tmp = TempLog::new("changelog-action-hide");
     let mut store = Store::create(tmp.path()).unwrap();

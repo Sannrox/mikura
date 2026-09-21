@@ -501,7 +501,8 @@ impl Store {
 
     /// Buffer a record on the writer and update live maps. Durability requires
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
-    /// the rebuild (ADR 0001). `mikura-ingest` uses this for group-commit batches.
+    /// the rebuild (ADR 0001). Stream ingest uses this; a batch that must be all or
+    /// nothing uses [`Self::append_batch`] (ADR 0026).
     ///
     /// A supplied Action id is unique in the store (ADR 0025). The same id and
     /// the same body (`kind`, `key`, `hidden`, `props`) is a no-op. A remapped
@@ -613,6 +614,66 @@ impl Store {
     pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
         self.persist_projection()
+    }
+
+    /// Append `records` and commit them as one unit (ADR 0026).
+    ///
+    /// An error from admitting a record, or from writing the log commit,
+    /// drops the whole batch: no record of it stays live or becomes durable,
+    /// and the store equals its committed log again. Group commit is held
+    /// until the batch ends, so a large batch is never partly durable.
+    /// Records already buffered by [`Self::append_uncommitted`] are committed
+    /// first, so the abort never discards work the caller did not hand in.
+    ///
+    /// A failed superblock write leaves the commit point unknown: the store
+    /// then keeps the batch as is, refuses further writes, and must be
+    /// reopened, because rolling back could delete pages the log references.
+    /// A rollback that itself fails has the same effect, so a half-rebuilt
+    /// projection is never committed as a checkpoint.
+    ///
+    /// Once the log commit succeeded the batch is durable. A failure to
+    /// persist the derived sidecar after that is reported as such and must not
+    /// be retried as a failed batch; the next open rebuilds the sidecar.
+    pub fn append_batch(&mut self, records: Vec<ObjectRecord>) -> Result<(), String> {
+        if self.writer.has_pending() {
+            self.commit()?;
+        }
+        self.writer.hold_commits(true);
+        let appended = records
+            .into_iter()
+            .try_for_each(|record| self.append_uncommitted(record));
+        self.writer.hold_commits(false);
+        let committed = appended.and_then(|()| self.writer.flush());
+        if let Err(error) = committed {
+            if self.writer.is_failed() {
+                return Err(error);
+            }
+            return Err(match self.abort_uncommitted() {
+                Ok(()) => error,
+                Err(abort) => {
+                    self.writer.poison();
+                    format!("{error}; rollback failed, reopen the store: {abort}")
+                }
+            });
+        }
+        self.persist_projection().map_err(|error| {
+            format!("batch committed to the log; projection sidecar not persisted: {error}")
+        })
+    }
+
+    /// Drop every uncommitted record and rebuild the live projection from the
+    /// committed log, as a reopen after a crash would (ADR 0001).
+    fn abort_uncommitted(&mut self) -> Result<(), String> {
+        self.writer.discard_pending()?;
+        self.identity.clear();
+        self.hidden_props.clear();
+        self.joins = JoinMaps::default();
+        self.dirty.clear();
+        self.has_checkpoint = false;
+        self.delta_bytes = 0;
+        self.action_commits.clear();
+        self.action_commits_from_log = true;
+        self.install_projection()
     }
 
     /// Writer `fsync` count. Used by ingest tests to characterize group commit.
