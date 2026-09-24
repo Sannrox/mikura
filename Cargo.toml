@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "mikura"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 description = "Object database: durable object log, object-set evaluate, property ACLs, and Action writeback."

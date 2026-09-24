@@ -11,7 +11,7 @@ is unauthenticated unless `--bearer` is set. Multi-process hosting is later.
 
 ## Status
 
-Pre-1.0 (`0.1.0`, not published to crates.io). Suitable for local experiments
+Pre-1.0 (`0.2.0`, not published to crates.io). Suitable for local experiments
 and for contributing to the kernel. Not a production hosted store.
 
 | Implemented | Not implemented |
