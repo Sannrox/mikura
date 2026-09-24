@@ -7,6 +7,21 @@ window.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-24
+
+### Upgrade
+
+- Object logs written by v0.1.0 open, load, append, and reopen unchanged.
+  v0.1.0 wrote no join sidecar, so there is nothing to migrate.
+- Join sidecars from unreleased builds (`MKJOIN01`-`MKJOIN03`) fail closed.
+  Delete `{log}.joins` and `{log}.joins.delta`; the next open rebuilds them
+  from the log.
+- Host clients: JSON lines are envelope `v=1` (omit means v1, unknown `v`
+  fails closed). A non-loopback bind requires a clerk bearer.
+  `apply_action` is a whole-record replace, an ingest batch is all or
+  nothing, and a supplied Action id is unique across ingest, `apply_action`,
+  and `apply_overlay`.
+
 ### Changed
 
 - Host `health` `ready` is documented as process-serving only, not
@@ -459,5 +474,6 @@ window.
 
 - Public name is `mikura` (御倉). On-disk superblock magic is `MIKURAV1`.
 
-[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Sannrox/mikura/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sannrox/mikura/releases/tag/v0.1.0
