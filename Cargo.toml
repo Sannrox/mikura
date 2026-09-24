@@ -4,6 +4,12 @@ resolver = "2"
 
 [package]
 name = "mikura"
+# When releasing:
+# - Bump the version here, in crates/mikura-ingest and crates/mikura-host,
+#   and in the README.md status line.
+# - Run `cargo update -w` so Cargo.lock matches.
+# - Move CHANGELOG.md [Unreleased] to the new version, upgrade notes first.
+# - Squash-merge the release PR, then create the "v0.x.y" git tag on it.
 version = "0.2.0"
 edition = "2021"
 publish = false
