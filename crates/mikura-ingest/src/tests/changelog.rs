@@ -126,7 +126,7 @@ fn changelog_into_merge_matches_new_snapshot_plus_edits() {
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
     assert_same_identity(&store, &reopened, &expected);
-    assert!(!reopened.joins().is_visible("Shipment", "s2"));
+    assert!(!reopened.joins("ns").unwrap().is_visible("Shipment", "s2"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -137,8 +137,8 @@ fn changelog_empty_diff_does_not_append() {
     let mut store = Store::create(&log).unwrap();
     BatchIngest::run(&mut store, snapshot.clone()).unwrap();
     ChangelogIngest::run(&mut store, snapshot.clone(), snapshot).unwrap();
-    assert!(store.joins().is_visible("Shipment", "s1"));
+    assert!(store.joins("ns").unwrap().is_visible("Shipment", "s1"));
     let reopened = Store::open(&log).unwrap();
-    assert!(reopened.joins().is_visible("Shipment", "s1"));
+    assert!(reopened.joins("ns").unwrap().is_visible("Shipment", "s1"));
     let _ = std::fs::remove_dir_all(&dir);
 }

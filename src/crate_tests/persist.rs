@@ -15,6 +15,7 @@ fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-s2".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -104,13 +105,19 @@ fn generic_kind_join_property_survives_reopen() {
     let (dir, log) = temp_log("join-generic");
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, generic_records());
-    assert!(store.joins().is_visible("Asset", "a1"));
-    assert_eq!(store.joins().prop("Asset", "a1", "owner_id"), Some("c1"));
+    assert!(store.joins(NS).unwrap().is_visible("Asset", "a1"));
+    assert_eq!(
+        store.joins(NS).unwrap().prop("Asset", "a1", "owner_id"),
+        Some("c1")
+    );
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
-    assert!(reopened.joins().is_visible("Asset", "a1"));
-    assert_eq!(reopened.joins().prop("Asset", "a1", "owner_id"), Some("c1"));
+    assert!(reopened.joins(NS).unwrap().is_visible("Asset", "a1"));
+    assert_eq!(
+        reopened.joins(NS).unwrap().prop("Asset", "a1", "owner_id"),
+        Some("c1")
+    );
     let oss = ObjectSet::new(LocalCompute);
     let response = oss.evaluate(&reopened, &asset_request()).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -126,12 +133,12 @@ fn hidden_keys_absent_from_join_maps_after_reopen() {
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
-    assert!(!reopened.joins().is_visible("Customer", "c0"));
-    assert!(!reopened.joins().is_visible("Order", "o0"));
-    assert!(!reopened.joins().is_visible("Shipment", "s0"));
-    assert!(!reopened.joins().is_visible("Asset", "a0"));
-    assert!(reopened.joins().is_visible("Customer", "c1"));
-    assert!(reopened.joins().is_visible("Asset", "a1"));
+    assert!(!reopened.joins(NS).unwrap().is_visible("Customer", "c0"));
+    assert!(!reopened.joins(NS).unwrap().is_visible("Order", "o0"));
+    assert!(!reopened.joins(NS).unwrap().is_visible("Shipment", "s0"));
+    assert!(!reopened.joins(NS).unwrap().is_visible("Asset", "a0"));
+    assert!(reopened.joins(NS).unwrap().is_visible("Customer", "c1"));
+    assert!(reopened.joins(NS).unwrap().is_visible("Asset", "a1"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -215,7 +222,7 @@ fn single_record_append_is_durable_across_reopen() {
         .unwrap();
     drop(store);
     let reopened = Store::open(&log).unwrap();
-    assert!(reopened.joins().is_visible("Customer", "c1"));
+    assert!(reopened.joins(NS).unwrap().is_visible("Customer", "c1"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -264,8 +271,21 @@ fn old_join_sidecar_magic_fails_closed() {
         err03.contains("magic") || err03.contains("checksum"),
         "{err03}"
     );
+    bytes[..8].copy_from_slice(b"MKJOIN04");
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&bytes[..crc_at]);
+    bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
+    std::fs::write(&sidecar, &bytes).unwrap();
+    let err04 = match Store::open(&log) {
+        Err(err) => err,
+        Ok(_) => panic!("MKJOIN04 should fail closed"),
+    };
+    assert!(
+        err04.contains("magic") || err04.contains("checksum"),
+        "{err04}"
+    );
     std::fs::remove_file(&sidecar).unwrap();
     let recovered = Store::open(&log).unwrap();
-    assert!(recovered.joins().is_visible("Customer", "c1"));
+    assert!(recovered.joins(NS).unwrap().is_visible("Customer", "c1"));
     let _ = std::fs::remove_dir_all(&dir);
 }

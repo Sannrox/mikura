@@ -44,6 +44,7 @@ impl Drop for TempLog {
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -95,6 +96,7 @@ fn shipment_sum_schema() -> SchemaDescriptor {
 
 fn fixture_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop {
@@ -125,6 +127,7 @@ fn fixture_request() -> EvaluateRequest {
 
 fn asset_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![Hop {
             far_kind: "Asset".into(),
@@ -152,14 +155,14 @@ fn schema_named_measure_evaluates_and_rebuilds() {
     let schema = shipment_sum_schema();
     BatchIngest::run(
         &mut store,
-        std::iter::once(schema.to_record().unwrap())
+        std::iter::once(schema.to_record("ns").unwrap())
             .chain(fixture())
             .collect(),
     )
     .unwrap();
     assert_eq!(
         store
-            .schema("Shipment")
+            .schema("ns", "Shipment")
             .unwrap()
             .unwrap()
             .sums
@@ -170,7 +173,7 @@ fn schema_named_measure_evaluates_and_rebuilds() {
     );
     assert_eq!(
         schema
-            .to_record()
+            .to_record("ns")
             .unwrap()
             .props
             .get(SCHEMA_SUMS)
@@ -230,11 +233,12 @@ fn action_writeback_is_a_new_generation() {
     let oss = ObjectSet::new(LocalCompute);
     let before = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(before.sum_amount, 10);
-    assert!(!store.joins().is_visible("Shipment", "s2"));
+    assert!(!store.joins("ns").unwrap().is_visible("Shipment", "s2"));
 
     store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-s2".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -247,8 +251,11 @@ fn action_writeback_is_a_new_generation() {
         )
         .unwrap();
 
-    assert!(store.joins().is_visible("Shipment", "s2"));
-    assert_eq!(store.joins().prop("Shipment", "s2", "amount"), Some("5"));
+    assert!(store.joins("ns").unwrap().is_visible("Shipment", "s2"));
+    assert_eq!(
+        store.joins("ns").unwrap().prop("Shipment", "s2", "amount"),
+        Some("5")
+    );
     let after = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(after.two_hop_count, 1);
     assert_eq!(after.sum_amount, 15);
@@ -260,6 +267,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let action = Action {
+        namespace: "ns".into(),
         id: "act-inc-1-note".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
@@ -270,13 +278,13 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     };
     store.apply_action(action.clone(), None).unwrap();
     let committed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(committed.action_id.as_deref(), Some("act-inc-1-note"));
     store.apply_action(action.clone(), None).unwrap();
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -285,6 +293,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let body = store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-note".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -301,6 +310,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let other = store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-note".into(),
                 kind: "Shipment".into(),
                 key: "s1".into(),
@@ -319,7 +329,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     reopened.apply_action(action, None).unwrap();
     assert_eq!(
         reopened
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -340,14 +350,14 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
     first.action_id = Some("act-ingest-1".into());
     BatchIngest::run(&mut store, vec![first.clone()]).unwrap();
     let committed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(committed.action_id.as_deref(), Some("act-ingest-1"));
 
     BatchIngest::run(&mut store, vec![first.clone()]).unwrap();
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -363,14 +373,14 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
     let batch_remap = BatchIngest::run(&mut store, vec![remapped.clone()]).unwrap_err();
     assert!(batch_remap.contains("already committed"), "{batch_remap}");
     assert!(store
-        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
 
     let mut stream = StreamIngest::new(8).unwrap();
     stream.push(&mut store, first.clone()).unwrap();
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -382,12 +392,12 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
 
     let mut reopened = Store::open(tmp.path()).unwrap();
     assert!(reopened
-        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
     BatchIngest::run(&mut reopened, vec![first]).unwrap();
     assert_eq!(
         reopened
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -428,7 +438,7 @@ fn failed_batch_is_dropped_whole_and_keeps_a_pushed_stream_tail() {
     assert!(error.contains("already committed"), "{error}");
     let absent = |store: &Store, key: &str| {
         store
-            .load("Shipment", key, &PropertyAcl::allow_all())
+            .load("ns", "Shipment", key, &PropertyAcl::allow_all())
             .is_err()
     };
     assert!(absent(&store, "s7"));
@@ -464,7 +474,7 @@ fn changelog_hide_keeps_action_id_and_does_not_remap() {
     BatchIngest::run(&mut store, vec![previous.clone()]).unwrap();
     ChangelogIngest::run(&mut store, vec![previous], Vec::new()).unwrap();
     let hidden = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
     assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
@@ -478,7 +488,7 @@ fn changelog_hide_keeps_action_id_and_does_not_remap() {
     let remap = BatchIngest::run(&mut store, vec![stolen]).unwrap_err();
     assert!(remap.contains("already committed"), "{remap}");
     assert!(store
-        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
 }
 
@@ -495,7 +505,7 @@ fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
     visible.action_id = Some("act-ingest-1".into());
     BatchIngest::run(&mut store, vec![visible.clone()]).unwrap();
     let visible_gen = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap()
         .gen;
 
@@ -505,7 +515,7 @@ fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
     let conflict = BatchIngest::run(&mut store, vec![conflicting]).unwrap_err();
     assert!(conflict.contains("body conflict"), "{conflict}");
     let unchanged = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!unchanged.hidden);
     assert_eq!(unchanged.gen, visible_gen);
@@ -514,7 +524,7 @@ fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
     hide.hidden = true;
     BatchIngest::run(&mut store, vec![hide.clone()]).unwrap();
     let hidden = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
     assert_eq!(hidden.gen, visible_gen + 1);
@@ -522,7 +532,7 @@ fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
     BatchIngest::run(&mut store, vec![hide.clone()]).unwrap();
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         hidden.gen
@@ -533,7 +543,7 @@ fn ingest_hide_under_a_claimed_action_id_conflicts_on_body_and_replays() {
     BatchIngest::run(&mut reopened, vec![hide]).unwrap();
     assert_eq!(
         reopened
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         hidden.gen
@@ -614,7 +624,7 @@ fn stream_overflow_fails_closed_without_silent_drop() {
         overflow.contains("bound") && overflow.contains("exceeded"),
         "expected fail-closed overflow, got {overflow}"
     );
-    assert!(!store.joins().is_visible("Shipment", "s5"));
+    assert!(!store.joins("ns").unwrap().is_visible("Shipment", "s5"));
 
     let oss = ObjectSet::new(LocalCompute);
     let live = oss.evaluate(&store, &fixture_request()).unwrap();
@@ -632,6 +642,7 @@ fn reopen_matches_live_hop_count_and_sum() {
     store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-s2".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -732,27 +743,27 @@ fn load_current_object_after_restart() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let live = store
-        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
         .unwrap();
     let hidden = store
-        .load("Customer", "c0", &PropertyAcl::allow_all())
+        .load("ns", "Customer", "c0", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
     assert!(hidden.hidden);
     assert_eq!(hidden.props.get("region").map(String::as_str), Some("eu"));
-    assert!(!store.joins().is_visible("Customer", "c0"));
+    assert!(!store.joins("ns").unwrap().is_visible("Customer", "c0"));
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(
         reopened
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap(),
         live
     );
     assert_eq!(
         reopened
-            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c0", &PropertyAcl::allow_all())
             .unwrap(),
         hidden
     );
@@ -764,7 +775,7 @@ fn load_current_object_after_restart() {
     drop(store);
     let updated = Store::open(tmp.path()).unwrap();
     let latest = updated
-        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(latest.gen, 2);
     assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
@@ -773,13 +784,13 @@ fn load_current_object_after_restart() {
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(
         replayed
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap(),
         latest
     );
     assert_eq!(
         replayed
-            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c0", &PropertyAcl::allow_all())
             .unwrap(),
         hidden
     );
@@ -794,6 +805,7 @@ fn incoming_hop_follows_join_property() {
     let outgoing = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(outgoing.two_hop_count, 1);
     let incoming = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Order".into(),
         hops: vec![Hop {
             far_kind: "Customer".into(),
@@ -814,7 +826,7 @@ fn incoming_hop_follows_join_property() {
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
-    assert!(!store.joins().is_visible("Order", "o0"));
+    assert!(!store.joins("ns").unwrap().is_visible("Order", "o0"));
     drop(store);
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&reopened, &incoming).unwrap().two_hop_count, 1);
@@ -829,19 +841,19 @@ fn load_omits_denied_properties() {
     let mut store = Store::create(tmp.path()).unwrap();
     BatchIngest::run(&mut store, fixture()).unwrap();
     let allow = PropertyAcl::allow_all();
-    let live = store.load("Shipment", "s1", &allow).unwrap();
+    let live = store.load("ns", "Shipment", "s1", &allow).unwrap();
     assert_eq!(live.props.get("amount").map(String::as_str), Some("10"));
     assert_eq!(live.props.get("order_id").map(String::as_str), Some("o1"));
 
     let deny_amount = PropertyAcl::deny_property("Shipment", "amount");
-    let redacted = store.load("Shipment", "s1", &deny_amount).unwrap();
+    let redacted = store.load("ns", "Shipment", "s1", &deny_amount).unwrap();
     assert!(!redacted.props.contains_key("amount"));
     assert_eq!(
         redacted.props.get("order_id").map(String::as_str),
         Some("o1")
     );
     assert!(!redacted.props.contains_key("fabricated"));
-    assert!(!store.joins().is_visible("Customer", "c0"));
+    assert!(!store.joins("ns").unwrap().is_visible("Customer", "c0"));
 
     let mut denied = fixture_request();
     denied.acl = PropertyAcl::deny_property("Shipment", "amount");
@@ -859,12 +871,12 @@ fn load_omits_denied_properties() {
 
     let reopened = Store::open(tmp.path()).unwrap();
     assert!(!reopened
-        .load("Shipment", "s1", &deny_amount)
+        .load("ns", "Shipment", "s1", &deny_amount)
         .unwrap()
         .props
         .contains_key("amount"));
     assert_eq!(
-        reopened.load("Shipment", "s1", &allow).unwrap().props,
+        reopened.load("ns", "Shipment", "s1", &allow).unwrap().props,
         live.props
     );
 }
@@ -1020,13 +1032,14 @@ fn composed_predicates_select_typed_object_sets() {
     let mut store = Store::create(tmp.path()).unwrap();
     let (component_schema, incident_schema) = query_fixture_schemas();
     let mut records = vec![
-        component_schema.to_record().unwrap(),
-        incident_schema.to_record().unwrap(),
+        component_schema.to_record("ns").unwrap(),
+        incident_schema.to_record("ns").unwrap(),
     ];
     records.extend(query_fixture_records());
     BatchIngest::run(&mut store, records).unwrap();
     let oss = ObjectSet::new(LocalCompute);
     let open = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -1044,6 +1057,7 @@ fn composed_predicates_select_typed_object_sets() {
     assert_eq!(listed_keys(&listed), ["inc-1", "inc-3"]);
 
     let filter_then_hop = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -1068,6 +1082,7 @@ fn composed_predicates_select_typed_object_sets() {
     );
 
     let hop_then_filter = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -1091,6 +1106,7 @@ fn composed_predicates_select_typed_object_sets() {
     assert_eq!(hopped.two_hop_count, 2);
 
     let range = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -1110,6 +1126,7 @@ fn composed_predicates_select_typed_object_sets() {
     );
 
     let missing = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -1129,6 +1146,7 @@ fn composed_predicates_select_typed_object_sets() {
     );
 
     let denied = EvaluateRequest {
+        namespace: "ns".into(),
         acl: PropertyAcl::deny_property("incident", "open"),
         ..open.clone()
     };
@@ -1138,7 +1156,7 @@ fn composed_predicates_select_typed_object_sets() {
     ));
 
     store
-        .hide("incident", "inc-3", &PropertyAcl::allow_all())
+        .hide("ns", "incident", "inc-3", &PropertyAcl::allow_all())
         .unwrap();
     let after_hide = oss.evaluate(&store, &open).unwrap();
     assert_eq!(listed_keys(&after_hide), ["inc-1"]);
@@ -1171,13 +1189,14 @@ fn ordered_pages_are_snapshot_bound() {
     let mut store = Store::create(tmp.path()).unwrap();
     let (component_schema, incident_schema) = query_fixture_schemas();
     let mut records = vec![
-        component_schema.to_record().unwrap(),
-        incident_schema.to_record().unwrap(),
+        component_schema.to_record("ns").unwrap(),
+        incident_schema.to_record("ns").unwrap(),
     ];
     records.extend(query_fixture_records());
     BatchIngest::run(&mut store, records).unwrap();
     let oss = ObjectSet::new(LocalCompute);
     let first = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -1200,6 +1219,7 @@ fn ordered_pages_are_snapshot_bound() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 cursor: Some(cursor.clone()),
                 ..first.clone()
             },
@@ -1211,6 +1231,7 @@ fn ordered_pages_are_snapshot_bound() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 sort: Some(Sort::by("open")),
                 page_size: 0,
                 cursor: None,
@@ -1221,11 +1242,12 @@ fn ordered_pages_are_snapshot_bound() {
     assert_eq!(ordered_keys(&ties), ["inc-2", "inc-1", "inc-3"]);
 
     store
-        .hide("incident", "inc-2", &PropertyAcl::allow_all())
+        .hide("ns", "incident", "inc-2", &PropertyAcl::allow_all())
         .unwrap();
     let after_write = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: "ns".into(),
             cursor: Some(cursor),
             ..first
         },
@@ -1277,8 +1299,8 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
     BatchIngest::run(
         &mut store,
         vec![
-            component_schema.to_record().unwrap(),
-            incident_schema.to_record().unwrap(),
+            component_schema.to_record("ns").unwrap(),
+            incident_schema.to_record("ns").unwrap(),
             rec(
                 "component",
                 "svc-api",
@@ -1303,7 +1325,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
     assert!(invalid.contains("missing required"), "{invalid}");
     assert_eq!(
         store
-            .load("component", "legacy", &PropertyAcl::allow_all())
+            .load("ns", "component", "legacy", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("alias")
@@ -1313,6 +1335,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
     assert_eq!(
         store
             .load_with_schema(
+                "ns",
                 "incident",
                 "inc-1",
                 &PropertyAcl::allow_all(),
@@ -1328,14 +1351,14 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
 
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(
-        reopened.schema("component").unwrap().unwrap(),
+        reopened.schema("ns", "component").unwrap().unwrap(),
         component_schema
     );
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(
         replayed
-            .load("component", "svc-api", &PropertyAcl::allow_all())
+            .load("ns", "component", "svc-api", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("tier")
@@ -1343,7 +1366,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
         Some("prod")
     );
     assert_eq!(
-        replayed.schema("incident").unwrap().unwrap(),
+        replayed.schema("ns", "incident").unwrap().unwrap(),
         incident_schema
     );
 }
@@ -1375,6 +1398,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "component".into(),
                 hops: vec![],
                 sum_kind: "component".into(),
@@ -1400,6 +1424,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "incident".into(),
                 hops: vec![Hop {
                     far_kind: "component".into(),
@@ -1434,6 +1459,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "component".into(),
                 hops: vec![],
                 sum_kind: "component".into(),
@@ -1463,6 +1489,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         oss.evaluate(
             &reopened,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "incident".into(),
                 hops: vec![Hop {
                     far_kind: "component".into(),
@@ -1493,6 +1520,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
         oss.evaluate(
             &replayed,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "component".into(),
                 hops: vec![],
                 sum_kind: "component".into(),
@@ -1542,6 +1570,7 @@ fn overlay_refresh_keeps_admitted_note() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -1563,7 +1592,7 @@ fn overlay_refresh_keeps_admitted_note() {
     )
     .unwrap();
     let live = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(live.props.get("note").map(String::as_str), Some("acked"));
     drop(store);
@@ -1571,7 +1600,7 @@ fn overlay_refresh_keeps_admitted_note() {
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(
         replayed
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("note")
@@ -1580,7 +1609,7 @@ fn overlay_refresh_keeps_admitted_note() {
     );
     assert_eq!(
         replayed
-            .overlay("incident", "inc-1")
+            .overlay("ns", "incident", "inc-1")
             .unwrap()
             .unwrap()
             .props["note"],
@@ -1605,6 +1634,7 @@ fn apply_action_replaces_without_merging_overlay() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -1618,6 +1648,7 @@ fn apply_action_replaces_without_merging_overlay() {
     store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-rename".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -1630,7 +1661,7 @@ fn apply_action_replaces_without_merging_overlay() {
         )
         .unwrap();
     let replaced = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!replaced.props.contains_key("note"));
     assert_eq!(replaced.action_id.as_deref(), Some("act-inc-1-rename"));
@@ -1661,6 +1692,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -1671,29 +1703,31 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
             Some(1),
         )
         .unwrap();
-    assert!(store.joins().is_visible("incident", "inc-1"));
+    assert!(store.joins("ns").unwrap().is_visible("incident", "inc-1"));
     store
-        .hide("incident", "inc-1", &PropertyAcl::allow_all())
+        .hide("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
-    assert!(!store.joins().is_visible("incident", "inc-1"));
+    assert!(!store.joins("ns").unwrap().is_visible("incident", "inc-1"));
     let hidden = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
     assert_eq!(hidden.props.get("note").map(String::as_str), Some("acked"));
     let overlay = store
         .load(
+            "ns",
             mikura::OVERLAY_KIND,
             &OverlayPatch::identity_key("incident", "inc-1"),
             &PropertyAcl::allow_all(),
         )
         .unwrap();
     assert!(overlay.hidden);
-    assert!(store.overlay("incident", "inc-1").unwrap().is_none());
+    assert!(store.overlay("ns", "incident", "inc-1").unwrap().is_none());
     let listed = ObjectSet::new(LocalCompute)
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "component".into(),
                 hops: vec![],
                 sum_kind: "component".into(),
@@ -1718,6 +1752,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "incident".into(),
                 hops: vec![Hop {
                     far_kind: "component".into(),
@@ -1741,20 +1776,26 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
     assert_eq!(hopped.two_hop_count, 0);
     assert!(hopped.objects.is_empty());
     let missing = store
-        .hide("incident", "nope", &PropertyAcl::allow_all())
+        .hide("ns", "incident", "nope", &PropertyAcl::allow_all())
         .unwrap_err();
     assert!(missing.contains("unknown identity"), "{missing}");
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    assert!(!reopened.joins().is_visible("incident", "inc-1"));
+    assert!(!reopened
+        .joins("ns")
+        .unwrap()
+        .is_visible("incident", "inc-1"));
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    assert!(!replayed.joins().is_visible("incident", "inc-1"));
+    assert!(!replayed
+        .joins("ns")
+        .unwrap()
+        .is_visible("incident", "inc-1"));
     assert!(
         replayed
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .hidden
     );
@@ -1795,7 +1836,7 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
     BatchIngest::run(
         &mut store,
         vec![
-            schema.to_record().unwrap(),
+            schema.to_record("ns").unwrap(),
             rec(
                 "incident",
                 "inc-1",
@@ -1813,7 +1854,7 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
     )
     .unwrap();
     let loaded = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         loaded.props.get("opened_at").map(String::as_str),
@@ -1833,6 +1874,7 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("open".into(), "false".into())]),
@@ -1844,15 +1886,15 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
         )
         .unwrap();
     let overlayed = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         overlayed.props.get("open").map(String::as_str),
         Some("false")
     );
-    let descriptor = store.schema("incident").unwrap().unwrap();
+    let descriptor = store.schema("ns", "incident").unwrap().unwrap();
     assert!(descriptor
-        .to_record()
+        .to_record("ns")
         .unwrap()
         .props
         .get(SCHEMA_TYPES)
@@ -1863,7 +1905,7 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(
         reopened
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("open")
@@ -1874,14 +1916,14 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     let rebuilt = replayed
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         rebuilt.props.get("cost").map(String::as_str),
         Some("1500.00")
     );
     assert_eq!(
-        replayed.schema("incident").unwrap().unwrap().types,
+        replayed.schema("ns", "incident").unwrap().unwrap().types,
         schema.types
     );
 }
@@ -1909,7 +1951,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     BatchIngest::run(
         &mut store,
         vec![
-            initial.to_record().unwrap(),
+            initial.to_record("ns").unwrap(),
             rec(
                 "incident",
                 "inc-1",
@@ -1926,13 +1968,13 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
 
     let mut recast = initial.clone();
     recast.types = vec![("name".into(), PropertyType::Integer)];
-    let recast_err = store.append(recast.to_record().unwrap()).unwrap_err();
+    let recast_err = store.append(recast.to_record("ns").unwrap()).unwrap_err();
     assert!(recast_err.contains("cannot recast name"), "{recast_err}");
     let mut retarget = initial.clone();
     retarget.links[0].far_kind = "service".into();
-    let link_err = store.append(retarget.to_record().unwrap()).unwrap_err();
+    let link_err = store.append(retarget.to_record("ns").unwrap()).unwrap_err();
     assert!(link_err.contains("cannot retarget"), "{link_err}");
-    assert_eq!(store.schema("incident").unwrap().unwrap(), initial);
+    assert_eq!(store.schema("ns", "incident").unwrap().unwrap(), initial);
 
     let mut evolved = initial.clone();
     evolved
@@ -1949,20 +1991,21 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
         outgoing: false,
     });
     evolved.sums = vec!["name".into()];
-    store.append(evolved.to_record().unwrap()).unwrap();
+    store.append(evolved.to_record("ns").unwrap()).unwrap();
     let historical = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         historical.props.get("note").map(String::as_str),
         Some("acked")
     );
     evolved.required.retain(|name| name != "priority");
-    store.append(evolved.to_record().unwrap()).unwrap();
+    store.append(evolved.to_record("ns").unwrap()).unwrap();
 
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "paged".into())]),
@@ -1976,6 +2019,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-body".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -1992,10 +2036,10 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
 
     let mut shrunk = evolved.clone();
     shrunk.properties.retain(|name| name != "note");
-    store.append(shrunk.to_record().unwrap()).unwrap();
+    store.append(shrunk.to_record("ns").unwrap()).unwrap();
     assert_eq!(
         store
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("note")
@@ -2005,6 +2049,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     let overlay_err = store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "stale".into())]),
@@ -2019,6 +2064,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     let action_err = store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-stale".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -2035,6 +2081,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     let replay_err = store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-inc-1-body".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -2050,21 +2097,21 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
         .unwrap_err();
     assert!(replay_err.contains("unknown property"), "{replay_err}");
 
-    let mut hidden = shrunk.to_record().unwrap();
+    let mut hidden = shrunk.to_record("ns").unwrap();
     hidden.hidden = true;
     store.append(hidden).unwrap();
-    store.append(shrunk.to_record().unwrap()).unwrap();
+    store.append(shrunk.to_record("ns").unwrap()).unwrap();
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    assert_eq!(reopened.schema("incident").unwrap().unwrap(), shrunk);
+    assert_eq!(reopened.schema("ns", "incident").unwrap().unwrap(), shrunk);
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    assert_eq!(replayed.schema("incident").unwrap().unwrap(), shrunk);
+    assert_eq!(replayed.schema("ns", "incident").unwrap().unwrap(), shrunk);
     assert_eq!(
         replayed
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("open")
@@ -2162,6 +2209,7 @@ fn association_seed() -> Vec<ObjectRecord> {
 
 fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![
             Hop {
@@ -2196,7 +2244,7 @@ fn association_objects_persist_and_traverse() {
     let mut store = Store::create(tmp.path()).unwrap();
     let mut records: Vec<ObjectRecord> = association_schemas()
         .into_iter()
-        .map(|schema| schema.to_record().unwrap())
+        .map(|schema| schema.to_record("ns").unwrap())
         .collect();
     records.extend(association_seed());
     BatchIngest::run(&mut store, records).unwrap();
@@ -2208,6 +2256,7 @@ fn association_objects_persist_and_traverse() {
 
     store
         .hide(
+            "ns",
             "incident_label",
             "il-inc-1-region-eu",
             &PropertyAcl::allow_all(),
@@ -2234,6 +2283,7 @@ fn association_objects_persist_and_traverse() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "incident".into(),
                 hops: vec![Hop {
                     far_kind: "component".into(),
@@ -2290,11 +2340,12 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
     let mut hidden = PropertyAcl::allow_all();
     hidden.insert_hide_identity("incident", "inc-1").unwrap();
     assert!(store
-        .load("incident", "inc-1", &hidden)
+        .load("ns", "incident", "inc-1", &hidden)
         .unwrap_err()
         .contains("unknown identity"));
     let oss = ObjectSet::new(LocalCompute);
     let mut hop = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -2321,6 +2372,7 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
     let overlay_err = store
         .apply_overlay_in_view(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "x".into())]),
@@ -2337,12 +2389,12 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let rebuilt = Store::open(tmp.path()).unwrap();
     assert!(rebuilt
-        .load("incident", "inc-1", &hidden)
+        .load("ns", "incident", "inc-1", &hidden)
         .unwrap_err()
         .contains("unknown identity"));
     assert_eq!(
         rebuilt
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .key,
         "inc-1"
@@ -2362,6 +2414,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         ))
         .unwrap();
     let patch = OverlayPatch {
+        namespace: "ns".into(),
         kind: "incident".into(),
         key: "inc-1".into(),
         props: HashMap::from([("note".into(), "acked".into())]),
@@ -2372,7 +2425,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(1))
         .unwrap();
     let gen = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap()
         .gen;
     store
@@ -2380,7 +2433,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         .unwrap();
     assert_eq!(
         store
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         gen
@@ -2388,6 +2441,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
     let conflict = store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "other".into())]),
@@ -2406,7 +2460,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         .unwrap();
     assert_eq!(
         reopened
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         gen
@@ -2435,6 +2489,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: "ns".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -2446,13 +2501,13 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
         )
         .unwrap();
     let after_overlay = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     drop(store);
     let mut reopened = Store::open(tmp.path()).unwrap();
     ChangelogIngest::run(&mut reopened, seed.clone(), seed.clone()).unwrap();
     let again = reopened
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(again.gen, after_overlay.gen);
     assert_eq!(again.props.get("note").map(String::as_str), Some("acked"));
@@ -2469,10 +2524,16 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
             ),
         )
         .unwrap();
-    assert!(reopened.joins().is_visible("incident", "inc-2"));
+    assert!(reopened
+        .joins("ns")
+        .unwrap()
+        .is_visible("incident", "inc-2"));
     drop(reopened);
     let mut after_crash = Store::open(tmp.path()).unwrap();
-    assert!(!after_crash.joins().is_visible("incident", "inc-2"));
+    assert!(!after_crash
+        .joins("ns")
+        .unwrap()
+        .is_visible("incident", "inc-2"));
     let mut stream = StreamIngest::new(8).unwrap();
     stream
         .push(
@@ -2488,7 +2549,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
     stream.flush(&mut after_crash).unwrap();
     assert_eq!(
         after_crash
-            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-2", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("name")
@@ -2507,7 +2568,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
         ))
         .unwrap();
     assert!(!after_crash
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap()
         .props
         .contains_key("note"));
@@ -2516,7 +2577,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
     let rebuilt = Store::open(tmp.path()).unwrap();
     assert_eq!(
         rebuilt
-            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .load("ns", "incident", "inc-2", &PropertyAcl::allow_all())
             .unwrap()
             .key,
         "inc-2"
@@ -2530,4 +2591,78 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
             "unexpected progress file {name}"
         );
     }
+}
+
+#[test]
+fn public_api_keeps_identical_keys_in_separate_namespaces() {
+    let tmp = TempLog::new("namespace-public");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let alpha = rec("Customer", "c1", false, &[("region", "alpha")]);
+    let mut beta = rec("Customer", "c1", false, &[("region", "beta")]);
+    beta.namespace = "beta".into();
+    BatchIngest::run(&mut store, vec![alpha, beta]).unwrap();
+    let allow = PropertyAcl::allow_all();
+    assert_eq!(
+        store
+            .load("ns", "Customer", "c1", &allow)
+            .unwrap()
+            .props
+            .get("region")
+            .map(String::as_str),
+        Some("alpha")
+    );
+    assert_eq!(
+        store
+            .load("beta", "Customer", "c1", &allow)
+            .unwrap()
+            .props
+            .get("region")
+            .map(String::as_str),
+        Some("beta")
+    );
+    let oss = ObjectSet::new(LocalCompute);
+    let mut alpha_req = fixture_request();
+    alpha_req.root_kind = "Customer".into();
+    alpha_req.hops.clear();
+    alpha_req.sum_kind = "Customer".into();
+    alpha_req.sum_property = "region".into();
+    alpha_req.object_bound = 8;
+    let alpha_eval = oss.evaluate(&store, &alpha_req).unwrap();
+    assert_eq!(alpha_eval.objects.len(), 1);
+    assert_eq!(
+        alpha_eval.objects[0]
+            .props
+            .get("region")
+            .map(String::as_str),
+        Some("alpha")
+    );
+    let mut beta_req = alpha_req.clone();
+    beta_req.namespace = "beta".into();
+    let beta_eval = oss.evaluate(&store, &beta_req).unwrap();
+    assert_eq!(beta_eval.objects.len(), 1);
+    assert_eq!(
+        beta_eval.objects[0].props.get("region").map(String::as_str),
+        Some("beta")
+    );
+    drop(store);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        rebuilt
+            .load("ns", "Customer", "c1", &allow)
+            .unwrap()
+            .props
+            .get("region")
+            .map(String::as_str),
+        Some("alpha")
+    );
+    assert_eq!(
+        rebuilt
+            .load("beta", "Customer", "c1", &allow)
+            .unwrap()
+            .props
+            .get("region")
+            .map(String::as_str),
+        Some("beta")
+    );
 }

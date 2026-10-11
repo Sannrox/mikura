@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -36,6 +37,7 @@ fn fixture() -> Vec<ObjectRecord> {
 
 fn eval_req() -> WireEvaluate {
     WireEvaluate {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![
             WireHop {
@@ -170,6 +172,7 @@ fn serve_while_stops_without_flushing_stream() {
     });
     assert!(pushed.ok, "{pushed:?}");
     let live = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "incident".into(),
         key: "inc-uncommitted".into(),
         deny: Vec::new(),
@@ -188,7 +191,12 @@ fn serve_while_stops_without_flushing_stream() {
     handle.join().unwrap().unwrap();
     let store = Store::open(&log).unwrap();
     assert!(store
-        .load("incident", "inc-uncommitted", &PropertyAcl::allow_all())
+        .load(
+            "ns",
+            "incident",
+            "inc-uncommitted",
+            &PropertyAcl::allow_all()
+        )
         .is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -264,6 +272,7 @@ fn bearer_line_rejects_missing_or_wrong_token() {
         &serde_json::json!({
             "op": "evaluate",
             "request": {
+                "namespace": "ns",
                 "root_kind": "Customer",
                 "hops": [
                     {"far_kind": "Order", "join_property": "customer_id"},
@@ -286,6 +295,7 @@ fn bearer_line_rejects_missing_or_wrong_token() {
             "op": "evaluate",
             "token": "nope",
             "request": {
+                "namespace": "ns",
                 "root_kind": "Customer",
                 "hops": [
                     {"far_kind": "Order", "join_property": "customer_id"},
@@ -303,6 +313,7 @@ fn bearer_line_rejects_missing_or_wrong_token() {
             "op": "evaluate",
             "token": "secret",
             "request": {
+                "namespace": "ns",
                 "root_kind": "Customer",
                 "hops": [
                     {"far_kind": "Order", "join_property": "customer_id"},
@@ -326,15 +337,15 @@ fn evaluate_unknown_predicate_op_fails_closed() {
     let ingest = host.handle(HostRequest::IngestBatch { records: fixture() });
     assert!(ingest.ok, "{ingest:?}");
     let union = host.handle_line(
-        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","predicate":{"op":"union","args":[]},"object_bound":8}}"#,
+        r#"{"op":"evaluate","request":{"namespace":"ns","root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","predicate":{"op":"union","args":[]},"object_bound":8}}"#,
     );
     assert!(!union.ok, "{union:?}");
     let extra = host.handle_line(
-        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","page_token":"x","object_bound":8}}"#,
+        r#"{"op":"evaluate","request":{"namespace":"ns","root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","page_token":"x","object_bound":8}}"#,
     );
     assert!(!extra.ok, "{extra:?}");
     let bad_cursor = host.handle_line(
-        r#"{"op":"evaluate","request":{"root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","sort":{"property":"region"},"page_size":1,"cursor":"x","object_bound":8}}"#,
+        r#"{"op":"evaluate","request":{"namespace":"ns","root_kind":"Customer","hops":[],"sum_kind":"Customer","sum_property":"region","sort":{"property":"region"},"page_size":1,"cursor":"x","object_bound":8}}"#,
     );
     assert!(!bad_cursor.ok, "{bad_cursor:?}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -357,6 +368,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "Customer".into(),
                 hops: vec![
                     Hop {
@@ -477,6 +489,7 @@ fn loopback_tcp_roundtrip() {
     let line = serde_json::to_string(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "Customer",
             "hops": [
                 {"far_kind": "Order", "join_property": "customer_id"},
@@ -683,6 +696,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     let mut host = Host::open(&log, 8).unwrap();
     host.handle(HostRequest::IngestBatch { records: fixture() });
     let omitted = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Shipment".into(),
         key: "s1".into(),
         deny: Vec::new(),
@@ -691,6 +705,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     assert!(omitted.ok, "{omitted:?}");
     assert_eq!(omitted.load.expect("load payload").action_id, None);
     let written = host.handle(HostRequest::ApplyAction {
+        namespace: "ns".into(),
         id: "act-s2".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
@@ -706,6 +721,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     });
     assert!(written.ok, "{written:?}");
     let loaded = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
         deny: Vec::new(),
@@ -716,6 +732,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     assert_eq!(loaded.action_id.as_deref(), Some("act-s2"));
     assert_eq!(loaded.props.get("amount").map(String::as_str), Some("5"));
     let replay = host.handle(HostRequest::ApplyAction {
+        namespace: "ns".into(),
         id: "act-s2".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
@@ -731,6 +748,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     });
     assert!(replay.ok, "{replay:?}");
     let replayed = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
         deny: Vec::new(),
@@ -738,6 +756,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
     });
     assert_eq!(replayed.load.expect("load payload").gen, loaded.gen);
     let conflict = host.handle(HostRequest::ApplyAction {
+        namespace: "ns".into(),
         id: "act-s2".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
@@ -761,6 +780,7 @@ fn apply_action_stores_provenance_and_empty_id_fails_closed() {
         "{conflict:?}"
     );
     let missing = host.handle(HostRequest::ApplyAction {
+        namespace: "ns".into(),
         id: String::new(),
         kind: "Shipment".into(),
         key: "s3".into(),
@@ -799,6 +819,7 @@ fn load_matches_in_process_and_omits_denied() {
     let mut host = Host::open(&log, 8).unwrap();
     host.handle(HostRequest::IngestBatch { records: fixture() });
     let hosted = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Customer".into(),
         key: "c1".into(),
         deny: Vec::new(),
@@ -810,10 +831,11 @@ fn load_matches_in_process_and_omits_denied() {
     assert_eq!(
         loaded,
         store
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap()
     );
     let omitted = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Customer".into(),
         key: "c1".into(),
         deny: vec![WireDeny {
@@ -851,6 +873,7 @@ fn load_matches_in_process_and_omits_denied() {
         "{denied_eval:?}"
     );
     let missing = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Customer".into(),
         key: "nope".into(),
         deny: Vec::new(),
@@ -882,6 +905,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         ],
     });
     let hidden = host.handle(HostRequest::Hide {
+        namespace: "ns".into(),
         kind: "incident".into(),
         key: "inc-1".into(),
         deny: Vec::new(),
@@ -889,6 +913,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
     });
     assert!(hidden.ok, "{hidden:?}");
     let loaded = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "incident".into(),
         key: "inc-1".into(),
         deny: Vec::new(),
@@ -903,6 +928,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
     );
     let listed = host.handle(HostRequest::Evaluate {
         request: WireEvaluate {
+            namespace: "ns".into(),
             root_kind: "component".into(),
             hops: Vec::new(),
             sum_kind: "component".into(),
@@ -926,6 +952,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
     assert_eq!(listed.objects[0].key, "svc-api");
     let hopped = host.handle(HostRequest::Evaluate {
         request: WireEvaluate {
+            namespace: "ns".into(),
             root_kind: "incident".into(),
             hops: vec![WireHop {
                 far_kind: "component".into(),
@@ -950,6 +977,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
     assert_eq!(hopped.two_hop_count, 0);
     assert!(hopped.objects.is_empty());
     let unknown = host.handle(HostRequest::Hide {
+        namespace: "ns".into(),
         kind: "incident".into(),
         key: "nope".into(),
         deny: Vec::new(),
@@ -965,6 +993,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         "{unknown:?}"
     );
     let denied = host.handle(HostRequest::Hide {
+        namespace: "ns".into(),
         kind: "component".into(),
         key: "svc-api".into(),
         deny: vec![WireDeny {
@@ -978,7 +1007,8 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         denied.error.as_deref().unwrap_or("").contains("Denied"),
         "{denied:?}"
     );
-    let unknown_v = host.handle_line(r#"{"v":2,"op":"hide","kind":"incident","key":"inc-1"}"#);
+    let unknown_v =
+        host.handle_line(r#"{"v":2,"op":"hide","namespace":"ns","kind":"incident","key":"inc-1"}"#);
     assert!(!unknown_v.ok, "{unknown_v:?}");
     assert!(
         unknown_v.error.as_deref().unwrap_or("").contains("wire v"),
@@ -999,6 +1029,7 @@ fn health_reports_ready_and_counts_without_slo_gates() {
     assert_eq!(health.rejected, 0);
     host.handle(HostRequest::IngestBatch { records: fixture() });
     let missing = host.handle(HostRequest::Load {
+        namespace: "ns".into(),
         kind: "Customer".into(),
         key: "nope".into(),
         deny: Vec::new(),

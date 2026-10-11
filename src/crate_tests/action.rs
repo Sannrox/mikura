@@ -9,6 +9,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-s2".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -21,13 +22,14 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
         )
         .unwrap();
     let live = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(live.action_id.as_deref(), Some("act-s2"));
     for i in 0..8 {
         store
             .apply_action(
                 Action {
+                    namespace: NS.into(),
                     id: format!("act-s2-{i}"),
                     kind: "Shipment".into(),
                     key: "s2".into(),
@@ -42,7 +44,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     }
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .action_id
             .as_deref(),
@@ -50,7 +52,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     );
     assert_eq!(
         store
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load(NS, "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap()
             .action_id,
         None
@@ -58,6 +60,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     let missing = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: String::new(),
                 kind: "Shipment".into(),
                 key: "s3".into(),
@@ -78,19 +81,19 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     store.append(hidden_action).unwrap();
     assert_eq!(
         store
-            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .load(NS, "Customer", "c0", &PropertyAcl::allow_all())
             .unwrap()
             .action_id
             .as_deref(),
         Some("act-hide")
     );
-    assert!(!store.joins().is_visible("Customer", "c0"));
+    assert!(!store.joins(NS).unwrap().is_visible("Customer", "c0"));
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
     assert_eq!(
         reopened
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .action_id
             .as_deref(),
@@ -98,7 +101,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     );
     assert_eq!(
         reopened
-            .load("Customer", "c0", &PropertyAcl::allow_all())
+            .load(NS, "Customer", "c0", &PropertyAcl::allow_all())
             .unwrap()
             .action_id
             .as_deref(),
@@ -114,7 +117,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     let replayed = Store::open(&log).unwrap();
     assert_eq!(
         replayed
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .action_id
             .as_deref(),
@@ -122,7 +125,7 @@ fn action_id_round_trips_and_empty_id_fails_closed() {
     );
     assert_eq!(
         replayed
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load(NS, "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap()
             .action_id,
         None
@@ -143,6 +146,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, fixture());
     let first = Action {
+        namespace: NS.into(),
         id: "act-inc-1-note".into(),
         kind: "Shipment".into(),
         key: "s2".into(),
@@ -150,14 +154,14 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     };
     store.apply_action(first.clone(), None).unwrap();
     let committed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(committed.action_id.as_deref(), Some("act-inc-1-note"));
     assert_eq!(committed.gen, 1);
     let fsync = store.log_fsync_count();
     store.apply_action(first.clone(), Some(0)).unwrap();
     let replayed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(replayed.gen, committed.gen);
     assert_eq!(replayed.action_id.as_deref(), Some("act-inc-1-note"));
@@ -167,6 +171,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let body_conflict = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-note".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -178,7 +183,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     assert!(body_conflict.contains("body conflict"), "{body_conflict}");
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -187,6 +192,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let other_identity = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-note".into(),
                 kind: "Shipment".into(),
                 key: "s1".into(),
@@ -203,6 +209,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-s2-later".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -212,14 +219,14 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
         )
         .unwrap();
     let later = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(later.action_id.as_deref(), Some("act-s2-later"));
     assert_eq!(later.gen, committed.gen + 1);
     let after_later = store.log_fsync_count();
     store.apply_action(first.clone(), None).unwrap();
     let after_first_replay = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(after_first_replay.gen, later.gen);
     assert_eq!(
@@ -231,6 +238,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     let stale = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-s2-stale".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -242,7 +250,7 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     assert!(stale.contains("stale generation"), "{stale}");
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         later.gen
@@ -251,11 +259,11 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     drop(store);
     let mut reopened = Store::open(&log).unwrap();
     let before = reopened
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     reopened.apply_action(first.clone(), None).unwrap();
     let after_reopen = reopened
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(after_reopen.gen, before.gen);
     assert_eq!(after_reopen.action_id.as_deref(), Some("act-s2-later"));
@@ -264,12 +272,12 @@ fn apply_action_replays_matching_id_and_fails_closed_on_conflict() {
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let mut rebuilt = Store::open(&log).unwrap();
     let before_rebuild = rebuilt
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     rebuilt.apply_action(first, None).unwrap();
     assert_eq!(
         rebuilt
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         before_rebuild.gen
@@ -291,14 +299,14 @@ fn ingest_append_replays_matching_action_id_and_fails_closed_on_remap() {
     first.action_id = Some("act-ingest-1".into());
     store.append(first.clone()).unwrap();
     let committed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(committed.action_id.as_deref(), Some("act-ingest-1"));
     let pages = store.committed_pages();
 
     store.append_uncommitted(first.clone()).unwrap();
     let replayed = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(replayed.gen, committed.gen);
     assert_eq!(replayed.props.get("amount").map(String::as_str), Some("5"));
@@ -314,7 +322,7 @@ fn ingest_append_replays_matching_action_id_and_fails_closed_on_remap() {
     let remap = store.append_uncommitted(remapped).unwrap_err();
     assert!(remap.contains("already committed"), "{remap}");
     assert!(store
-        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
 
     let mut conflict = rec(
@@ -328,17 +336,17 @@ fn ingest_append_replays_matching_action_id_and_fails_closed_on_remap() {
     assert!(body.contains("body conflict"), "{body}");
     assert_eq!(
         store
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
     );
 
     store
-        .hide("Shipment", "s2", &PropertyAcl::allow_all())
+        .hide(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     let hidden = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
     assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
@@ -366,7 +374,7 @@ fn ingest_append_replays_matching_action_id_and_fails_closed_on_remap() {
     rebuilt.append_uncommitted(first).unwrap();
     assert_eq!(
         rebuilt
-            .load("Shipment", "s2", &PropertyAcl::allow_all())
+            .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         hidden.gen
@@ -382,6 +390,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -401,7 +410,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
     source.action_id = Some("act-src-1".into());
     store.append(source.clone()).unwrap();
     let merged = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(merged.props.get("note").map(String::as_str), Some("acked"));
     assert_eq!(merged.action_id.as_deref(), Some("act-src-1"));
@@ -409,7 +418,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
     store.append_uncommitted(source).unwrap();
     assert_eq!(
         store
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         merged_gen
@@ -429,7 +438,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
                 sums: Vec::new(),
                 types: vec![("opened_at".into(), PropertyType::Timestamp)],
             }
-            .to_record()
+            .to_record("ns")
             .unwrap(),
         )
         .unwrap();
@@ -446,7 +455,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
     typed.action_id = Some("act-typed-1".into());
     store.append(typed.clone()).unwrap();
     let canonical = store
-        .load("incident", "inc-2", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-2", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         canonical.props.get("opened_at").map(String::as_str),
@@ -456,7 +465,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
     store.append_uncommitted(typed).unwrap();
     assert_eq!(
         store
-            .load("incident", "inc-2", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-2", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         typed_gen
@@ -482,7 +491,7 @@ fn ingest_hide_copies_action_id_without_claiming_a_new_identity() {
     store.append_uncommitted(hide).unwrap();
     store.commit().unwrap();
     let hidden = store
-        .load("Shipment", "s2", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s2", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
     assert_eq!(hidden.action_id.as_deref(), Some("act-ingest-1"));
@@ -496,13 +505,15 @@ fn ingest_hide_copies_action_id_without_claiming_a_new_identity() {
     let remap = store.append_uncommitted(stolen).unwrap_err();
     assert!(remap.contains("already committed"), "{remap}");
     assert!(store
-        .load("Shipment", "s3", &PropertyAcl::allow_all())
+        .load(NS, "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn stored(store: &Store, kind: &str, key: &str) -> ObjectRecord {
-    store.load(kind, key, &PropertyAcl::allow_all()).unwrap()
+    store
+        .load(NS, kind, key, &PropertyAcl::allow_all())
+        .unwrap()
 }
 
 #[test]

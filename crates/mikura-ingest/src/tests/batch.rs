@@ -16,6 +16,7 @@ fn batch_ingest_evaluate_rebuild_matches_live() {
     store
         .apply_action(
             Action {
+                namespace: "ns".into(),
                 id: "act-s2".into(),
                 kind: "Shipment".into(),
                 key: "s2".into(),
@@ -80,6 +81,7 @@ fn batch_ingest_group_commits_fewer_fsyncs_than_one_per_record() {
 
     let oss = ObjectSet::new(LocalCompute);
     let req = EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Item".into(),
         hops: vec![],
         sum_kind: "Item".into(),

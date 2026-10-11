@@ -5,7 +5,7 @@ use crate::BatchIngest;
 
 /// Merge a source snapshot and admitted edits for one write cycle.
 ///
-/// Identity is `(kind, key)`. Within each input, the last record for an
+/// Identity is `(namespace, kind, key)`. Within each input, the last record for an
 /// identity wins. Edits then replace source for the same identity, including
 /// `hidden`: a hidden source stays hidden unless an edit unhides it. The
 /// returned list is not authority; only the object log after append is.

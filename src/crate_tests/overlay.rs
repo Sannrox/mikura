@@ -10,6 +10,7 @@ fn overlay_survives_refresh_and_stale_gen_fails() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -21,13 +22,14 @@ fn overlay_survives_refresh_and_stale_gen_fails() {
         )
         .unwrap();
     let edited = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(edited.props.get("note").map(String::as_str), Some("acked"));
     assert_eq!(edited.action_id.as_deref(), Some("act-inc-1-note"));
     let stale = store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "again".into())]),
@@ -48,7 +50,7 @@ fn overlay_survives_refresh_and_stale_gen_fails() {
         ))
         .unwrap();
     let refreshed = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         refreshed.props.get("note").map(String::as_str),
@@ -69,19 +71,19 @@ fn overlay_survives_refresh_and_stale_gen_fails() {
         ))
         .unwrap();
     let recreated = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!recreated.hidden);
     assert!(!recreated.props.contains_key("note"));
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
-    assert!(reopened.overlay("incident", "inc-1").unwrap().is_none());
+    assert!(reopened.overlay(NS, "incident", "inc-1").unwrap().is_none());
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
     assert!(!replayed
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap()
         .props
         .contains_key("note"));
@@ -96,6 +98,7 @@ fn apply_overlay_logs_the_overlay_and_a_rematerialized_instance() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -107,7 +110,7 @@ fn apply_overlay_logs_the_overlay_and_a_rematerialized_instance() {
         )
         .unwrap();
     let live = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(live.props.get("note").map(String::as_str), Some("acked"));
     assert_eq!(live.action_id.as_deref(), Some("act-inc-1-note"));
@@ -138,7 +141,7 @@ fn apply_overlay_logs_the_overlay_and_a_rematerialized_instance() {
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let rebuilt = Store::open(&log).unwrap();
     let replayed = rebuilt
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(replayed, live);
     let _ = std::fs::remove_dir_all(&dir);
@@ -150,6 +153,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, product_loop_seed());
     let patch = OverlayPatch {
+        namespace: NS.into(),
         kind: "incident".into(),
         key: "inc-1".into(),
         props: HashMap::from([("note".into(), "acked".into())]),
@@ -160,14 +164,14 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(1))
         .unwrap();
     let committed = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     let fsync = store.log_fsync_count();
     store
         .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(0))
         .unwrap();
     let replayed = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(replayed.gen, committed.gen);
     assert_eq!(
@@ -178,6 +182,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
     let conflict = store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "other".into())]),
@@ -192,6 +197,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
     let stolen = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-note".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -208,7 +214,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         .unwrap();
     assert_eq!(
         reopened
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .gen,
         committed.gen
@@ -224,6 +230,7 @@ fn apply_action_replaces_without_merging_overlay() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "acked".into())]),
@@ -237,6 +244,7 @@ fn apply_action_replaces_without_merging_overlay() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-rename".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -249,7 +257,7 @@ fn apply_action_replaces_without_merging_overlay() {
         )
         .unwrap();
     let replaced = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!replaced.props.contains_key("note"));
     assert_eq!(

@@ -175,6 +175,9 @@ fn merge_append_reopen_matches_live_identity() {
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
     assert_same_identity(&store, &reopened, &merged);
-    assert!(!reopened.joins().is_visible("Shipment", "s_edit_only"));
+    assert!(!reopened
+        .joins("ns")
+        .unwrap()
+        .is_visible("Shipment", "s_edit_only"));
     let _ = std::fs::remove_dir_all(&dir);
 }

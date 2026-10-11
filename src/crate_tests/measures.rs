@@ -6,25 +6,30 @@ fn declared_sum_reads_parent_rollups() {
     let (dir, log) = temp_log("measure-rollup");
     let mut store = Store::create(&log).unwrap();
     store
-        .append(shipment_sum_schema().to_record().unwrap())
+        .append(shipment_sum_schema().to_record("ns").unwrap())
         .unwrap();
     append_all(&mut store, fixture());
-    assert!(store.joins().has_declared_sum("Shipment", "amount"));
+    assert!(store
+        .joins(NS)
+        .unwrap()
+        .has_declared_sum("Shipment", "amount"));
     assert_eq!(
         store
-            .joins()
+            .joins(NS)
+            .unwrap()
             .last_hop_measure("Shipment", "order_id", "amount", "o1"),
         Some((1, 10))
     );
     assert!(store
-        .joins()
+        .joins(NS)
+        .unwrap()
         .last_hop_measure("Shipment", "order_id", "amount", "o0")
         .is_none());
     let oss = ObjectSet::new(LocalCompute);
     let live = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(live.two_hop_count, 1);
     assert_eq!(live.sum_amount, 10);
-    assert!(!store.joins().is_visible("Shipment", "s0"));
+    assert!(!store.joins(NS).unwrap().is_visible("Shipment", "s0"));
 
     store
         .append(rec(
@@ -36,7 +41,8 @@ fn declared_sum_reads_parent_rollups() {
         .unwrap();
     assert_eq!(
         store
-            .joins()
+            .joins(NS)
+            .unwrap()
             .last_hop_measure("Shipment", "order_id", "amount", "o1"),
         Some((2, 15))
     );
@@ -52,7 +58,10 @@ fn declared_sum_reads_parent_rollups() {
     drop(store);
 
     let reopened = Store::open(&log).unwrap();
-    assert!(reopened.joins().has_declared_sum("Shipment", "amount"));
+    assert!(reopened
+        .joins(NS)
+        .unwrap()
+        .has_declared_sum("Shipment", "amount"));
     assert_eq!(oss.evaluate(&reopened, &fixture_request()).unwrap(), after);
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
@@ -66,9 +75,13 @@ fn undeclared_sum_still_leaf_walks() {
     let (dir, log) = temp_log("measure-undeclared");
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, fixture());
-    assert!(!store.joins().has_declared_sum("Shipment", "amount"));
+    assert!(!store
+        .joins(NS)
+        .unwrap()
+        .has_declared_sum("Shipment", "amount"));
     assert!(store
-        .joins()
+        .joins(NS)
+        .unwrap()
         .last_hop_measure("Shipment", "order_id", "amount", "o1")
         .is_none());
     let response = ObjectSet::new(LocalCompute)
@@ -84,12 +97,13 @@ fn hide_and_overlay_update_parent_rollups() {
     let (dir, log) = temp_log("measure-hide-overlay");
     let mut store = Store::create(&log).unwrap();
     store
-        .append(shipment_sum_schema().to_record().unwrap())
+        .append(shipment_sum_schema().to_record("ns").unwrap())
         .unwrap();
     append_all(&mut store, fixture());
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "Shipment".into(),
                 key: "s1".into(),
                 props: HashMap::from([("amount".into(), "12".into())]),
@@ -102,7 +116,8 @@ fn hide_and_overlay_update_parent_rollups() {
         .unwrap();
     assert_eq!(
         store
-            .joins()
+            .joins(NS)
+            .unwrap()
             .last_hop_measure("Shipment", "order_id", "amount", "o1"),
         Some((1, 12))
     );
@@ -114,7 +129,8 @@ fn hide_and_overlay_update_parent_rollups() {
 
     store.append(rec("Shipment", "s1", true, &[])).unwrap();
     assert!(store
-        .joins()
+        .joins(NS)
+        .unwrap()
         .last_hop_measure("Shipment", "order_id", "amount", "o1")
         .is_none());
     assert_eq!(
@@ -132,7 +148,8 @@ fn hide_and_overlay_update_parent_rollups() {
         .unwrap();
     store.append(rec("Order", "o1", true, &[])).unwrap();
     assert!(store
-        .joins()
+        .joins(NS)
+        .unwrap()
         .last_hop_measure("Shipment", "order_id", "amount", "o1")
         .is_none());
     assert_eq!(
@@ -146,7 +163,8 @@ fn hide_and_overlay_update_parent_rollups() {
         .unwrap();
     assert_eq!(
         store
-            .joins()
+            .joins(NS)
+            .unwrap()
             .last_hop_measure("Shipment", "order_id", "amount", "o1"),
         Some((1, 10))
     );

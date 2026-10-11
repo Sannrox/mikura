@@ -105,6 +105,7 @@ pub enum WirePredicate {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireEvaluate {
+    pub namespace: String,
     pub root_kind: String,
     pub hops: Vec<WireHop>,
     pub sum_kind: String,
@@ -148,6 +149,7 @@ pub enum HostRequest {
     IngestStreamFlush,
     ApplyAction {
         id: String,
+        namespace: String,
         kind: String,
         key: String,
         #[serde(default)]
@@ -161,6 +163,7 @@ pub enum HostRequest {
     },
     ApplyOverlay {
         id: String,
+        namespace: String,
         kind: String,
         key: String,
         #[serde(default)]
@@ -175,6 +178,7 @@ pub enum HostRequest {
         restriction: Option<WireRestriction>,
     },
     Hide {
+        namespace: String,
         kind: String,
         key: String,
         #[serde(default)]
@@ -186,6 +190,7 @@ pub enum HostRequest {
         request: WireEvaluate,
     },
     Load {
+        namespace: String,
         kind: String,
         key: String,
         #[serde(default)]
@@ -355,6 +360,7 @@ impl Host {
             HostRequest::IngestStreamFlush => ack(self.stream.flush(&mut self.store)),
             HostRequest::ApplyAction {
                 id,
+                namespace,
                 kind,
                 key,
                 props,
@@ -367,6 +373,7 @@ impl Host {
                     self.store.apply_action_in_view(
                         Action {
                             id,
+                            namespace,
                             kind,
                             key,
                             props,
@@ -378,6 +385,7 @@ impl Host {
             }
             HostRequest::ApplyOverlay {
                 id,
+                namespace,
                 kind,
                 key,
                 props,
@@ -390,6 +398,7 @@ impl Host {
                 ack(acl.and_then(|acl| {
                     self.store.apply_overlay_in_view(
                         OverlayPatch {
+                            namespace,
                             kind,
                             key,
                             props,
@@ -403,11 +412,19 @@ impl Host {
                 }))
             }
             HostRequest::Hide {
+                namespace,
                 kind,
                 key,
                 deny,
                 restriction,
-            } => ack(hide_identity(&mut self.store, kind, key, deny, restriction)),
+            } => ack(hide_identity(
+                &mut self.store,
+                namespace,
+                kind,
+                key,
+                deny,
+                restriction,
+            )),
             HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
                 Ok(response) => HostResponse {
                     v: WIRE_V,
@@ -425,11 +442,12 @@ impl Host {
                 Err(error) => fail(error),
             },
             HostRequest::Load {
+                namespace,
                 kind,
                 key,
                 deny,
                 restriction,
-            } => match load_record(&self.store, kind, key, deny, restriction) {
+            } => match load_record(&self.store, namespace, kind, key, deny, restriction) {
                 Ok(record) => HostResponse {
                     v: WIRE_V,
                     ok: true,
@@ -805,6 +823,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         })
         .collect::<Result<Vec<_>, String>>()?;
     let request = EvaluateRequest {
+        namespace: request.namespace,
         root_kind: request.root_kind,
         hops,
         sum_kind: request.sum_kind,
@@ -831,24 +850,26 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
 
 fn load_record(
     store: &Store,
+    namespace: String,
     kind: String,
     key: String,
     deny: Vec<WireDeny>,
     restriction: Option<WireRestriction>,
 ) -> Result<ObjectRecord, String> {
     let acl = restriction_from_wire(&deny, restriction.as_ref(), "load")?;
-    store.load(&kind, &key, &acl)
+    store.load(&namespace, &kind, &key, &acl)
 }
 
 fn hide_identity(
     store: &mut Store,
+    namespace: String,
     kind: String,
     key: String,
     deny: Vec<WireDeny>,
     restriction: Option<WireRestriction>,
 ) -> Result<(), String> {
     let acl = restriction_from_wire(&deny, restriction.as_ref(), "hide")?;
-    store.hide(&kind, &key, &acl)
+    store.hide(&namespace, &kind, &key, &acl)
 }
 
 #[cfg(test)]

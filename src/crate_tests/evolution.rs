@@ -18,7 +18,7 @@ fn incident_schema() -> SchemaDescriptor {
 
 fn seed_incident(store: &mut Store) {
     store
-        .append(incident_schema().to_record().unwrap())
+        .append(incident_schema().to_record("ns").unwrap())
         .unwrap();
     store
         .append(rec(
@@ -54,10 +54,10 @@ fn compatible_replacements_preserve_load_and_rebuild() {
         far_kind: "component".into(),
         outgoing: false,
     });
-    store.append(evolved.to_record().unwrap()).unwrap();
+    store.append(evolved.to_record("ns").unwrap()).unwrap();
 
     let historical = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         historical.props.get("note").map(String::as_str),
@@ -78,7 +78,7 @@ fn compatible_replacements_preserve_load_and_rebuild() {
     );
 
     evolved.required.retain(|name| name != "priority");
-    store.append(evolved.to_record().unwrap()).unwrap();
+    store.append(evolved.to_record("ns").unwrap()).unwrap();
     store
         .append(rec(
             "incident",
@@ -94,9 +94,9 @@ fn compatible_replacements_preserve_load_and_rebuild() {
 
     let mut shrunk = evolved.clone();
     shrunk.properties.retain(|name| name != "note");
-    store.append(shrunk.to_record().unwrap()).unwrap();
+    store.append(shrunk.to_record("ns").unwrap()).unwrap();
     let still_stored = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         still_stored.props.get("note").map(String::as_str),
@@ -119,12 +119,12 @@ fn compatible_replacements_preserve_load_and_rebuild() {
 
     let reopened = Store::open(&log).unwrap();
     assert_eq!(
-        reopened.schema("incident").unwrap().unwrap().properties,
+        reopened.schema(NS, "incident").unwrap().unwrap().properties,
         shrunk.properties
     );
     assert_eq!(
         reopened
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("note")
@@ -134,7 +134,7 @@ fn compatible_replacements_preserve_load_and_rebuild() {
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
-    assert_eq!(replayed.schema("incident").unwrap().unwrap(), shrunk);
+    assert_eq!(replayed.schema(NS, "incident").unwrap().unwrap(), shrunk);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -143,27 +143,34 @@ fn incompatible_replacements_leave_previous_state() {
     let (dir, log) = temp_log("schema-evolve-reject");
     let mut store = Store::create(&log).unwrap();
     let (component_schema, incident_schema) = product_loop_schemas();
-    store.append(component_schema.to_record().unwrap()).unwrap();
-    store.append(incident_schema.to_record().unwrap()).unwrap();
+    store
+        .append(component_schema.to_record("ns").unwrap())
+        .unwrap();
+    store
+        .append(incident_schema.to_record("ns").unwrap())
+        .unwrap();
     append_all(&mut store, product_loop_seed());
 
     let mut recast = incident_schema.clone();
     recast.types = vec![("name".into(), PropertyType::Integer)];
-    let recast_err = store.append(recast.to_record().unwrap()).unwrap_err();
+    let recast_err = store.append(recast.to_record("ns").unwrap()).unwrap_err();
     assert!(recast_err.contains("cannot recast name"), "{recast_err}");
 
     let mut retarget = incident_schema.clone();
     retarget.links[0].far_kind = "service".into();
-    let link_err = store.append(retarget.to_record().unwrap()).unwrap_err();
+    let link_err = store.append(retarget.to_record("ns").unwrap()).unwrap_err();
     assert!(
         link_err.contains("cannot retarget outgoing link affects"),
         "{link_err}"
     );
 
-    assert_eq!(store.schema("incident").unwrap().unwrap(), incident_schema);
+    assert_eq!(
+        store.schema(NS, "incident").unwrap().unwrap(),
+        incident_schema
+    );
     assert_eq!(
         store
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("name")
@@ -181,6 +188,7 @@ fn overlay_and_action_follow_current_descriptor() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "paged".into())]),
@@ -194,6 +202,7 @@ fn overlay_and_action_follow_current_descriptor() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-rename".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -209,11 +218,12 @@ fn overlay_and_action_follow_current_descriptor() {
 
     let mut shrunk = incident_schema();
     shrunk.properties.retain(|name| name != "note");
-    store.append(shrunk.to_record().unwrap()).unwrap();
+    store.append(shrunk.to_record("ns").unwrap()).unwrap();
 
     let overlay_err = store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "stale".into())]),
@@ -229,6 +239,7 @@ fn overlay_and_action_follow_current_descriptor() {
     let action_err = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-note-keep".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -246,6 +257,7 @@ fn overlay_and_action_follow_current_descriptor() {
     let replay_err = store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-rename".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -262,6 +274,7 @@ fn overlay_and_action_follow_current_descriptor() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-inc-1-current".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -274,7 +287,7 @@ fn overlay_and_action_follow_current_descriptor() {
         )
         .unwrap();
     let current = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!current.props.contains_key("note"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -285,18 +298,18 @@ fn hide_schema_then_restore_previous_body() {
     let (dir, log) = temp_log("schema-evolve-hide");
     let mut store = Store::create(&log).unwrap();
     seed_incident(&mut store);
-    let mut hidden = incident_schema().to_record().unwrap();
+    let mut hidden = incident_schema().to_record("ns").unwrap();
     hidden.hidden = true;
     store.append(hidden).unwrap();
-    assert!(store.schema("incident").unwrap().is_none());
+    assert!(store.schema(NS, "incident").unwrap().is_none());
     store
         .append(rec("incident", "inc-2", false, &[("alias", "unvalidated")]))
         .unwrap();
     store
-        .append(incident_schema().to_record().unwrap())
+        .append(incident_schema().to_record("ns").unwrap())
         .unwrap();
     assert_eq!(
-        store.schema("incident").unwrap().unwrap(),
+        store.schema(NS, "incident").unwrap().unwrap(),
         incident_schema()
     );
     let extra = store

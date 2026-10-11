@@ -11,7 +11,7 @@ use crate::codec::{read_str, take, write_str};
 use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
-const MAGIC: &[u8; 8] = b"MIKURAV1";
+const MAGIC: &[u8; 8] = b"MIKURAV2";
 const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
@@ -291,7 +291,10 @@ fn read_committed(file: &mut File) -> Result<u32, String> {
 
 fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
     verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
-    if &superblock[CRC_LEN..CRC_LEN + 8] != MAGIC {
+    let magic = &superblock[CRC_LEN..CRC_LEN + 8];
+    if magic == b"MIKURAV1" {
+        return Err("bad magic: MIKURAV1 logs are not reopened here".into());
+    } else if magic != MAGIC {
         return Err("bad magic".into());
     }
     Ok(u32::from_le_bytes(
@@ -329,9 +332,13 @@ fn framed_record(body: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
+    if record.namespace.is_empty() {
+        return Err("namespace required".into());
+    }
     let mut body = Vec::new();
     body.extend_from_slice(&record.gen.to_le_bytes());
     body.push(u8::from(record.hidden));
+    write_str(&mut body, &record.namespace)?;
     write_str(&mut body, &record.kind)?;
     write_str(&mut body, &record.key)?;
     let nprops = u16::try_from(record.props.len()).map_err(|_| "too many props".to_string())?;
@@ -342,10 +349,9 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, &key)?;
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
-    // MIKURAV1 body discriminator: one optional trailing string, present
+    // MIKURAV2 body discriminator: one optional trailing string, present
     // only when the generation has an Action id. Absent and empty both
-    // decode as None. A second field requires a superblock magic bump
-    // (ADR 0006).
+    // decode as None.
     if let Some(action_id) = record.action_id.as_deref().filter(|id| !id.is_empty()) {
         write_str(&mut body, action_id)?;
     }
@@ -377,6 +383,10 @@ fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
     let mut cur = body;
     let gen = u64::from_le_bytes(take::<8>(&mut cur)?.try_into().unwrap());
     let hidden = take::<1>(&mut cur)?[0] != 0;
+    let namespace = read_str(&mut cur)?;
+    if namespace.is_empty() {
+        return Err("namespace required".into());
+    }
     let kind = read_str(&mut cur)?;
     let key = read_str(&mut cur)?;
     let nprops = u16::from_le_bytes(take::<2>(&mut cur)?.try_into().unwrap()) as usize;
@@ -401,6 +411,7 @@ fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
     };
     Ok(ObjectRecord {
         gen,
+        namespace,
         kind,
         key,
         hidden,
@@ -423,6 +434,7 @@ mod tests {
         writer
             .append_record(&ObjectRecord {
                 gen: 1,
+                namespace: "ns".into(),
                 kind: "Customer".into(),
                 key: "c1".into(),
                 hidden: false,
@@ -447,6 +459,7 @@ mod tests {
     fn wide_record(key: usize) -> ObjectRecord {
         ObjectRecord {
             gen: 1,
+            namespace: "ns".into(),
             kind: "Item".into(),
             key: format!("k{key:02}"),
             hidden: false,
@@ -525,11 +538,13 @@ mod tests {
         let mut body = Vec::new();
         body.extend_from_slice(&1u64.to_le_bytes());
         body.push(0);
+        write_str(&mut body, "ns").unwrap();
         write_str(&mut body, "Customer").unwrap();
         write_str(&mut body, "c1").unwrap();
         body.extend_from_slice(&0u16.to_le_bytes());
         let record = decode_body(&body).unwrap();
         assert_eq!(record.action_id, None);
+        assert_eq!(record.namespace, "ns");
         assert_eq!(record.kind, "Customer");
         assert_eq!(record.key, "c1");
     }
@@ -539,6 +554,7 @@ mod tests {
         let mut cur = body;
         let gen = u64::from_le_bytes(take::<8>(&mut cur)?.try_into().unwrap());
         let hidden = take::<1>(&mut cur)?[0] != 0;
+        let namespace = read_str(&mut cur)?;
         let kind = read_str(&mut cur)?;
         let key = read_str(&mut cur)?;
         let nprops = u16::from_le_bytes(take::<2>(&mut cur)?.try_into().unwrap()) as usize;
@@ -553,6 +569,7 @@ mod tests {
         }
         Ok(ObjectRecord {
             gen,
+            namespace,
             kind,
             key,
             hidden,
@@ -565,6 +582,7 @@ mod tests {
     fn none_action_id_omits_trailer_so_trailing_reject_readers_hold() {
         let none = ObjectRecord {
             gen: 1,
+            namespace: "ns".into(),
             kind: "Customer".into(),
             key: "c1".into(),
             hidden: false,
@@ -596,6 +614,7 @@ mod tests {
     fn second_trailing_body_field_fails_closed() {
         let body = encode_body(&ObjectRecord {
             gen: 1,
+            namespace: "ns".into(),
             kind: "Customer".into(),
             key: "c1".into(),
             hidden: false,
@@ -620,6 +639,7 @@ mod tests {
         writer
             .append_record(&ObjectRecord {
                 gen: 1,
+                namespace: "ns".into(),
                 kind: "Customer".into(),
                 key: "c1".into(),
                 hidden: false,
@@ -638,5 +658,50 @@ mod tests {
             "{err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mikurav1_superblock_fails_closed() {
+        let dir = std::env::temp_dir().join("mikura-log-v1-magic");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("objects.mikura");
+        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        writer
+            .append_record(&ObjectRecord {
+                gen: 1,
+                namespace: "ns".into(),
+                kind: "Customer".into(),
+                key: "c1".into(),
+                hidden: false,
+                action_id: None,
+                props: HashMap::new(),
+            })
+            .unwrap();
+        writer.flush().unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[CRC_LEN..CRC_LEN + 8].copy_from_slice(b"MIKURAV1");
+        let mut hasher = Crc::new();
+        hasher.update(&bytes[CRC_LEN..PAGE]);
+        bytes[..CRC_LEN].copy_from_slice(&hasher.finalize().to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        let err = read_records(&path).unwrap_err();
+        assert!(err.contains("magic"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_namespace_fails_closed() {
+        let err = encode_body(&ObjectRecord {
+            gen: 1,
+            namespace: String::new(),
+            kind: "Customer".into(),
+            key: "c1".into(),
+            hidden: false,
+            action_id: None,
+            props: HashMap::new(),
+        })
+        .unwrap_err();
+        assert!(err.contains("namespace"), "{err}");
     }
 }

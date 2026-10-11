@@ -80,6 +80,7 @@ pub(crate) fn decode_cursor(
 fn query_fingerprint(request: &EvaluateRequest) -> Vec<u8> {
     let mut out = Vec::new();
     write_acl(&mut out, &request.acl);
+    write_str(&mut out, &request.namespace);
     write_str(&mut out, &request.root_kind);
     out.extend_from_slice(&(request.hops.len() as u32).to_le_bytes());
     for hop in &request.hops {

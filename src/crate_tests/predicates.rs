@@ -95,16 +95,17 @@ fn proposed_fixture() -> Vec<ObjectRecord> {
 
 fn seed(store: &mut Store) {
     store
-        .append(component_schema().to_record().unwrap())
+        .append(component_schema().to_record("ns").unwrap())
         .unwrap();
     store
-        .append(incident_schema().to_record().unwrap())
+        .append(incident_schema().to_record("ns").unwrap())
         .unwrap();
     append_all(store, proposed_fixture());
 }
 
 fn list_incidents(predicate: Predicate, bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -175,6 +176,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     assert_eq!(keys(&negated), ["inc-2"]);
 
     let filter_then_hop = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -197,6 +199,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     assert_eq!(keys(&hopped), ["svc-api", "svc-batch"]);
 
     let hop_then_filter = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -227,6 +230,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     );
 
     let denied = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -255,6 +259,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     );
 
     let both = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -279,6 +284,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-2".into(),
                 props: [("open".into(), "true".into())].into(),
@@ -295,7 +301,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
     assert_eq!(keys(&after_overlay), ["inc-1", "inc-2", "inc-3"]);
 
     store
-        .hide("incident", "inc-3", &PropertyAcl::allow_all())
+        .hide(NS, "incident", "inc-3", &PropertyAcl::allow_all())
         .unwrap();
     let after_hide = oss
         .evaluate(&store, &list_incidents(Predicate::eq("open", "true"), 8))

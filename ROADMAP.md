@@ -95,6 +95,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M9 readiness | Qualitative product-loop and pilot drills pass. Numeric SLOs stay unresolved. Not a production-readiness claim ([#189](https://github.com/Sannrox/mikura/issues/189), [m9-readiness.md](docs/plans/m9-readiness.md)). |
 | M10 availability | One process remains the hosted form. Restore from the object log. No replica, quorum, or failover writer. [#191](https://github.com/Sannrox/mikura/issues/191) closed no-action ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](docs/decisions/0023-single-process-availability.md)). |
 | M10 capacity | One unpartitioned store. No partition key or ownership split. [#193](https://github.com/Sannrox/mikura/issues/193) closed no-action ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](docs/decisions/0024-unpartitioned-store.md)). |
+| store namespace | Required `namespace` on new logs (`MIKURAV2` / `MKJOIN05`). Missing or unknown fails closed. Identical `(kind, key)` in two namespaces stay isolated. Existing-log migration is [#251](https://github.com/Sannrox/mikura/issues/251) ([#234](https://github.com/Sannrox/mikura/issues/234), [ADR 0028](docs/decisions/0028-store-namespace.md)). |
 
 ## Next (this repository, in order)
 

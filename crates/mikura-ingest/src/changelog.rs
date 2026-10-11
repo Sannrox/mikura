@@ -5,7 +5,7 @@ use crate::BatchIngest;
 
 /// Diff two source snapshots into records to append.
 ///
-/// Identity is `(kind, key)`. Within each snapshot the last record for an
+/// Identity is `(namespace, kind, key)`. Within each snapshot the last record for an
 /// identity wins. New keys emit the current row; changed `props`, `hidden`,
 /// or `action_id` emit the current row; keys that disappear emit a hide of
 /// the last visible payload. Identical snapshots emit nothing. The list is
@@ -33,8 +33,9 @@ pub fn snapshot_changelog(
         }
     }
     records.sort_by(|left, right| {
-        left.kind
-            .cmp(&right.kind)
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.kind.cmp(&right.kind))
             .then_with(|| left.key.cmp(&right.key))
     });
     records

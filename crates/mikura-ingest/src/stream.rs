@@ -36,7 +36,7 @@ impl StreamIngest {
                 self.bound
             ));
         }
-        store.reserve_intern(intern_token_budget(&record));
+        store.reserve_intern(&record.namespace, intern_token_budget(&record));
         store.append_uncommitted(record)?;
         self.uncommitted += 1;
         Ok(())

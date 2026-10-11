@@ -95,7 +95,7 @@ fn growing_batch_commits_keep_delta_and_dual_read() {
     for i in 0..next {
         let want = i.to_string();
         let loaded = reopened
-            .load("Item", &format!("k{i}"), &PropertyAcl::allow_all())
+            .load(NS, "Item", &format!("k{i}"), &PropertyAcl::allow_all())
             .unwrap();
         assert_eq!(
             loaded.props.get("n").map(String::as_str),
@@ -110,7 +110,7 @@ fn growing_batch_commits_keep_delta_and_dual_read() {
     for i in 0..next {
         let want = i.to_string();
         let loaded = replayed
-            .load("Item", &format!("k{i}"), &PropertyAcl::allow_all())
+            .load(NS, "Item", &format!("k{i}"), &PropertyAcl::allow_all())
             .unwrap();
         assert_eq!(
             loaded.props.get("n").map(String::as_str),

@@ -38,52 +38,68 @@ impl Store {
         let mut body = Vec::new();
         body.extend_from_slice(JOIN_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
-        let n = u32::try_from(self.joins.intern.len())
-            .map_err(|_| "too many interned strings".to_string())?;
-        body.extend_from_slice(&n.to_le_bytes());
-        for value in &self.joins.intern {
-            write_str(&mut body, value)?;
-        }
-        let mut ids: Vec<_> = self.identity.keys().cloned().collect();
-        ids.sort();
-        let kn = u32::try_from(ids.len()).map_err(|_| "too many identities".to_string())?;
-        body.extend_from_slice(&kn.to_le_bytes());
-        for id in ids {
-            let meta = self
-                .identity
-                .get(&id)
-                .ok_or_else(|| "missing identity".to_string())?;
-            let kind_id = self
+        let mut namespaces: Vec<_> = self.joins.keys().cloned().collect();
+        namespaces.sort();
+        let ns_n =
+            u32::try_from(namespaces.len()).map_err(|_| "too many namespaces".to_string())?;
+        body.extend_from_slice(&ns_n.to_le_bytes());
+        for namespace in namespaces {
+            write_str(&mut body, &namespace)?;
+            let joins = self
                 .joins
-                .intern_existing(&id.0)
-                .ok_or_else(|| "missing intern kind".to_string())?;
-            let key_id = self
-                .joins
-                .intern_existing(&id.1)
-                .ok_or_else(|| "missing intern key".to_string())?;
-            body.extend_from_slice(&kind_id.to_le_bytes());
-            body.extend_from_slice(&key_id.to_le_bytes());
-            body.extend_from_slice(&meta.gen.to_le_bytes());
-            body.push(u8::from(meta.hidden));
-            let owned = if meta.hidden {
-                interned_prop_ids(&self.joins, self.hidden_props.get(&id))?
-            } else {
-                self.joins
-                    .owned
-                    .get(&(kind_id, key_id))
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            let cn = u32::try_from(owned.len()).map_err(|_| "too many properties".to_string())?;
-            body.extend_from_slice(&cn.to_le_bytes());
-            for (prop_id, value_id) in owned {
-                body.extend_from_slice(&prop_id.to_le_bytes());
-                body.extend_from_slice(&value_id.to_le_bytes());
+                .get(&namespace)
+                .ok_or_else(|| "missing namespace joins".to_string())?;
+            let n = u32::try_from(joins.intern.len())
+                .map_err(|_| "too many interned strings".to_string())?;
+            body.extend_from_slice(&n.to_le_bytes());
+            for value in &joins.intern {
+                write_str(&mut body, value)?;
             }
-            let action_intern = meta.action_id.unwrap_or(ACTION_NONE);
-            body.extend_from_slice(&action_intern.to_le_bytes());
+            let mut ids: Vec<_> = self
+                .identity
+                .keys()
+                .filter(|(ns, _, _)| ns == &namespace)
+                .cloned()
+                .collect();
+            ids.sort();
+            let kn = u32::try_from(ids.len()).map_err(|_| "too many identities".to_string())?;
+            body.extend_from_slice(&kn.to_le_bytes());
+            for id in ids {
+                let meta = self
+                    .identity
+                    .get(&id)
+                    .ok_or_else(|| "missing identity".to_string())?;
+                let kind_id = joins
+                    .intern_existing(&id.1)
+                    .ok_or_else(|| "missing intern kind".to_string())?;
+                let key_id = joins
+                    .intern_existing(&id.2)
+                    .ok_or_else(|| "missing intern key".to_string())?;
+                body.extend_from_slice(&kind_id.to_le_bytes());
+                body.extend_from_slice(&key_id.to_le_bytes());
+                body.extend_from_slice(&meta.gen.to_le_bytes());
+                body.push(u8::from(meta.hidden));
+                let owned = if meta.hidden {
+                    interned_prop_ids(joins, self.hidden_props.get(&id))?
+                } else {
+                    joins
+                        .owned
+                        .get(&(kind_id, key_id))
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                let cn =
+                    u32::try_from(owned.len()).map_err(|_| "too many properties".to_string())?;
+                body.extend_from_slice(&cn.to_le_bytes());
+                for (prop_id, value_id) in owned {
+                    body.extend_from_slice(&prop_id.to_le_bytes());
+                    body.extend_from_slice(&value_id.to_le_bytes());
+                }
+                let action_intern = meta.action_id.unwrap_or(ACTION_NONE);
+                body.extend_from_slice(&action_intern.to_le_bytes());
+            }
+            joins.write_measures(&mut body)?;
         }
-        self.joins.write_measures(&mut body)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
@@ -102,12 +118,17 @@ impl Store {
                 .ok_or_else(|| "missing dirty identity".to_string())?;
             write_str(&mut body, &id.0)?;
             write_str(&mut body, &id.1)?;
+            write_str(&mut body, &id.2)?;
             body.extend_from_slice(&meta.gen.to_le_bytes());
             body.push(u8::from(meta.hidden));
+            let joins = self
+                .joins
+                .get(&id.0)
+                .ok_or_else(|| "missing namespace joins".to_string())?;
             let props = if meta.hidden {
                 self.hidden_props.get(&id).cloned().unwrap_or_default()
             } else {
-                self.joins.row_props(&id.0, &id.1)
+                joins.row_props(&id.1, &id.2)
             };
             let cn = u32::try_from(props.len()).map_err(|_| "too many properties".to_string())?;
             body.extend_from_slice(&cn.to_le_bytes());
@@ -125,9 +146,9 @@ impl Store {
             write_str(
                 &mut body,
                 meta.action_id
-                    .map(|id| {
-                        self.joins
-                            .intern_get(id)
+                    .map(|action| {
+                        joins
+                            .intern_get(action)
                             .ok_or_else(|| "missing intern action".to_string())
                     })
                     .transpose()?
@@ -160,69 +181,84 @@ impl Store {
         }
         let mut cur = &body[8..];
         let pages = read_u32(&mut cur)?;
-        let intern_n = read_u32(&mut cur)? as usize;
-        let mut joins = JoinMaps::default();
-        joins.intern.reserve(intern_n);
-        for i in 0..intern_n {
-            let value = read_str(&mut cur)?;
-            joins.intern_ix.insert(value.clone(), i as u32);
-            joins.intern.push(value);
-        }
-        let id_n = read_u32(&mut cur)? as usize;
-        let mut identity = HashMap::with_capacity(id_n);
+        let ns_n = read_u32(&mut cur)? as usize;
+        let mut all_joins = HashMap::with_capacity(ns_n);
+        let mut identity = HashMap::new();
         let mut hidden_props = HashMap::new();
-        for _ in 0..id_n {
-            let kind_id = read_u32(&mut cur)?;
-            let key_id = read_u32(&mut cur)?;
-            let gen = read_u64(&mut cur)?;
-            let hidden = take::<1>(&mut cur)?[0] != 0;
-            let cn = read_u32(&mut cur)? as usize;
-            let mut owned = Vec::with_capacity(cn);
-            let kind = joins
-                .intern
-                .get(kind_id as usize)
-                .ok_or_else(|| "bad intern kind".to_string())?
-                .clone();
-            let key = joins
-                .intern
-                .get(key_id as usize)
-                .ok_or_else(|| "bad intern key".to_string())?
-                .clone();
-            for _ in 0..cn {
-                let prop_id = read_u32(&mut cur)?;
-                let value_id = read_u32(&mut cur)?;
-                owned.push((prop_id, value_id));
+        for _ in 0..ns_n {
+            let namespace = read_str(&mut cur)?;
+            if namespace.is_empty() {
+                return Err("namespace required".into());
             }
-            let action_intern = read_u32(&mut cur)?;
-            let action_id = if action_intern == ACTION_NONE {
-                None
-            } else {
-                if joins.intern_get(action_intern).is_none() {
-                    return Err("bad intern action".into());
+            if all_joins.contains_key(&namespace) {
+                return Err(format!("duplicate namespace {namespace}"));
+            }
+            let intern_n = read_u32(&mut cur)? as usize;
+            let mut joins = JoinMaps::default();
+            joins.intern.reserve(intern_n);
+            for i in 0..intern_n {
+                let value = read_str(&mut cur)?;
+                joins.intern_ix.insert(value.clone(), i as u32);
+                joins.intern.push(value);
+            }
+            let id_n = read_u32(&mut cur)? as usize;
+            for _ in 0..id_n {
+                let kind_id = read_u32(&mut cur)?;
+                let key_id = read_u32(&mut cur)?;
+                let gen = read_u64(&mut cur)?;
+                let hidden = take::<1>(&mut cur)?[0] != 0;
+                let cn = read_u32(&mut cur)? as usize;
+                let mut owned = Vec::with_capacity(cn);
+                let kind = joins
+                    .intern
+                    .get(kind_id as usize)
+                    .ok_or_else(|| "bad intern kind".to_string())?
+                    .clone();
+                let key = joins
+                    .intern
+                    .get(key_id as usize)
+                    .ok_or_else(|| "bad intern key".to_string())?
+                    .clone();
+                for _ in 0..cn {
+                    let prop_id = read_u32(&mut cur)?;
+                    let value_id = read_u32(&mut cur)?;
+                    owned.push((prop_id, value_id));
                 }
-                Some(action_intern)
-            };
-            identity.insert(
-                (kind.clone(), key.clone()),
-                LiveMeta {
-                    gen,
-                    hidden,
-                    action_id,
-                },
-            );
-            if hidden {
-                hidden_props.insert((kind, key), props_from_owned(&joins, &owned)?);
-            } else {
-                joins.insert_visible_ids(kind_id, key_id, owned)?;
+                let action_intern = read_u32(&mut cur)?;
+                let action_id = if action_intern == ACTION_NONE {
+                    None
+                } else {
+                    if joins.intern_get(action_intern).is_none() {
+                        return Err("bad intern action".into());
+                    }
+                    Some(action_intern)
+                };
+                identity.insert(
+                    (namespace.clone(), kind.clone(), key.clone()),
+                    LiveMeta {
+                        gen,
+                        hidden,
+                        action_id,
+                    },
+                );
+                if hidden {
+                    hidden_props.insert(
+                        (namespace.clone(), kind, key),
+                        props_from_owned(&joins, &owned)?,
+                    );
+                } else {
+                    joins.insert_visible_ids(kind_id, key_id, owned)?;
+                }
             }
+            joins.read_measures(&mut cur)?;
+            all_joins.insert(namespace, joins);
         }
-        joins.read_measures(&mut cur)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
         Ok(Checkpoint {
             pages,
-            joins,
+            joins: all_joins,
             identity,
             hidden_props,
         })
@@ -264,12 +300,21 @@ impl Store {
             let action_id = if row.action.is_empty() {
                 None
             } else {
-                Some(self.joins.intern(&row.action))
+                Some(self.joins_for_write(&row.namespace).intern(&row.action))
             };
+            let schema_namespace = row.namespace.clone();
             let schema_kind = row.kind.clone();
             let schema_key = row.key.clone();
-            self.install_live(row.kind, row.key, row.gen, row.hidden, action_id, row.props);
-            self.maybe_refresh_schema(&schema_kind, &schema_key)?;
+            self.install_live(
+                super::live_id(&row.namespace, &row.kind, &row.key),
+                LiveMeta {
+                    gen: row.gen,
+                    hidden: row.hidden,
+                    action_id,
+                },
+                row.props,
+            );
+            self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
         }
         Ok(pages)
     }
@@ -351,6 +396,7 @@ fn skip_delta_rows(cur: &mut &[u8]) -> Result<u32, String> {
     let pages = read_u32(cur)?;
     let n = read_u32(cur)? as usize;
     for _ in 0..n {
+        let _namespace = read_str(cur)?;
         let _kind = read_str(cur)?;
         let _key = read_str(cur)?;
         let _gen = read_u64(cur)?;
@@ -366,6 +412,7 @@ fn skip_delta_rows(cur: &mut &[u8]) -> Result<u32, String> {
 }
 
 struct DeltaRow {
+    namespace: String,
     kind: String,
     key: String,
     gen: u64,
@@ -379,6 +426,7 @@ fn read_delta_rows(cur: &mut &[u8]) -> Result<(u32, Vec<DeltaRow>), String> {
     let n = read_u32(cur)? as usize;
     let mut rows = Vec::with_capacity(n);
     for _ in 0..n {
+        let namespace = read_str(cur)?;
         let kind = read_str(cur)?;
         let key = read_str(cur)?;
         let gen = read_u64(cur)?;
@@ -392,6 +440,7 @@ fn read_delta_rows(cur: &mut &[u8]) -> Result<(u32, Vec<DeltaRow>), String> {
         }
         let action = read_str(cur)?;
         rows.push(DeltaRow {
+            namespace,
             kind,
             key,
             gen,

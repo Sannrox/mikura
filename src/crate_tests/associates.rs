@@ -62,6 +62,7 @@ fn association_seed() -> Vec<ObjectRecord> {
 
 fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![
             Hop {
@@ -92,6 +93,7 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
 
 fn hop_label_to_incidents(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "label".into(),
         hops: vec![
             Hop {
@@ -122,6 +124,7 @@ fn hop_label_to_incidents(bound: usize) -> EvaluateRequest {
 
 fn list_associations(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident_label".into(),
         hops: vec![],
         sum_kind: "incident_label".into(),
@@ -145,11 +148,13 @@ fn object_keys(response: &EvaluateResponse) -> Vec<String> {
 
 fn commit_association_fixture(store: &mut Store) {
     let (component, incident) = product_loop_schemas();
-    store.append(component.to_record().unwrap()).unwrap();
-    store.append(incident.to_record().unwrap()).unwrap();
-    store.append(label_schema().to_record().unwrap()).unwrap();
+    store.append(component.to_record("ns").unwrap()).unwrap();
+    store.append(incident.to_record("ns").unwrap()).unwrap();
     store
-        .append(incident_label_schema().to_record().unwrap())
+        .append(label_schema().to_record("ns").unwrap())
+        .unwrap();
+    store
+        .append(incident_label_schema().to_record("ns").unwrap())
         .unwrap();
     append_all(store, association_seed());
 }
@@ -203,7 +208,12 @@ fn association_objects_traverse_hide_and_rebuild() {
         ))
         .unwrap();
     let dangling_load = store
-        .load("incident_label", "il-dangling", &PropertyAcl::allow_all())
+        .load(
+            NS,
+            "incident_label",
+            "il-dangling",
+            &PropertyAcl::allow_all(),
+        )
         .unwrap();
     assert_eq!(
         dangling_load.props.get("label").map(String::as_str),
@@ -214,6 +224,7 @@ fn association_objects_traverse_hide_and_rebuild() {
 
     store
         .hide(
+            NS,
             "incident_label",
             "il-inc-1-region-eu",
             &PropertyAcl::allow_all(),
@@ -224,6 +235,7 @@ fn association_objects_traverse_hide_and_rebuild() {
     assert!(
         store
             .load(
+                NS,
                 "incident_label",
                 "il-inc-1-region-eu",
                 &PropertyAcl::allow_all(),
@@ -233,13 +245,13 @@ fn association_objects_traverse_hide_and_rebuild() {
     );
 
     store
-        .hide("label", "region-eu", &PropertyAcl::allow_all())
+        .hide(NS, "label", "region-eu", &PropertyAcl::allow_all())
         .unwrap();
     let after_hide_label = oss.evaluate(&store, &hop_incident_to_labels(8)).unwrap();
     assert_eq!(object_keys(&after_hide_label), vec!["sev-high"]);
     assert!(
         store
-            .load("label", "region-eu", &PropertyAcl::allow_all())
+            .load(NS, "label", "region-eu", &PropertyAcl::allow_all())
             .unwrap()
             .hidden
     );
@@ -260,6 +272,7 @@ fn association_objects_traverse_hide_and_rebuild() {
     store
         .apply_overlay(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident_label".into(),
                 key: "il-inc-1-sev-high".into(),
                 props: HashMap::from([("label".into(), "region-eu".into())]),
@@ -280,6 +293,7 @@ fn association_objects_traverse_hide_and_rebuild() {
         .unwrap();
     let overlaid = store
         .load(
+            NS,
             "incident_label",
             "il-inc-1-sev-high",
             &PropertyAcl::allow_all(),
@@ -295,6 +309,7 @@ fn association_objects_traverse_hide_and_rebuild() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-il-replay".into(),
                 kind: "incident_label".into(),
                 key: "il-inc-1-sev-high-dup".into(),
@@ -309,6 +324,7 @@ fn association_objects_traverse_hide_and_rebuild() {
     store
         .apply_action(
             Action {
+                namespace: NS.into(),
                 id: "act-il-replay".into(),
                 kind: "incident_label".into(),
                 key: "il-inc-1-sev-high-dup".into(),
@@ -322,6 +338,7 @@ fn association_objects_traverse_hide_and_rebuild() {
         .unwrap();
     let replayed_row = store
         .load(
+            NS,
             "incident_label",
             "il-inc-1-sev-high-dup",
             &PropertyAcl::allow_all(),
