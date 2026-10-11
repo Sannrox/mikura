@@ -285,7 +285,10 @@ predicate `op` tags and unknown evaluate fields fail closed.
 
 `PropertyAcl` is the request-scoped restriction document
 ([ADR 0014](decisions/0014-externally-supplied-restrictions.md)):
-property denies plus optional `hide_kinds` / `hide_identities`.
+property denies plus optional `hide_kinds` / `hide_identities` and
+per-kind `row_filters` ([ADR 0029](decisions/0029-restriction-row-filters.md)):
+conjunctions of exact-value set membership on a stored property. A row
+that fails a term is invisible. A term on a denied property fails closed.
 `allow_all()` is empty. `check` errors with `AclError::Denied`.
 Mutations of a hidden identity error with `AclError::Invisible`.
 Unknown, duplicate, or over-bound hide lists fail closed. There is no

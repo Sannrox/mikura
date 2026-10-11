@@ -61,6 +61,18 @@ pub struct WireRestriction {
     pub hide_kinds: Vec<String>,
     #[serde(default)]
     pub hide_identities: Vec<WireIdentity>,
+    /// Row-filter terms (ADR 0029). Terms on one kind are a conjunction.
+    #[serde(default)]
+    pub row_filters: Vec<WireRowFilter>,
+}
+
+/// One row-filter term: the stored `property` equals one of `values`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRowFilter {
+    pub kind: String,
+    pub property: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -602,6 +614,10 @@ fn restriction_from_wire(
             }
             for id in &restriction.hide_identities {
                 acl.insert_hide_identity(&id.kind, &id.key)
+                    .map_err(|err| err.to_string())?;
+            }
+            for term in &restriction.row_filters {
+                acl.insert_row_filter(&term.kind, &term.property, &term.values)
                     .map_err(|err| err.to_string())?;
             }
             Ok(acl)

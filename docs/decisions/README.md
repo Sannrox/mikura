@@ -33,6 +33,7 @@ a new ADR. Allocate the next number and list it here.
 | [0026](0026-atomic-ingest-batch.md) | An ingest batch is all or nothing | accepted |
 | [0027](0027-overlay-apply-keeps-rematerialization.md) | A new overlay keeps rematerializing the instance; no patch-only path without a measured miss | accepted |
 | [0028](0028-store-namespace.md) | Required namespace on new object logs (`MIKURAV2`) | accepted |
+| [0029](0029-restriction-row-filters.md) | Typed row filters in the restriction document | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

@@ -378,14 +378,9 @@ impl Store {
         acl: &PropertyAcl,
     ) -> Result<ObjectRecord, String> {
         let namespace = self.require_known_namespace(namespace)?;
-        if !acl.object_visible(kind, key) {
-            return Err(format!("unknown identity {namespace}/{kind}/{key}"));
-        }
+        let missing = || format!("unknown identity {namespace}/{kind}/{key}");
         let id = live_id(namespace, kind, key);
-        let meta = self
-            .identity
-            .get(&id)
-            .ok_or_else(|| format!("unknown identity {namespace}/{kind}/{key}"))?;
+        let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
         let denied = acl.interned_denies(|token| maps.intern_existing(token));
         let props = if meta.hidden {
@@ -393,6 +388,12 @@ impl Store {
         } else {
             maps.row_props_omitting(kind, key, &denied)
         };
+        // Row-filter properties are never denied, so `props` still holds them.
+        if !acl.object_visible(kind, key, |property| {
+            props.get(property).map(String::as_str)
+        }) {
+            return Err(missing());
+        }
         Ok(ObjectRecord {
             gen: meta.gen,
             namespace: namespace.to_string(),
@@ -462,8 +463,7 @@ impl Store {
     ) -> Result<(), String> {
         Self::require_action_id(&action_id, "action id required")?;
         self.require_known_namespace(&patch.namespace)?;
-        acl.require_visible(&patch.kind, &patch.key)
-            .map_err(|err| err.to_string())?;
+        self.require_visible_in_view(&patch.namespace, &patch.kind, &patch.key, acl)?;
         for property in patch.props.keys() {
             acl.check(&patch.kind, property)
                 .map_err(|err| err.to_string())?;
@@ -784,8 +784,7 @@ impl Store {
     ) -> Result<(), String> {
         Self::require_action_id(&action.id, "action id required")?;
         self.require_known_namespace(&action.namespace)?;
-        acl.require_visible(&action.kind, &action.key)
-            .map_err(|err| err.to_string())?;
+        self.require_visible_in_view(&action.namespace, &action.kind, &action.key, acl)?;
         for property in action.props.keys() {
             acl.check(&action.kind, property)
                 .map_err(|err| err.to_string())?;
@@ -826,8 +825,7 @@ impl Store {
         acl: &PropertyAcl,
     ) -> Result<(), String> {
         self.require_known_namespace(namespace)?;
-        acl.require_visible(kind, key)
-            .map_err(|err| err.to_string())?;
+        self.require_visible_in_view(namespace, kind, key, acl)?;
         let current = self.load(namespace, kind, key, &PropertyAcl::allow_all())?;
         for property in current.props.keys() {
             acl.check(kind, property)
@@ -869,6 +867,21 @@ impl Store {
             self.writer.written_pages(),
             self.writer.page_used() as u32,
         )
+    }
+
+    /// User-facing mutations require the current identity to be in the view.
+    /// Row filters read the live projection, so a hidden or missing identity
+    /// of a filtered kind is not in the view.
+    fn require_visible_in_view(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+    ) -> Result<(), String> {
+        let maps = self.joins_in(namespace)?;
+        acl.require_visible(kind, key, |property| maps.prop(kind, key, property))
+            .map_err(|err| err.to_string())
     }
 
     fn hidden_props_omitting(
