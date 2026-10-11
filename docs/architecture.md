@@ -72,8 +72,9 @@ overlay merge, and Action body must satisfy the current descriptor.
 
 - Page size: 4096 bytes.
 - Page 0 is the superblock: CRC32, magic `MIKURAV2`, page-size `u16`,
-  `committed_pages` `u32`. `MIKURAV1` fails closed on open; existing-log
-  migration is [#251](https://github.com/Sannrox/mikura/issues/251).
+  `committed_pages` `u32`. `MIKURAV1` fails closed on open;
+  `Store::migrate_unnamespaced` writes it as a new `MIKURAV2` log under a
+  caller-named namespace ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
 - Record body: `gen` `u64`, `hidden` `u8`, namespace, kind, key, property
   count, then properties in sorted key order, then an optional
@@ -137,8 +138,8 @@ return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
 Checksum mismatch, truncation, or bad magic (current `MKJOIN05` /
 `MKJOIN5D`; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
-the sidecar recovers from a `MIKURAV2` log. Pre-namespace logs stay
-closed until [#251](https://github.com/Sannrox/mikura/issues/251). Schema-named last-hop
+the sidecar recovers from a `MIKURAV2` log. Pre-namespace logs are
+migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schema-named last-hop
 sums persist on that sidecar as parent → `(count, sum)` rollups
 ([ADR 0010](decisions/0010-last-hop-measures.md)).
 
@@ -421,7 +422,8 @@ Closing stdin stops the listener. Stop does not flush the stream buffer;
 rebuild still reads only `1..=committed_pages`. Upgrade is replace the
 binary and `Host::open` the same files. Wire `v` other than omit/`1` stays
 a typed error. New logs are `MIKURAV2`. `MIKURAV1` fails closed
-([ADR 0028](decisions/0028-store-namespace.md)).
+([ADR 0028](decisions/0028-store-namespace.md)) until migrated
+([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
 
 ## What v1 does not do
 

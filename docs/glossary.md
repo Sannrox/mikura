@@ -9,7 +9,7 @@ meaning; say it is undefined.
 | **Generation** (`gen`) | Monotonic version of that identity. `Store::append` bumps it. In edition 2021 the field is named `gen`; it must be renamed before an edition 2024 bump. |
 | **Object log** | Append-only 4 KiB CRC pages. Authority for identity. [ADR 0001](decisions/0001-paged-log.md). |
 | **Backup** | A copy of the object log plus the optional `{log}.joins` sidecar. Restore is `Host::open` on the copy. The sidecar is a rebuildable projection, never recovery material. There is no backup RPC. |
-| **Superblock** | Page 0 of the log. Holds CRC32, magic `MIKURAV2`, page size, and `committed_pages`. `MIKURAV1` fails closed. |
+| **Superblock** | Page 0 of the log. Holds CRC32, magic `MIKURAV2`, page size, and `committed_pages`. `MIKURAV1` fails closed until migrated (ADR 0030). |
 | **Committed range** | Pages `1..=committed_pages`. Rebuild reads only this range. Extra bytes after it are not authority. |
 | **Projection** | Derived index (live maps, hop/join maps). May be deleted and rebuilt from the log. Never recovery material. |
 | **Sidecar** | A projection file next to the log (`{log}.joins`, magic `MKJOIN05`). Per-namespace interned property pairs plus slim identity including optional Action id; hop/sum indexes omit hidden rows; schema-named last-hop sums persist as parent rollups. Dirty commits may add `{log}.joins.delta` (`MKJOIN5D`). Checksummed; deletable; rebuilt from a `MIKURAV2` log. Old `MKJOIN04` and earlier fail closed until deleted. [ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0006](decisions/0006-action-provenance.md), [ADR 0010](decisions/0010-last-hop-measures.md), [ADR 0028](decisions/0028-store-namespace.md). |
