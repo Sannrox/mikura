@@ -140,6 +140,7 @@ pub(super) fn shipment_sum_schema() -> SchemaDescriptor {
         }],
         sums: vec!["amount".into()],
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -162,6 +163,7 @@ pub(super) fn product_loop_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
         SchemaDescriptor {
             kind: "incident".into(),
@@ -174,6 +176,7 @@ pub(super) fn product_loop_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
     )
 }

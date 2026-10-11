@@ -14,6 +14,7 @@ fn label_schema() -> SchemaDescriptor {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -36,6 +37,7 @@ fn incident_label_schema() -> SchemaDescriptor {
         ],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -278,6 +280,7 @@ fn association_objects_traverse_hide_and_rebuild() {
                 props: HashMap::from([("label".into(), "region-eu".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-il-relabel".into(),
             Some(1),

@@ -25,6 +25,7 @@ fn incident_typed_schema() -> SchemaDescriptor {
             ("opened_at".into(), PropertyType::Timestamp),
             ("priority".into(), PropertyType::Integer),
         ],
+        ..Default::default()
     }
 }
 
@@ -102,6 +103,7 @@ fn typed_scalars_round_trip_overlay_deny_and_rebuild() {
                 props: HashMap::from([("open".into(), "false".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-open".into(),
             None,

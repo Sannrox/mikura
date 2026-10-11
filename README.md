@@ -25,7 +25,7 @@ and for contributing to the kernel. Not a production hosted store.
 | Schema-declared boolean, integer, timestamp, and decimal values as canonical UTF-8 in `props` ([ADR 0012](docs/decisions/0012-typed-values.md)) | |
 | Property deny-list (fail closed); exact-match filter on evaluate | |
 | Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |
-| Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) | |
+| Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)); user-wins or newest-timestamp-wins ([ADR 0032](docs/decisions/0032-overlay-conflict-strategy.md)) | |
 
 Spikes 001–011 are throwaway evidence under [`spikes/`](spikes/README.md).
 

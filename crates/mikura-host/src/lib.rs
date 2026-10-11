@@ -183,6 +183,8 @@ pub enum HostRequest {
         #[serde(default)]
         cleared: Vec<String>,
         #[serde(default)]
+        at: Option<String>,
+        #[serde(default)]
         expected_gen: Option<u64>,
         #[serde(default)]
         deny: Vec<WireDeny>,
@@ -402,6 +404,7 @@ impl Host {
                 key,
                 props,
                 cleared,
+                at,
                 expected_gen,
                 deny,
                 restriction,
@@ -416,6 +419,7 @@ impl Host {
                             props,
                             cleared,
                             action_id: None,
+                            at,
                         },
                         id,
                         expected_gen,

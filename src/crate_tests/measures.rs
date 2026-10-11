@@ -109,6 +109,7 @@ fn hide_and_overlay_update_parent_rollups() {
                 props: HashMap::from([("amount".into(), "12".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-s1-amount".into(),
             Some(1),

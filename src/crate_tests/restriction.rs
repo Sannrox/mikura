@@ -48,6 +48,7 @@ fn restriction_hides_load_evaluate_and_mutations() {
                 props: HashMap::from([("note".into(), "secret".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-hidden".into(),
             None,

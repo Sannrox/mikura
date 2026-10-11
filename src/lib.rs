@@ -24,7 +24,9 @@
 //! Optional `types` declare boolean, integer, timestamp, and decimal values
 //! stored as canonical UTF-8 in `props` ([`PropertyType`]).
 //! A committed [`OverlayPatch`] (`mikura.overlay/{kind}/{key}`) merges
-//! named properties onto later source writes of that identity.
+//! named properties onto later source writes of that identity. Default
+//! merge is user-wins; a schema [`ConflictStrategy`] may select
+//! newest-timestamp-wins per kind or per property.
 //!
 //! See `docs/architecture.md` in the repository for the v1 contract.
 
@@ -48,10 +50,14 @@ pub use joins::JoinMaps;
 pub use objectset::{
     Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet, Predicate, Sort,
 };
-pub use overlay::{OverlayPatch, OVERLAY_CLEARED, OVERLAY_KIND};
+pub use overlay::{
+    ConflictAudit, OverlayPatch, OVERLAY_AT, OVERLAY_CLEARED, OVERLAY_CONFLICT, OVERLAY_KIND,
+    OVERLAY_LOST_PREFIX,
+};
 pub use schema::{
-    SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
-    SCHEMA_SUMS, SCHEMA_TYPES,
+    ConflictPlan, ConflictStrategy, SchemaDescriptor, SchemaLink, SCHEMA_CONFLICT,
+    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES,
+    SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES,
 };
 pub use store::{
     tenant_namespace, ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,

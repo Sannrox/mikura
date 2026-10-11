@@ -9,6 +9,7 @@ fn component_schema() -> SchemaDescriptor {
         links: Vec::new(),
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -33,6 +34,7 @@ fn incident_schema() -> SchemaDescriptor {
             ("open".into(), PropertyType::Boolean),
             ("priority".into(), PropertyType::Integer),
         ],
+        ..Default::default()
     }
 }
 

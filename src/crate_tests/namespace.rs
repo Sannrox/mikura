@@ -88,6 +88,7 @@ fn two_namespaces_with_identical_keys_never_see_each_other() {
                 props: HashMap::from([("note".into(), "alpha-note".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-alpha-note".into(),
             None,
@@ -253,6 +254,7 @@ fn unknown_namespace_fails_closed_on_action_overlay_and_reserved_reads() {
                 props: HashMap::from([("note".into(), "x".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-ghost-note".into(),
             None,

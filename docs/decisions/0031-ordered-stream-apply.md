@@ -7,6 +7,7 @@
 - Amends: [ADR 0020](0020-resumable-source-reconciliation.md) (the last committed offset of a named stream is recorded on the log so resume after reopen does not need a clerk-only file)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0032](0032-overlay-conflict-strategy.md) (overlay merge still runs in `Store::append_uncommitted`; default user-wins, newest is opt-in on the kind descriptor)
 
 ## Context
 

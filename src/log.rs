@@ -163,10 +163,18 @@ impl LogWriter {
         Ok(())
     }
 
+    /// Fail closed when `record` cannot fit on a 4 KiB page.
+    pub(crate) fn check_record_fits(&self, record: &ObjectRecord) -> Result<(), String> {
+        let framed = framed_record(&encode_body(record)?)?;
+        if PAGE_HDR + framed.len() > PAGE {
+            return Err("record larger than a page".into());
+        }
+        Ok(())
+    }
+
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
         self.ensure_usable()?;
-        let body = encode_body(record)?;
-        let framed = framed_record(&body)?;
+        let framed = framed_record(&encode_body(record)?)?;
         if PAGE_HDR + framed.len() > PAGE {
             return Err("record larger than a page".into());
         }

@@ -47,8 +47,11 @@ with key equal to the described kind. The descriptor body uses string
 properties `properties` (comma-separated closed set), optional `required`,
 optional `links` (`name:far_kind:out|in:0..1`), optional `sums`
 (comma-separated property names already in `properties`), and optional
-`types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>`).
-Historical descriptors without `sums` or `types` still load. Visible writes
+`types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>`),
+optional `conflict` (`user` or `newest`), optional `conflict_properties`
+(`name:user|newest`), and optional `conflict_time` (a declared timestamp
+property). Historical descriptors without `sums`, `types`, or `conflict`
+still load. Visible writes
 of a typed property fail closed unless the value is canonical (timestamps
 with an offset normalize to UTC millis on write). Consumer kinds must
 not use `mikura.schema`. A visible descriptor validates later visible
@@ -58,10 +61,11 @@ writes skip validation (tombstones). Hidden schema rows are treated as
 absent. No schema row means today's unvalidated strings.
 A later visible descriptor is compared to the previous visible row for that
 kind ([ADR 0013](decisions/0013-schema-evolution.md)): additive properties,
-shrinking `required` or the closed set, new typed names, incoming links, and
-`sums` commit; recasting a previously declared type (including default
-`string`) or retargeting an outgoing link fails closed and leaves the previous
-descriptor intact. `Store::load` keeps stored bytes. The next visible write,
+shrinking `required` or the closed set, new typed names, incoming links,
+`sums`, and overlay `conflict` fields commit; recasting a previously declared
+type (including default `string`) or retargeting an outgoing link fails closed
+and leaves the previous descriptor intact. Changing `conflict` is not
+retroactive ([ADR 0032](decisions/0032-overlay-conflict-strategy.md)). `Store::load` keeps stored bytes. The next visible write,
 overlay merge, and Action body must satisfy the current descriptor.
 [ADR 0008](decisions/0008-type-link-delete.md).
 [ADR 0006](decisions/0006-action-provenance.md).
@@ -176,8 +180,10 @@ for an identity wins; edits then replace source, including `hidden`. Hidden
 source rows stay hidden unless an edit unhides them. `MergeIngest::run` appends
 that merged list through `BatchIngest`. The merge list is not authority; rebuild
 reads only the committed log. A visible source write of an identity with a visible `mikura.overlay/{kind}/{key}`
-row merges: source props, drop `cleared`, then overlay values
-([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md)). `Store::apply_overlay`
+row merges under the kind descriptor: default user-wins (source props, drop
+`cleared`, then overlay values); `conflict=newest` compares overlay `at` to
+the source `conflict_time` property ([ADR 0009](decisions/0009-refresh-safe-edit-overlay.md),
+[ADR 0032](decisions/0032-overlay-conflict-strategy.md)). `Store::apply_overlay`
 admits the patch and rematerializes a visible instance. A repeated Action id
 with the same patch is a replay ([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 Hide of the instance hides the overlay. Recreate (visible write after hide)
@@ -202,7 +208,7 @@ offsets for that identity skip without a new generation. From the first
 pending apply until `flush`, sealed pages do not advance the superblock.
 `flush` writes `mikura.source/<source>` (`offset`) and group-commits.
 `resume` reads that row after reopen. Overlay merge on a visible source
-write stays user-wins. A flushed apply is visible to the next `load` /
+write follows the kind descriptor (default user-wins). A flushed apply is visible to the next `load` /
 `evaluate` on this process; the documented end-to-end target is seconds
 on the product-loop fixture
 ([ADR 0031](decisions/0031-ordered-stream-apply.md)). Connectors and

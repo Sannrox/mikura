@@ -220,6 +220,7 @@ fn overlay_still_wins_on_stream_apply_source_write() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -451,6 +452,7 @@ fn overlay_cannot_corrupt_source_cursor() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-source-overlay".into(),
             None,
