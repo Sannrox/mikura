@@ -12,6 +12,8 @@ use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
 const MAGIC: &[u8; 8] = b"MIKURAV2";
+/// Pre-namespace magic. Read only by [`read_v1_records`].
+const V1_MAGIC: &[u8; 8] = b"MIKURAV1";
 const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
@@ -263,12 +265,33 @@ impl LogWriter {
 }
 
 pub fn read_records(path: &Path) -> Result<Vec<ObjectRecord>, String> {
+    read_committed_records(path, None)
+}
+
+/// Committed records of a pre-namespace `MIKURAV1` log, each assigned the
+/// caller's `namespace` (ADR 0030). Any other magic fails closed.
+pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>, String> {
+    if namespace.is_empty() {
+        return Err("namespace required".into());
+    }
+    read_committed_records(path, Some(namespace))
+}
+
+/// `v1_namespace` selects the `MIKURAV1` body layout and the namespace its
+/// records are assigned; `None` reads `MIKURAV2`.
+fn read_committed_records(
+    path: &Path,
+    v1_namespace: Option<&str>,
+) -> Result<Vec<ObjectRecord>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     if bytes.len() < PAGE {
         return Err("missing superblock".into());
     }
     let superblock = &bytes[..PAGE];
-    let committed = parse_superblock(superblock)? as usize;
+    let committed = match v1_namespace {
+        None => parse_superblock(superblock)?,
+        Some(_) => parse_v1_superblock(superblock)?,
+    } as usize;
     let needed = PAGE * (1 + committed);
     if bytes.len() < needed {
         return Err("committed pages missing".into());
@@ -277,7 +300,7 @@ pub fn read_records(path: &Path) -> Result<Vec<ObjectRecord>, String> {
     for index in 1..=committed {
         let page = &bytes[index * PAGE..(index + 1) * PAGE];
         verify_page(page).map_err(|e| format!("committed page {index}: {e}"))?;
-        decode_data_page(page, &mut records)?;
+        decode_data_page(page, v1_namespace, &mut records)?;
     }
     Ok(records)
 }
@@ -292,16 +315,31 @@ fn read_committed(file: &mut File) -> Result<u32, String> {
 fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
     verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
     let magic = &superblock[CRC_LEN..CRC_LEN + 8];
-    if magic == b"MIKURAV1" {
-        return Err("bad magic: MIKURAV1 logs are not reopened here".into());
+    if magic == V1_MAGIC {
+        return Err("bad magic: MIKURAV1 logs need Store::migrate_unnamespaced before open".into());
     } else if magic != MAGIC {
         return Err("bad magic".into());
     }
-    Ok(u32::from_le_bytes(
+    Ok(superblock_commit(superblock))
+}
+
+fn parse_v1_superblock(superblock: &[u8]) -> Result<u32, String> {
+    verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
+    let magic = &superblock[CRC_LEN..CRC_LEN + 8];
+    if magic == MAGIC {
+        return Err("log is already namespaced (MIKURAV2)".into());
+    } else if magic != V1_MAGIC {
+        return Err("bad magic".into());
+    }
+    Ok(superblock_commit(superblock))
+}
+
+fn superblock_commit(superblock: &[u8]) -> u32 {
+    u32::from_le_bytes(
         superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4]
             .try_into()
             .unwrap(),
-    ))
+    )
 }
 
 fn seal_page(page: &mut [u8]) {
@@ -358,7 +396,11 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
-fn decode_data_page(page: &[u8], records: &mut Vec<ObjectRecord>) -> Result<(), String> {
+fn decode_data_page(
+    page: &[u8],
+    v1_namespace: Option<&str>,
+    records: &mut Vec<ObjectRecord>,
+) -> Result<(), String> {
     let used = u16::from_le_bytes(page[CRC_LEN..PAGE_HDR].try_into().unwrap()) as usize;
     if PAGE_HDR + used > PAGE {
         return Err("used past page".into());
@@ -373,17 +415,22 @@ fn decode_data_page(page: &[u8], records: &mut Vec<ObjectRecord>) -> Result<(), 
         if cur.len() < len {
             return Err("short record body".into());
         }
-        records.push(decode_body(&cur[..len])?);
+        records.push(decode_body(&cur[..len], v1_namespace)?);
         cur = &cur[len..];
     }
     Ok(())
 }
 
-fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
+/// A `MIKURAV1` body is the `MIKURAV2` body without the namespace field;
+/// `v1_namespace` supplies it.
+fn decode_body(body: &[u8], v1_namespace: Option<&str>) -> Result<ObjectRecord, String> {
     let mut cur = body;
     let gen = u64::from_le_bytes(take::<8>(&mut cur)?.try_into().unwrap());
     let hidden = take::<1>(&mut cur)?[0] != 0;
-    let namespace = read_str(&mut cur)?;
+    let namespace = match v1_namespace {
+        Some(namespace) => namespace.to_string(),
+        None => read_str(&mut cur)?,
+    };
     if namespace.is_empty() {
         return Err("namespace required".into());
     }
@@ -418,6 +465,32 @@ fn decode_body(body: &[u8]) -> Result<ObjectRecord, String> {
         action_id,
         props,
     })
+}
+
+/// Write `records` as a committed pre-namespace `MIKURAV1` log, one record
+/// per page, for migration tests.
+#[cfg(test)]
+pub(crate) fn write_v1_log(path: &Path, records: &[ObjectRecord]) -> Result<(), String> {
+    let mut bytes = vec![0u8; PAGE];
+    for record in records {
+        // The V1 body is the V2 body without the namespace string.
+        let body = encode_body(record)?;
+        let namespace_field = 2 + record.namespace.len();
+        let mut v1 = body[..9].to_vec();
+        v1.extend_from_slice(&body[9 + namespace_field..]);
+        let framed = framed_record(&v1)?;
+        let mut page = vec![0u8; PAGE];
+        page[CRC_LEN..PAGE_HDR].copy_from_slice(&(framed.len() as u16).to_le_bytes());
+        page[PAGE_HDR..PAGE_HDR + framed.len()].copy_from_slice(&framed);
+        seal_page(&mut page);
+        bytes.extend_from_slice(&page);
+    }
+    bytes[CRC_LEN..CRC_LEN + 8].copy_from_slice(V1_MAGIC);
+    bytes[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
+    bytes[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4]
+        .copy_from_slice(&(records.len() as u32).to_le_bytes());
+    seal_page(&mut bytes[..PAGE]);
+    std::fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -542,7 +615,7 @@ mod tests {
         write_str(&mut body, "Customer").unwrap();
         write_str(&mut body, "c1").unwrap();
         body.extend_from_slice(&0u16.to_le_bytes());
-        let record = decode_body(&body).unwrap();
+        let record = decode_body(&body, None).unwrap();
         assert_eq!(record.action_id, None);
         assert_eq!(record.namespace, "ns");
         assert_eq!(record.kind, "Customer");
@@ -590,7 +663,7 @@ mod tests {
             props: HashMap::from([("region".into(), "eu".into())]),
         };
         let encoded = encode_body(&none).unwrap();
-        let current = decode_body(&encoded).unwrap();
+        let current = decode_body(&encoded, None).unwrap();
         assert_eq!(current.action_id, None);
         let pinned = decode_body_reject_trailing(&encoded).unwrap();
         assert_eq!(pinned.kind, "Customer");
@@ -603,7 +676,7 @@ mod tests {
         };
         let encoded = encode_body(&some).unwrap();
         assert_eq!(
-            decode_body(&encoded).unwrap().action_id.as_deref(),
+            decode_body(&encoded, None).unwrap().action_id.as_deref(),
             Some("act-1")
         );
         let err = decode_body_reject_trailing(&encoded).unwrap_err();
@@ -625,7 +698,7 @@ mod tests {
         let mut extra = body;
         extra.extend_from_slice(&1u16.to_le_bytes());
         extra.push(b'x');
-        let err = decode_body(&extra).unwrap_err();
+        let err = decode_body(&extra, None).unwrap_err();
         assert!(err.contains("trailing"), "{err}");
     }
 

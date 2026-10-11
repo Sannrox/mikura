@@ -53,7 +53,7 @@ pub use schema::{
     SchemaDescriptor, SchemaLink, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
     SCHEMA_SUMS, SCHEMA_TYPES,
 };
-pub use store::{ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES};
+pub use store::{tenant_namespace, ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES};
 pub use value::{PropertyType, PropertyValue};
 
 #[cfg(test)]

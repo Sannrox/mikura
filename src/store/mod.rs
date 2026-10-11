@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::acl::PropertyAcl;
 use crate::actions::Action;
 use crate::joins::{JoinMaps, LiveMeta};
-use crate::log::{read_records, LogWriter, SyncPolicy};
+use crate::log::{read_records, read_v1_records, LogWriter, SyncPolicy};
 use crate::overlay::{OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
@@ -93,6 +93,58 @@ impl Store {
             log.to_path_buf(),
             LogWriter::create(log, sync)?,
         ))
+    }
+
+    /// Explicit log-format step for a pre-namespace `MIKURAV1` log (ADR 0030).
+    ///
+    /// Writes every committed record of `src`, assigned to `namespace`, to a
+    /// new `MIKURAV2` log at `dst`, byte-for-byte otherwise, and returns the
+    /// record count. [`Self::open`] on `dst` then rebuilds the projection.
+    /// `src` is only read; its uncommitted tail is dropped as on open. The
+    /// caller names the namespace: there is no shared default. Neither `dst`
+    /// nor its sidecars may exist, and a crash leaves no partial `dst`.
+    pub fn migrate_unnamespaced(src: &Path, dst: &Path, namespace: &str) -> Result<usize, String> {
+        let namespace = require_namespace(namespace)?;
+        // Refuse rather than delete: a leftover sidecar would be trusted on
+        // open, and deleting one could hit a caller's file.
+        for path in [
+            dst.to_path_buf(),
+            Self::join_map_path(dst),
+            Self::join_delta_path(dst),
+        ] {
+            if path.exists() {
+                return Err(format!(
+                    "migration target {} already exists",
+                    path.display()
+                ));
+            }
+        }
+        let records = read_v1_records(src, namespace)?;
+        // A per-call staging file, published with a no-clobber link, so
+        // concurrent migrations to one `dst` cannot interleave or overwrite.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        let staging =
+            Self::sidecar_path(dst, &format!(".migrating-{}-{nonce}", std::process::id()));
+        let written = (|| {
+            let mut writer = LogWriter::create(&staging, SyncPolicy::Group(32))?;
+            for record in &records {
+                // A V1 record near the page limit may not fit the namespace.
+                writer.append_record(record).map_err(|error| {
+                    format!(
+                        "cannot migrate {}/{} into namespace {namespace}: {error}",
+                        record.kind, record.key
+                    )
+                })?;
+            }
+            writer.flush()?;
+            drop(writer);
+            std::fs::hard_link(&staging, dst).map_err(|e| format!("publish {}: {e}", dst.display()))
+        })();
+        let _ = std::fs::remove_file(&staging);
+        written.map(|()| records.len())
     }
 
     pub fn open(log: &Path) -> Result<Self, String> {
@@ -1003,6 +1055,19 @@ impl Store {
 
 fn live_id(namespace: &str, kind: &str, key: &str) -> LiveId {
     (namespace.to_string(), kind.to_string(), key.to_string())
+}
+
+/// Store namespace for `namespace` owned by `tenant_id`, so storage keys
+/// carry `(tenant_id, namespace)` (ADR 0030). The tenant may not contain
+/// `/`, which keeps the composition one-to-one. Either part empty fails
+/// closed. This is a key shape only: mikura does not bind or authorize
+/// tenants.
+pub fn tenant_namespace(tenant_id: &str, namespace: &str) -> Result<String, String> {
+    if tenant_id.is_empty() || tenant_id.contains('/') {
+        return Err("tenant_id must be non-empty and must not contain '/'".into());
+    }
+    require_namespace(namespace)?;
+    Ok(format!("{tenant_id}/{namespace}"))
 }
 
 fn require_namespace(namespace: &str) -> Result<&str, String> {

@@ -12,16 +12,24 @@ window.
 - New object logs write `MIKURAV2` with a required `namespace` on every
   record. `MIKURAV1` logs fail closed on open. Join sidecars are
   `MKJOIN05` / `MKJOIN5D`; `MKJOIN04` and earlier fail closed. Delete the
-  sidecar on a `MIKURAV2` log to rebuild. Reopening pre-namespace logs is
-  [#251](https://github.com/Sannrox/mikura/issues/251)
+  sidecar on a `MIKURAV2` log to rebuild
   ([#234](https://github.com/Sannrox/mikura/issues/234),
   [ADR 0028](docs/decisions/0028-store-namespace.md)).
+- Migrate a pre-namespace log once with
+  `Store::migrate_unnamespaced(src, dst, namespace)`, naming its
+  namespace, then open `dst`. The source is not modified; there is no
+  default namespace
+  ([#251](https://github.com/Sannrox/mikura/issues/251),
+  [ADR 0030](docs/decisions/0030-unnamespaced-log-migration.md)).
 - Public identity is `(namespace, kind, key)`. Load, evaluate, hide,
   overlay, and Action name a namespace. Missing or unknown fails closed.
   Host JSON requires `namespace` on those ops and on ingested records.
 
 ### Added
 
+- `tenant_namespace(tenant_id, namespace)` composes a tenant-qualified
+  store namespace; mikura does not administer tenants
+  ([#251](https://github.com/Sannrox/mikura/issues/251)).
 - Restriction `row_filters`: per-kind conjunctions of exact-value set
   membership on a property. Rows that fail are invisible to evaluate
   roots, hops, lists, count and sum; load matches missing; mutations fail

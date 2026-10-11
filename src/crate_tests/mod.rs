@@ -8,6 +8,7 @@ mod hide;
 mod hops;
 mod load;
 mod measures;
+mod migrate;
 mod namespace;
 mod overlay;
 mod pages;
