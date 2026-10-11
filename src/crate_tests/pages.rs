@@ -38,10 +38,10 @@ fn incident_schema() -> SchemaDescriptor {
 
 fn seed(store: &mut Store) {
     store
-        .append(component_schema().to_record().unwrap())
+        .append(component_schema().to_record("ns").unwrap())
         .unwrap();
     store
-        .append(incident_schema().to_record().unwrap())
+        .append(incident_schema().to_record("ns").unwrap())
         .unwrap();
     append_all(
         store,
@@ -104,6 +104,7 @@ fn seed(store: &mut Store) {
 
 fn page_incidents(sort: Sort, page_size: usize, cursor: Option<String>) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![],
         sum_kind: "incident".into(),
@@ -203,6 +204,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let overflow = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: NS.into(),
             object_bound: 1,
             ..page_incidents(Sort::by("priority"), 1, None)
         },
@@ -216,6 +218,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     );
 
     let denied = EvaluateRequest {
+        namespace: NS.into(),
         acl: PropertyAcl::deny_property("incident", "priority"),
         ..page_incidents(Sort::by("priority"), 1, None)
     };
@@ -227,6 +230,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let no_sort = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: NS.into(),
             sort: None,
             page_size: 1,
             ..page_incidents(Sort::by("priority"), 1, None)
@@ -246,6 +250,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let other_query = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: NS.into(),
             predicate: Some(Predicate::eq("open", "true")),
             ..page_incidents(Sort::by("priority"), 1, Some(cursor1.clone()))
         },
@@ -258,6 +263,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let other_acl = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: NS.into(),
             acl: PropertyAcl::deny_property("incident", "name"),
             ..page_incidents(Sort::by("priority"), 1, Some(cursor1.clone()))
         },

@@ -22,8 +22,9 @@ impl BatchIngest {
     /// whole batch and leaves the store as it was (ADR 0026). This also covers
     /// [`ChangelogIngest`] and [`MergeIngest`], which delegate here.
     pub fn run(store: &mut Store, records: Vec<ObjectRecord>) -> Result<(), String> {
-        let tokens = records.iter().map(common::intern_token_budget).sum();
-        store.reserve_intern(tokens);
+        for record in &records {
+            store.reserve_intern(&record.namespace, common::intern_token_budget(record));
+        }
         store.append_batch(records)
     }
 }

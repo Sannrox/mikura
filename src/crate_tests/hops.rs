@@ -11,6 +11,7 @@ fn incoming_hop_follows_join_property() {
     assert_eq!(outgoing.two_hop_count, 1);
     assert_eq!(outgoing.sum_amount, 10);
     let from_customer = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Customer".into(),
         hops: vec![Hop {
             far_kind: "Order".into(),
@@ -34,6 +35,7 @@ fn incoming_hop_follows_join_property() {
         1
     );
     let incoming = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Order".into(),
         hops: vec![Hop {
             far_kind: "Customer".into(),
@@ -54,9 +56,10 @@ fn incoming_hop_follows_join_property() {
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
-    assert!(!store.joins().is_visible("Order", "o0"));
-    assert!(!store.joins().is_visible("Customer", "c0"));
+    assert!(!store.joins(NS).unwrap().is_visible("Order", "o0"));
+    assert!(!store.joins(NS).unwrap().is_visible("Customer", "c0"));
     let denied = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Order".into(),
         hops: vec![Hop {
             far_kind: "Customer".into(),
@@ -138,7 +141,7 @@ fn exact_match_filter_restricts_roots() {
     let eu_resp = oss.evaluate(&store, &eu).unwrap();
     assert_eq!(eu_resp.two_hop_count, 1);
     assert_eq!(eu_resp.sum_amount, 7);
-    assert!(!store.joins().is_visible("Customer", "c0"));
+    assert!(!store.joins(NS).unwrap().is_visible("Customer", "c0"));
 
     let mut miss = fixture_request();
     miss.filter = Some(ExactMatch {
@@ -159,7 +162,7 @@ fn exact_match_filter_restricts_roots() {
     drop(store);
     let reopened = Store::open(&log).unwrap();
     assert_eq!(oss.evaluate(&reopened, &us).unwrap(), us_resp);
-    assert!(!reopened.joins().is_visible("Customer", "c0"));
+    assert!(!reopened.joins(NS).unwrap().is_visible("Customer", "c0"));
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), us_resp);

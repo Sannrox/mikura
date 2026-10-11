@@ -27,14 +27,19 @@ today evaluate is hop + count/sum + optional bounded objects, with a composed pr
 
 | Field | Role |
 | --- | --- |
+| `namespace` | Required store partition. Empty fails closed. |
 | `kind` | Type name (`Customer`, `Order`, …) |
-| `key` | Primary key within that kind |
+| `key` | Primary key within that namespace and kind |
 | `props` | String map. Declared non-string scalars store canonical UTF-8 here ([ADR 0012](decisions/0012-typed-values.md)). |
 | `hidden` | Excluded from join indexing |
 | `action_id` | Optional clerk-assigned Action id that produced this generation |
 | `gen` | Generation. `Store::append` sets `existing+1` on update. On insert it keeps a non-zero first `gen` and sets `1` only when the incoming value is `0` |
 
-Identity is `(kind, key)`. A later append replaces the live record.
+Identity is `(namespace, kind, key)`. A later append replaces the live record
+in that namespace. Two namespaces may reuse the same `(kind, key)` without
+sharing members, hops, counts, sums, or payloads
+([ADR 0028](decisions/0028-store-namespace.md)). Namespace is not a principal
+or a tenant admin object.
 
 Records may store an optional Action id. They do not store a principal.
 Schema descriptors persist as ordinary objects of kind `mikura.schema`
@@ -66,16 +71,17 @@ overlay merge, and Action body must satisfy the current descriptor.
 `src/log.rs` implements a single-file paged log.
 
 - Page size: 4096 bytes.
-- Page 0 is the superblock: CRC32, magic `MIKURAV1`, page-size `u16`,
-  `committed_pages` `u32`.
+- Page 0 is the superblock: CRC32, magic `MIKURAV2`, page-size `u16`,
+  `committed_pages` `u32`. `MIKURAV1` fails closed on open; existing-log
+  migration is [#251](https://github.com/Sannrox/mikura/issues/251).
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
-- Record body: `gen` `u64`, `hidden` `u8`, kind, key, property count, then
-  properties in sorted key order, then an optional length-prefixed Action
-  id. Historical bodies and new writes without an Action id end after the
-  properties (`None`). Writes that store an id emit the field. Bytes after
-  that field fail closed. A second trailing field requires a superblock
-  magic bump so `Store::open` can refuse before decode
-  ([ADR 0006](decisions/0006-action-provenance.md)).
+- Record body: `gen` `u64`, `hidden` `u8`, namespace, kind, key, property
+  count, then properties in sorted key order, then an optional
+  length-prefixed Action id. Empty namespace fails closed on encode and
+  decode. Writes without an Action id end after the properties (`None`).
+  Writes that store an id emit the field. Bytes after that field fail
+  closed ([ADR 0006](decisions/0006-action-provenance.md),
+  [ADR 0028](decisions/0028-store-namespace.md)).
 - Rebuild (`read_records`) verifies every page in `1..=committed_pages` and
   ignores bytes after that range.
 - Checksum mismatch or a short committed file returns an error.
@@ -109,15 +115,17 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 `src/joins.rs` holds interned `JoinMaps` and sidecar checksum helpers.
 `src/store/` keeps:
 
-- slim identity `(kind, key) → (gen, hidden, action_id)` — enough to bump generation and answer provenance
+- slim identity `(namespace, kind, key) → (gen, hidden, action_id)` — enough to bump generation and answer provenance
 - `hidden_props` — payloads for hidden identities (not hop-indexed)
-- `joins: JoinMaps` — interned property pairs, packed join-child lists, hop/sum indexes, and schema-named last-hop parent rollups ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0010](decisions/0010-last-hop-measures.md))
+- `joins: HashMap<namespace, JoinMaps>` — interned property pairs, packed join-child lists, hop/sum indexes, and schema-named last-hop parent rollups, one map per namespace ([ADR 0004](decisions/0004-slim-join-maps.md), [ADR 0005](decisions/0005-current-object-load.md), [ADR 0010](decisions/0010-last-hop-measures.md), [ADR 0028](decisions/0028-store-namespace.md))
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
-It does not keep a hot payload map. `Store::load(kind, key, acl)` reconstructs
-the live `ObjectRecord` from slim identity plus interned property pairs
-already in that sidecar ([ADR 0005](decisions/0005-current-object-load.md)).
+It does not keep a hot payload map. `Store::load(namespace, kind, key, acl)`
+reconstructs the live `ObjectRecord` from slim identity plus interned
+property pairs already in that sidecar
+([ADR 0005](decisions/0005-current-object-load.md)). Missing or unknown
+namespace fails closed. The first write of a namespace creates it.
 Live identity stores the optional Action id as an intern `u32` and
 resolves the string on load. The object log still writes the
 length-prefixed id so a deleted sidecar can rebuild from the log.
@@ -127,9 +135,10 @@ properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
 `committed_pages`. A missing or stale sidecar rebuilds from the log.
-Checksum mismatch, truncation, or bad magic (current `MKJOIN04` /
-`MKJOIN4D`; old `MKJOIN01`, `MKJOIN02`, and `MKJOIN03` included) fails
-closed; deleting the sidecar recovers from the log. Schema-named last-hop
+Checksum mismatch, truncation, or bad magic (current `MKJOIN05` /
+`MKJOIN5D`; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
+the sidecar recovers from a `MIKURAV2` log. Pre-namespace logs stay
+closed until [#251](https://github.com/Sannrox/mikura/issues/251). Schema-named last-hop
 sums persist on that sidecar as parent → `(count, sum)` rollups
 ([ADR 0010](decisions/0010-last-hop-measures.md)).
 
@@ -190,7 +199,8 @@ uncommitted tail; rebuild reads only committed pages.
 
 `LocalCompute` (generic kinds, from `JoinMaps`):
 
-1. Start from visible keys of `root_kind`.
+1. Resolve `request.namespace` (empty or unknown fails closed). Start
+   from visible keys of `root_kind` in that namespace.
 2. If `request.filter` is set, look up matching visible roots in
    `by_prop[(kind, property)][value]`. Empty or uninterned match is
    count 0, sum 0. The filter does not scan every root's owned pairs.
@@ -256,17 +266,18 @@ interned `amounts` map (values that parse as `i64`). Min/max could walk that
 map without a sidecar layout change; they stay out until a consumer names
 one with a fixture. Group-by would be a new evaluate response (buckets, not
 two scalars) and stays out with query languages. Last-hop count and sum for
-a schema-named leaf property persist as parent rollups on `MKJOIN04`
+a schema-named leaf property persist as parent rollups on `MKJOIN05`
 ([ADR 0010](decisions/0010-last-hop-measures.md),
-[#151](https://github.com/Sannrox/mikura/issues/151)). Zero-hop evaluate
-is unchanged. `EvaluateRequest.predicate` and `Hop.predicate` are the
+[#151](https://github.com/Sannrox/mikura/issues/151),
+[ADR 0028](decisions/0028-store-namespace.md)). Zero-hop evaluate
+is unchanged. `EvaluateRequest.namespace` is required; empty or unknown
+fails closed. `EvaluateRequest.predicate` and `Hop.predicate` are the
 selection subset ([#173](https://github.com/Sannrox/mikura/issues/173)).
 `sort`, `page_size`, and `cursor` are the page subset
 ([#174](https://github.com/Sannrox/mikura/issues/174),
 [ADR 0015](decisions/0015-composable-object-sets.md)). Exact-match
 `filter` remains the product-loop shorthand. Host `v=1` unknown
-predicate `op` tags and unknown evaluate fields fail closed. No
-`MIKURAV1` change.
+predicate `op` tags and unknown evaluate fields fail closed.
 
 `SparkCompute` always returns `ComputeError::UnsupportedBackend`.
 
@@ -362,8 +373,9 @@ fails closed. Omit or `null` filter and predicate means all visible roots.
 An empty filter `property` or `value` is a wire error, not a silent empty
 match. Unknown predicate `op` tags and unknown evaluate fields fail closed.
 Hops may carry a `predicate` that restricts the far set.
-`load` returns the live object for `(kind, key)`
-and omits denied properties. Missing identity fails closed. `hide` hides
+`load` returns the live object for `(namespace, kind, key)`
+and omits denied properties. Missing or unknown namespace fails closed.
+Missing identity fails closed. `hide` hides
 that identity from evaluate and keeps `load` defined. The request ACL deny
 list fails closed on evaluate and on hide when the op would copy a denied
 property. Evaluate `object_bound` greater than zero
@@ -405,7 +417,8 @@ the log. A corrupt committed page or sidecar checksum mismatch fails closed.
 Closing stdin stops the listener. Stop does not flush the stream buffer;
 rebuild still reads only `1..=committed_pages`. Upgrade is replace the
 binary and `Host::open` the same files. Wire `v` other than omit/`1` stays
-a typed error. `MIKURAV1` is unchanged.
+a typed error. New logs are `MIKURAV2`. `MIKURAV1` fails closed
+([ADR 0028](decisions/0028-store-namespace.md)).
 
 ## What v1 does not do
 
@@ -415,10 +428,14 @@ a typed error. `MIKURAV1` is unchanged.
   [ADR 0023](decisions/0023-single-process-availability.md))
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
-- Principals, tenants, or policy compile in this crate
+- Principals, tenant administration, quota, or policy compile in this crate
+  (store namespace is an identity key, not a principal)
 - Compact or checkpoint the log (researched no-action until a later envelope
   misses on disk or `Store::open` because of log growth; [#53](https://github.com/Sannrox/mikura/issues/53))
-- Partitioned ownership (researched no-action: one identity space remains;
+- Partitioned ownership of the store (researched no-action: one process,
+  one log; identity inside that log is namespaced
+  ([#234](https://github.com/Sannrox/mikura/issues/234),
+  [ADR 0028](decisions/0028-store-namespace.md));
   [#192](https://github.com/Sannrox/mikura/issues/192),
   [ADR 0024](decisions/0024-unpartitioned-store.md))
 

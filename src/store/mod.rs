@@ -16,9 +16,13 @@ mod sidecar;
 /// checkpoint or dirty rows exceed a quarter of identity.
 pub const JOIN_DELTA_COMPACT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Live identity: `(namespace, kind, key)`.
+type LiveId = (String, String, String);
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {
     pub gen: u64,
+    pub namespace: String,
     pub kind: String,
     pub key: String,
     pub hidden: bool,
@@ -29,6 +33,7 @@ pub struct ObjectRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ActionCommit {
+    namespace: String,
     kind: String,
     key: String,
     gen: u64,
@@ -51,14 +56,14 @@ enum ActionIdWrite {
 pub struct Store {
     log: PathBuf,
     writer: LogWriter,
-    identity: HashMap<(String, String), LiveMeta>,
-    hidden_props: HashMap<(String, String), HashMap<String, String>>,
-    joins: JoinMaps,
-    dirty: HashSet<(String, String)>,
+    identity: HashMap<LiveId, LiveMeta>,
+    hidden_props: HashMap<LiveId, HashMap<String, String>>,
+    joins: HashMap<String, JoinMaps>,
+    dirty: HashSet<LiveId>,
     has_checkpoint: bool,
     delta_bytes: u64,
     delta_compact_bytes: u64,
-    action_commits: HashMap<String, ActionCommit>,
+    action_commits: HashMap<(String, String), ActionCommit>,
     action_commits_from_log: bool,
 }
 
@@ -106,7 +111,7 @@ impl Store {
             writer,
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
-            joins: JoinMaps::default(),
+            joins: HashMap::new(),
             dirty: HashSet::new(),
             has_checkpoint: false,
             delta_bytes: 0,
@@ -123,36 +128,26 @@ impl Store {
         self.delta_compact_bytes = bytes;
     }
 
-    fn install_live(
-        &mut self,
-        kind: String,
-        key: String,
-        gen: u64,
-        hidden: bool,
-        action_id: Option<u32>,
-        props: HashMap<String, String>,
-    ) {
-        self.joins.remove(&kind, &key);
-        self.joins.intern(&kind);
-        self.joins.intern(&key);
-        let id = (kind.clone(), key.clone());
-        self.identity.insert(
-            id.clone(),
-            LiveMeta {
-                gen,
-                hidden,
-                action_id,
-            },
-        );
+    fn install_live(&mut self, id: LiveId, meta: LiveMeta, props: HashMap<String, String>) {
+        {
+            let joins = self.joins_for_write(&id.0);
+            joins.remove(&id.1, &id.2);
+            joins.intern(&id.1);
+            joins.intern(&id.2);
+        }
+        let hidden = meta.hidden;
+        self.identity.insert(id.clone(), meta);
         if hidden {
+            let joins = self.joins_for_write(&id.0);
             for (name, value) in &props {
-                self.joins.intern(name);
-                self.joins.intern(value);
+                joins.intern(name);
+                joins.intern(value);
             }
             self.hidden_props.insert(id, props);
         } else {
             self.hidden_props.remove(&id);
-            self.joins.index(&kind, &key, false, props);
+            self.joins_for_write(&id.0)
+                .index(&id.1, &id.2, false, props);
         }
     }
 
@@ -162,8 +157,9 @@ impl Store {
         };
         let commit = self
             .action_commits
-            .entry(id.to_string())
+            .entry((record.namespace.clone(), id.to_string()))
             .or_insert_with(|| ActionCommit {
+                namespace: record.namespace.clone(),
                 kind: record.kind.clone(),
                 key: record.key.clone(),
                 gen: record.gen,
@@ -173,6 +169,7 @@ impl Store {
             });
         if record.hidden
             && !commit.hidden
+            && commit.namespace == record.namespace
             && commit.kind == record.kind
             && commit.key == record.key
             && commit.props == record.props
@@ -213,13 +210,17 @@ impl Store {
         }
         let stored = OverlayPatch::from_record(&ObjectRecord {
             gen: committed.gen,
+            namespace: committed.namespace,
             kind: committed.kind,
             key: committed.key,
             hidden: committed.hidden,
             action_id: Some(action_id.to_string()),
             props: committed.props,
         })?;
-        if stored.kind != patch.kind || stored.key != patch.key {
+        if stored.namespace != patch.namespace
+            || stored.kind != patch.kind
+            || stored.key != patch.key
+        {
             return Err(format!(
                 "action id {action_id} already committed on {}/{}",
                 stored.kind, stored.key
@@ -237,6 +238,7 @@ impl Store {
 
     fn require_expected_gen(
         &self,
+        namespace: &str,
         kind: &str,
         key: &str,
         expected_gen: Option<u64>,
@@ -244,7 +246,7 @@ impl Store {
         let Some(expected) = expected_gen else {
             return Ok(());
         };
-        let id = (kind.to_string(), key.to_string());
+        let id = live_id(namespace, kind, key);
         match self.identity.get(&id) {
             Some(meta) if meta.gen != expected => Err(format!(
                 "stale generation: expected {expected}, live {}",
@@ -259,18 +261,19 @@ impl Store {
 
     fn apply_record(&mut self, record: ObjectRecord) {
         self.remember_action(&record);
-        let id = (record.kind.clone(), record.key.clone());
+        let id = live_id(&record.namespace, &record.kind, &record.key);
         let action_id = record
             .action_id
             .as_deref()
             .filter(|id| !id.is_empty())
-            .map(|id| self.joins.intern(id));
+            .map(|id| self.joins_for_write(&record.namespace).intern(id));
         self.install_live(
-            record.kind,
-            record.key,
-            record.gen,
-            record.hidden,
-            action_id,
+            id.clone(),
+            LiveMeta {
+                gen: record.gen,
+                hidden: record.hidden,
+                action_id,
+            },
             record.props,
         );
         self.dirty.insert(id);
@@ -289,6 +292,7 @@ impl Store {
     /// identity or different body fails closed.
     fn action_claim(
         &mut self,
+        namespace: &str,
         action_id: &str,
         kind: &str,
         key: &str,
@@ -296,13 +300,17 @@ impl Store {
         props: &HashMap<String, String>,
     ) -> Result<ActionClaim, String> {
         self.ensure_action_commits()?;
-        let Some(committed) = self.action_commits.get(action_id).cloned() else {
+        let Some(committed) = self
+            .action_commits
+            .get(&(namespace.to_string(), action_id.to_string()))
+            .cloned()
+        else {
             return Ok(ActionClaim::New);
         };
-        if committed.kind != kind || committed.key != key {
+        if committed.namespace != namespace || committed.kind != kind || committed.key != key {
             return Err(format!(
-                "action id {action_id} already committed on {}/{}",
-                committed.kind, committed.key
+                "action id {action_id} already committed on {}/{}/{}",
+                committed.namespace, committed.kind, committed.key
             ));
         }
         if committed.props != *props {
@@ -320,9 +328,10 @@ impl Store {
         if committed.hidden {
             return Err(format!("action id {action_id} body conflict"));
         }
-        if let Some(schema) = self.schema(kind)? {
+        if let Some(schema) = self.schema(namespace, kind)? {
             schema.validate(&ObjectRecord {
                 gen: 0,
+                namespace: namespace.to_string(),
                 kind: kind.to_string(),
                 key: key.to_string(),
                 hidden: false,
@@ -335,52 +344,65 @@ impl Store {
 
     fn load_reserved<T>(
         &self,
+        namespace: &str,
         kind: &str,
         key: &str,
         decode: fn(&ObjectRecord) -> Result<T, String>,
     ) -> Result<Option<T>, String> {
-        let id = (kind.to_string(), key.to_string());
+        if !self.joins.contains_key(namespace) {
+            return Ok(None);
+        }
+        let id = live_id(namespace, kind, key);
         let Some(meta) = self.identity.get(&id) else {
             return Ok(None);
         };
         if meta.hidden {
             return Ok(None);
         }
-        let record = self.load(kind, key, &PropertyAcl::allow_all())?;
+        let record = self.load(namespace, kind, key, &PropertyAcl::allow_all())?;
         decode(&record).map(Some)
     }
 
-    /// Live object for `(kind, key)` after ingest or [`Store::open`].
+    /// Live object for `(namespace, kind, key)` after ingest or [`Store::open`].
     ///
-    /// Missing identity fails closed. Hidden records return the hidden
-    /// payload and stay out of join maps. Denied properties are omitted;
-    /// remaining keys keep stored values. The object log remains authority;
-    /// interned sidecar props are a deletable projection.
-    pub fn load(&self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<ObjectRecord, String> {
+    /// Missing or unknown namespace fails closed. Missing identity fails
+    /// closed. Hidden records return the hidden payload and stay out of join
+    /// maps. Denied properties are omitted; remaining keys keep stored
+    /// values. The object log remains authority; interned sidecar props are
+    /// a deletable projection.
+    pub fn load(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+    ) -> Result<ObjectRecord, String> {
+        let namespace = self.require_known_namespace(namespace)?;
         if !acl.object_visible(kind, key) {
-            return Err(format!("unknown identity {kind}/{key}"));
+            return Err(format!("unknown identity {namespace}/{kind}/{key}"));
         }
-        let id = (kind.to_string(), key.to_string());
+        let id = live_id(namespace, kind, key);
         let meta = self
             .identity
             .get(&id)
-            .ok_or_else(|| format!("unknown identity {kind}/{key}"))?;
-        let denied = acl.interned_denies(|token| self.joins.intern_existing(token));
+            .ok_or_else(|| format!("unknown identity {namespace}/{kind}/{key}"))?;
+        let maps = self.joins_in(namespace)?;
+        let denied = acl.interned_denies(|token| maps.intern_existing(token));
         let props = if meta.hidden {
-            self.hidden_props_omitting(kind, &id, &denied)
+            self.hidden_props_omitting(maps, kind, &id, &denied)
         } else {
-            self.joins.row_props_omitting(kind, key, &denied)
+            maps.row_props_omitting(kind, key, &denied)
         };
         Ok(ObjectRecord {
             gen: meta.gen,
+            namespace: namespace.to_string(),
             kind: kind.to_string(),
             key: key.to_string(),
             hidden: meta.hidden,
             action_id: match meta.action_id {
                 None => None,
                 Some(intern) => Some(
-                    self.joins
-                        .intern_get(intern)
+                    maps.intern_get(intern)
                         .ok_or_else(|| "missing intern action".to_string())?
                         .to_string(),
                 ),
@@ -389,14 +411,25 @@ impl Store {
         })
     }
 
-    /// Last visible `mikura.schema` row for `kind`, or `None` when absent or hidden.
-    pub fn schema(&self, kind: &str) -> Result<Option<SchemaDescriptor>, String> {
-        self.load_reserved(SCHEMA_KIND, kind, SchemaDescriptor::from_record)
+    /// Last visible `mikura.schema` row for `kind` in `namespace`, or `None`
+    /// when absent or hidden. Missing or unknown namespace fails closed.
+    pub fn schema(&self, namespace: &str, kind: &str) -> Result<Option<SchemaDescriptor>, String> {
+        self.require_known_namespace(namespace)?;
+        self.load_reserved(namespace, SCHEMA_KIND, kind, SchemaDescriptor::from_record)
     }
 
-    /// Last visible `mikura.overlay` row for `(kind, key)`, or `None` when absent or hidden.
-    pub fn overlay(&self, kind: &str, key: &str) -> Result<Option<OverlayPatch>, String> {
+    /// Last visible `mikura.overlay` row for `(namespace, kind, key)`, or
+    /// `None` when absent or hidden. Missing or unknown namespace fails
+    /// closed.
+    pub fn overlay(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+    ) -> Result<Option<OverlayPatch>, String> {
+        self.require_known_namespace(namespace)?;
         self.load_reserved(
+            namespace,
             OVERLAY_KIND,
             &OverlayPatch::identity_key(kind, key),
             OverlayPatch::from_record,
@@ -428,6 +461,7 @@ impl Store {
         acl: &PropertyAcl,
     ) -> Result<(), String> {
         Self::require_action_id(&action_id, "action id required")?;
+        self.require_known_namespace(&patch.namespace)?;
         acl.require_visible(&patch.kind, &patch.key)
             .map_err(|err| err.to_string())?;
         for property in patch.props.keys() {
@@ -439,19 +473,28 @@ impl Store {
                 .map_err(|err| err.to_string())?;
         }
         self.ensure_action_commits()?;
-        if let Some(committed) = self.action_commits.get(&action_id).cloned() {
+        if let Some(committed) = self
+            .action_commits
+            .get(&(patch.namespace.clone(), action_id.clone()))
+            .cloned()
+        {
             return self.replay_overlay(committed, &patch, &action_id);
         }
-        let id = (patch.kind.clone(), patch.key.clone());
-        self.require_expected_gen(&patch.kind, &patch.key, expected_gen)?;
+        let id = live_id(&patch.namespace, &patch.kind, &patch.key);
+        self.require_expected_gen(&patch.namespace, &patch.kind, &patch.key, expected_gen)?;
         patch.action_id = Some(action_id.clone());
         let instance_hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
         let instance_exists = self.identity.contains_key(&id);
         self.append_uncommitted(patch.to_record()?)?;
         if !instance_hidden {
             let source = if instance_exists {
-                self.load(&patch.kind, &patch.key, &PropertyAcl::allow_all())?
-                    .props
+                self.load(
+                    &patch.namespace,
+                    &patch.kind,
+                    &patch.key,
+                    &PropertyAcl::allow_all(),
+                )?
+                .props
             } else {
                 HashMap::new()
             };
@@ -459,6 +502,7 @@ impl Store {
             self.write_uncommitted(
                 ObjectRecord {
                     gen: 0,
+                    namespace: patch.namespace,
                     kind: patch.kind,
                     key: patch.key,
                     hidden: false,
@@ -478,12 +522,13 @@ impl Store {
     /// rows written before a descriptor still return from [`Self::load`].
     pub fn load_with_schema(
         &self,
+        namespace: &str,
         kind: &str,
         key: &str,
         acl: &PropertyAcl,
         schema: &SchemaDescriptor,
     ) -> Result<ObjectRecord, String> {
-        let record = self.load(kind, key, acl)?;
+        let record = self.load(namespace, kind, key, acl)?;
         schema.validate(&record)?;
         Ok(record)
     }
@@ -494,9 +539,12 @@ impl Store {
     }
 
     /// Reserve intern capacity before a batch of new kind, key, property,
-    /// value, or Action-id tokens.
-    pub fn reserve_intern(&mut self, additional: usize) {
-        self.joins.reserve(additional);
+    /// value, or Action-id tokens. Unknown namespaces are left alone so a
+    /// reserve cannot admit an empty namespace.
+    pub fn reserve_intern(&mut self, namespace: &str, additional: usize) {
+        if let Some(joins) = self.joins.get_mut(namespace) {
+            joins.reserve(additional);
+        }
     }
 
     /// Buffer a record on the writer and update live maps. Durability requires
@@ -504,9 +552,9 @@ impl Store {
     /// the rebuild (ADR 0001). Stream ingest uses this; a batch that must be all or
     /// nothing uses [`Self::append_batch`] (ADR 0026).
     ///
-    /// A supplied Action id is unique in the store (ADR 0025). The same id and
-    /// the same body (`kind`, `key`, `hidden`, `props`) is a no-op. A remapped
-    /// identity or a different body fails closed. A hidden record under a
+    /// A supplied Action id is unique in the namespace (ADR 0025, ADR 0028).
+    /// The same id and the same body (`namespace`, `kind`, `key`, `hidden`,
+    /// `props`) is a no-op. A remapped identity or a different body fails closed. A hidden record under a
     /// claimed id must copy the claimed `props`; its retry is a no-op. Source
     /// ingest may omit the id. Hide and overlay rematerialize copy provenance
     /// and do not claim a new id.
@@ -540,10 +588,16 @@ impl Store {
         if let Some(id) = claim_id.as_deref().or(record.action_id.as_deref()) {
             Self::require_action_id(id, "empty action id")?;
         }
+        require_namespace(&record.namespace)?;
         if record.kind == SCHEMA_KIND {
             let next = SchemaDescriptor::from_record(&record)?;
             if !record.hidden {
-                if let Some(previous) = self.schema(&record.key)? {
+                if let Some(previous) = self.load_reserved(
+                    &record.namespace,
+                    SCHEMA_KIND,
+                    &record.key,
+                    SchemaDescriptor::from_record,
+                )? {
                     previous.check_replacement(&next)?;
                 }
             }
@@ -552,24 +606,41 @@ impl Store {
         } else if !record.hidden {
             let was_hidden = self
                 .identity
-                .get(&(record.kind.clone(), record.key.clone()))
+                .get(&live_id(&record.namespace, &record.kind, &record.key))
                 .is_some_and(|meta| meta.hidden);
             if !was_hidden && merge_overlay {
-                if let Some(overlay) = self.overlay(&record.kind, &record.key)? {
+                if let Some(overlay) = self.load_reserved(
+                    &record.namespace,
+                    OVERLAY_KIND,
+                    &OverlayPatch::identity_key(&record.kind, &record.key),
+                    OverlayPatch::from_record,
+                )? {
                     record.props = overlay.apply(std::mem::take(&mut record.props));
                     if record.action_id.is_none() {
                         record.action_id = overlay.action_id;
                     }
                 }
             }
-            if let Some(schema) = self.schema(&record.kind)? {
+            if let Some(schema) = self.load_reserved(
+                &record.namespace,
+                SCHEMA_KIND,
+                &record.kind,
+                SchemaDescriptor::from_record,
+            )? {
                 schema.canonicalize_instance(&mut record)?;
                 schema.validate(&record)?;
             }
         }
         if let Some(id) = claim_id.as_deref() {
             if matches!(
-                self.action_claim(id, &record.kind, &record.key, record.hidden, &record.props)?,
+                self.action_claim(
+                    &record.namespace,
+                    id,
+                    &record.kind,
+                    &record.key,
+                    record.hidden,
+                    &record.props
+                )?,
                 ActionClaim::Replay
             ) {
                 return Ok(());
@@ -578,24 +649,30 @@ impl Store {
         let hide_overlay =
             record.hidden && record.kind != OVERLAY_KIND && record.kind != SCHEMA_KIND;
         let overlay_target = if hide_overlay {
-            Some((record.kind.clone(), record.key.clone()))
+            Some((
+                record.namespace.clone(),
+                record.kind.clone(),
+                record.key.clone(),
+            ))
         } else {
             None
         };
-        let id = (record.kind.clone(), record.key.clone());
+        let id = live_id(&record.namespace, &record.kind, &record.key);
         if let Some(existing) = self.identity.get(&id) {
             record.gen = existing.gen.max(1) + 1;
         } else if record.gen == 0 {
             record.gen = 1;
         }
         self.writer.append_record(&record)?;
+        let schema_namespace = record.namespace.clone();
         let schema_kind = record.kind.clone();
         let schema_key = record.key.clone();
         self.apply_record(record);
-        self.maybe_refresh_schema(&schema_kind, &schema_key)?;
-        if let Some((kind, key)) = overlay_target {
-            if self.overlay(&kind, &key)?.is_some() {
+        self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
+        if let Some((namespace, kind, key)) = overlay_target {
+            if self.overlay(&namespace, &kind, &key)?.is_some() {
                 let mut hide = OverlayPatch {
+                    namespace,
                     kind,
                     key,
                     props: HashMap::new(),
@@ -667,7 +744,7 @@ impl Store {
         self.writer.discard_pending()?;
         self.identity.clear();
         self.hidden_props.clear();
-        self.joins = JoinMaps::default();
+        self.joins.clear();
         self.dirty.clear();
         self.has_checkpoint = false;
         self.delta_bytes = 0;
@@ -683,12 +760,12 @@ impl Store {
 
     /// Whole-record replace with a clerk Action id (ADR 0006).
     ///
-    /// A repeated id with the same body (`kind`, `key`, `hidden = false`,
-    /// `props`) is a replay: no append (ADR 0011). The same id with a
-    /// different body or on another identity fails closed. A replay whose
-    /// body is illegal under the current descriptor also fails closed
-    /// (ADR 0013). Ids are unique in the store; lookup rebuilds from the
-    /// log. `expected_gen` still applies to a new id. A legal replay that
+    /// A repeated id with the same body (`namespace`, `kind`, `key`,
+    /// `hidden = false`, `props`) is a replay: no append (ADR 0011). The
+    /// same id with a different body or on another identity fails closed. A
+    /// replay whose body is illegal under the current descriptor also fails
+    /// closed (ADR 0013). Ids are unique per namespace; lookup rebuilds from
+    /// the log. `expected_gen` still applies to a new id. A legal replay that
     /// already committed does not append.
     pub fn apply_action(
         &mut self,
@@ -706,19 +783,28 @@ impl Store {
         acl: &PropertyAcl,
     ) -> Result<(), String> {
         Self::require_action_id(&action.id, "action id required")?;
+        self.require_known_namespace(&action.namespace)?;
         acl.require_visible(&action.kind, &action.key)
             .map_err(|err| err.to_string())?;
         for property in action.props.keys() {
             acl.check(&action.kind, property)
                 .map_err(|err| err.to_string())?;
         }
-        match self.action_claim(&action.id, &action.kind, &action.key, false, &action.props)? {
+        match self.action_claim(
+            &action.namespace,
+            &action.id,
+            &action.kind,
+            &action.key,
+            false,
+            &action.props,
+        )? {
             ActionClaim::Replay => return Ok(()),
             ActionClaim::New => {}
         }
-        self.require_expected_gen(&action.kind, &action.key, expected_gen)?;
+        self.require_expected_gen(&action.namespace, &action.kind, &action.key, expected_gen)?;
         self.append_replace(ObjectRecord {
             gen: 0,
+            namespace: action.namespace,
             kind: action.kind,
             key: action.key,
             hidden: false,
@@ -728,14 +814,21 @@ impl Store {
         self.commit()
     }
 
-    /// Hide `(kind, key)` from evaluate. [`Self::load`] still returns the last
-    /// payload. Missing identity fails closed. Denied properties this hide
-    /// would copy fail closed. Overlay rows stay on the log under the
-    /// existing instance-hide rule.
-    pub fn hide(&mut self, kind: &str, key: &str, acl: &PropertyAcl) -> Result<(), String> {
+    /// Hide `(namespace, kind, key)` from evaluate. [`Self::load`] still
+    /// returns the last payload. Missing identity or namespace fails closed.
+    /// Denied properties this hide would copy fail closed. Overlay rows stay
+    /// on the log under the existing instance-hide rule.
+    pub fn hide(
+        &mut self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+    ) -> Result<(), String> {
+        self.require_known_namespace(namespace)?;
         acl.require_visible(kind, key)
             .map_err(|err| err.to_string())?;
-        let current = self.load(kind, key, &PropertyAcl::allow_all())?;
+        let current = self.load(namespace, kind, key, &PropertyAcl::allow_all())?;
         for property in current.props.keys() {
             acl.check(kind, property)
                 .map_err(|err| format!("{err:?}"))?;
@@ -743,6 +836,7 @@ impl Store {
         self.write_uncommitted(
             ObjectRecord {
                 gen: 0,
+                namespace: current.namespace,
                 kind: current.kind,
                 key: current.key,
                 hidden: true,
@@ -755,8 +849,10 @@ impl Store {
         self.commit()
     }
 
-    pub fn joins(&self) -> &JoinMaps {
-        &self.joins
+    /// Join maps for a known namespace. Missing or unknown namespace fails
+    /// closed.
+    pub fn joins(&self, namespace: &str) -> Result<&JoinMaps, String> {
+        self.joins_in(self.require_known_namespace(namespace)?)
     }
 
     /// Superblock `committed_pages`. Snapshot cursors bind this value
@@ -777,8 +873,9 @@ impl Store {
 
     fn hidden_props_omitting(
         &self,
+        maps: &JoinMaps,
         kind: &str,
-        id: &(String, String),
+        id: &LiveId,
         denied: &HashSet<(u32, u32)>,
     ) -> HashMap<String, String> {
         let Some(props) = self.hidden_props.get(id) else {
@@ -787,12 +884,12 @@ impl Store {
         if denied.is_empty() {
             return props.clone();
         }
-        let Some(kind_id) = self.joins.intern_existing(kind) else {
+        let Some(kind_id) = maps.intern_existing(kind) else {
             return props.clone();
         };
         let mut allowed = HashMap::with_capacity(props.len());
         for (name, value) in props {
-            if let Some(prop_id) = self.joins.intern_existing(name) {
+            if let Some(prop_id) = maps.intern_existing(name) {
                 if denied.contains(&(kind_id, prop_id)) {
                     continue;
                 }
@@ -805,49 +902,100 @@ impl Store {
     fn replay_from_log(&mut self) -> Result<(), String> {
         self.identity.clear();
         self.hidden_props.clear();
-        self.joins = JoinMaps::default();
+        self.joins.clear();
         self.dirty.clear();
         self.action_commits.clear();
         for record in read_records(&self.log)? {
+            let schema_namespace = record.namespace.clone();
             let schema_kind = record.kind.clone();
             let schema_key = record.key.clone();
             self.apply_record(record);
-            self.maybe_refresh_schema(&schema_kind, &schema_key)?;
+            self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
         }
         self.dirty.clear();
         self.action_commits_from_log = true;
         Ok(())
     }
 
-    fn maybe_refresh_schema(&mut self, kind: &str, key: &str) -> Result<(), String> {
+    fn maybe_refresh_schema(
+        &mut self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+    ) -> Result<(), String> {
         if kind == SCHEMA_KIND {
-            self.refresh_leaf_measures(key)?;
+            self.refresh_leaf_measures(namespace, key)?;
         }
         Ok(())
     }
 
-    fn refresh_leaf_measures(&mut self, kind: &str) -> Result<(), String> {
-        match self.schema(kind)? {
-            Some(schema) => self.joins.set_declared_sums(&schema.kind, &schema.sums),
-            None => self.joins.clear_declared_sums(kind),
+    fn refresh_leaf_measures(&mut self, namespace: &str, kind: &str) -> Result<(), String> {
+        let schema = self.schema(namespace, kind)?;
+        match schema {
+            Some(schema) => self
+                .joins_for_write(namespace)
+                .set_declared_sums(&schema.kind, &schema.sums),
+            None => {
+                if let Some(joins) = self.joins.get_mut(namespace) {
+                    joins.clear_declared_sums(kind);
+                }
+            }
         }
         Ok(())
     }
 
     pub(crate) fn adopt_declared_measures(&mut self) -> Result<(), String> {
-        let mut kinds: Vec<String> = self
+        let mut rows: Vec<(String, String)> = self
             .identity
             .iter()
-            .filter(|((kind, _), meta)| kind == SCHEMA_KIND && !meta.hidden)
-            .map(|((_, key), _)| key.clone())
+            .filter(|((_namespace, kind, _), meta)| kind == SCHEMA_KIND && !meta.hidden)
+            .map(|((namespace, _, key), _)| (namespace.clone(), key.clone()))
             .collect();
-        kinds.sort();
-        for kind in kinds {
-            match self.schema(&kind)? {
-                Some(schema) => self.joins.adopt_declared_sums(&schema.kind, &schema.sums),
-                None => self.joins.clear_declared_sums(&kind),
+        rows.sort();
+        for (namespace, kind) in rows {
+            let schema = self.schema(&namespace, &kind)?;
+            match schema {
+                Some(schema) => self
+                    .joins_for_write(&namespace)
+                    .adopt_declared_sums(&schema.kind, &schema.sums),
+                None => {
+                    if let Some(joins) = self.joins.get_mut(&namespace) {
+                        joins.clear_declared_sums(&kind);
+                    }
+                }
             }
         }
         Ok(())
+    }
+
+    fn joins_for_write(&mut self, namespace: &str) -> &mut JoinMaps {
+        self.joins.entry(namespace.to_string()).or_default()
+    }
+
+    fn joins_in(&self, namespace: &str) -> Result<&JoinMaps, String> {
+        self.joins
+            .get(namespace)
+            .ok_or_else(|| format!("unknown namespace {namespace}"))
+    }
+
+    fn require_known_namespace<'a>(&self, namespace: &'a str) -> Result<&'a str, String> {
+        let namespace = require_namespace(namespace)?;
+        if self.joins.contains_key(namespace) {
+            Ok(namespace)
+        } else {
+            Err(format!("unknown namespace {namespace}"))
+        }
+    }
+}
+
+fn live_id(namespace: &str, kind: &str, key: &str) -> LiveId {
+    (namespace.to_string(), kind.to_string(), key.to_string())
+}
+
+fn require_namespace(namespace: &str) -> Result<&str, String> {
+    if namespace.is_empty() {
+        Err("namespace required".into())
+    } else {
+        Ok(namespace)
     }
 }

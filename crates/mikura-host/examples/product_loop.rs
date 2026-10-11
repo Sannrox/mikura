@@ -65,6 +65,7 @@ fn rpc_once(addr: SocketAddr, body: &serde_json::Value) -> Result<HostResponse, 
 fn rec(kind: &str, key: &str, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden: false,
@@ -122,6 +123,7 @@ fn main() -> Result<(), String> {
         "load svc-api",
         session.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "component",
             "key": "svc-api"
         }))?,
@@ -141,6 +143,7 @@ fn main() -> Result<(), String> {
         session.rpc(&serde_json::json!({
             "op": "evaluate",
             "request": {
+                "namespace": "ns",
                 "root_kind": "component",
                 "hops": [],
                 "sum_kind": "component",
@@ -162,6 +165,7 @@ fn main() -> Result<(), String> {
         session.rpc(&serde_json::json!({
             "op": "evaluate",
             "request": {
+                "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [{
                     "far_kind": "component",
@@ -183,6 +187,7 @@ fn main() -> Result<(), String> {
 
     let edit = serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -197,6 +202,7 @@ fn main() -> Result<(), String> {
         "load inc-1 after edit",
         session.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -210,6 +216,7 @@ fn main() -> Result<(), String> {
         "load inc-1 after retry",
         session.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -227,6 +234,7 @@ fn main() -> Result<(), String> {
         "load inc-1 after Host::open retry",
         session.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -251,6 +259,7 @@ fn main() -> Result<(), String> {
         "load inc-1 after refresh",
         session.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -270,6 +279,7 @@ fn main() -> Result<(), String> {
         "load svc-api after reopen",
         reopened.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "component",
             "key": "svc-api"
         }))?,
@@ -283,7 +293,7 @@ fn main() -> Result<(), String> {
     let store = Store::open(&log)?;
     assert_eq!(
         store
-            .load("incident", "inc-1", &PropertyAcl::allow_all())?
+            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())?
             .props
             .get("name")
             .map(String::as_str),
@@ -294,6 +304,7 @@ fn main() -> Result<(), String> {
         "hide inc-1",
         reopened.rpc(&serde_json::json!({
             "op": "hide",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -302,6 +313,7 @@ fn main() -> Result<(), String> {
         "load inc-1 after hide",
         reopened.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "incident",
             "key": "inc-1"
         }))?,
@@ -314,6 +326,7 @@ fn main() -> Result<(), String> {
         reopened.rpc(&serde_json::json!({
             "op": "evaluate",
             "request": {
+                "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [{
                     "far_kind": "component",

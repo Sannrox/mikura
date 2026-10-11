@@ -7,6 +7,19 @@ window.
 
 ## [Unreleased]
 
+### Upgrade
+
+- New object logs write `MIKURAV2` with a required `namespace` on every
+  record. `MIKURAV1` logs fail closed on open. Join sidecars are
+  `MKJOIN05` / `MKJOIN5D`; `MKJOIN04` and earlier fail closed. Delete the
+  sidecar on a `MIKURAV2` log to rebuild. Reopening pre-namespace logs is
+  [#251](https://github.com/Sannrox/mikura/issues/251)
+  ([#234](https://github.com/Sannrox/mikura/issues/234),
+  [ADR 0028](docs/decisions/0028-store-namespace.md)).
+- Public identity is `(namespace, kind, key)`. Load, evaluate, hide,
+  overlay, and Action name a namespace. Missing or unknown fails closed.
+  Host JSON requires `namespace` on those ops and on ingested records.
+
 ## [0.2.0] - 2026-09-24
 
 ### Upgrade

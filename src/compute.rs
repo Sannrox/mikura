@@ -33,8 +33,13 @@ fn has_hop_predicate(request: &EvaluateRequest) -> bool {
     request.hops.iter().any(|hop| hop.predicate.is_some())
 }
 
-fn property_type(store: &Store, kind: &str, property: &str) -> Result<PropertyType, ComputeError> {
-    match store.schema(kind) {
+fn property_type(
+    store: &Store,
+    namespace: &str,
+    kind: &str,
+    property: &str,
+) -> Result<PropertyType, ComputeError> {
+    match store.schema(namespace, kind) {
         Ok(Some(schema)) => Ok(schema
             .property_type(property)
             .unwrap_or(PropertyType::String)),
@@ -73,23 +78,29 @@ fn check_predicate_shape(pred: &Predicate) -> Result<(), ComputeError> {
 
 fn parse_predicate_value(
     store: &Store,
+    namespace: &str,
     kind: &str,
     property: &str,
     raw: &str,
 ) -> Result<(), ComputeError> {
-    let ty = property_type(store, kind, property)?;
+    let ty = property_type(store, namespace, kind, property)?;
     ty.parse_canonical(raw).map_err(ComputeError::Predicate)?;
     Ok(())
 }
 
-fn check_predicate_types(store: &Store, kind: &str, pred: &Predicate) -> Result<(), ComputeError> {
+fn check_predicate_types(
+    store: &Store,
+    namespace: &str,
+    kind: &str,
+    pred: &Predicate,
+) -> Result<(), ComputeError> {
     check_predicate_shape(pred)?;
     match pred {
         Predicate::Eq { property, value } | Predicate::Neq { property, value } => {
-            parse_predicate_value(store, kind, property, value)
+            parse_predicate_value(store, namespace, kind, property, value)
         }
         Predicate::Range { property, min, max } => {
-            let ty = property_type(store, kind, property)?;
+            let ty = property_type(store, namespace, kind, property)?;
             if matches!(ty, PropertyType::Boolean) {
                 return Err(ComputeError::Predicate(format!(
                     "range is not defined for boolean {kind}.{property}"
@@ -106,11 +117,11 @@ fn check_predicate_types(store: &Store, kind: &str, pred: &Predicate) -> Result<
         Predicate::Missing { .. } => Ok(()),
         Predicate::And(args) | Predicate::Or(args) => {
             for arg in args {
-                check_predicate_types(store, kind, arg)?;
+                check_predicate_types(store, namespace, kind, arg)?;
             }
             Ok(())
         }
-        Predicate::Not(inner) => check_predicate_types(store, kind, inner),
+        Predicate::Not(inner) => check_predicate_types(store, namespace, kind, inner),
     }
 }
 
@@ -137,11 +148,12 @@ fn stored_eq(ty: PropertyType, stored: &str, expected: &str) -> bool {
 
 fn matches_predicate(
     store: &Store,
+    namespace: &str,
     kind: &str,
     key_id: u32,
     pred: &Predicate,
 ) -> Result<bool, ComputeError> {
-    let maps = store.joins();
+    let maps = store.joins(namespace).map_err(ComputeError::Load)?;
     let Some(key) = maps.intern_get(key_id) else {
         return Ok(false);
     };
@@ -150,28 +162,28 @@ fn matches_predicate(
             let Some(stored) = maps.prop(kind, key, property) else {
                 return Ok(false);
             };
-            let ty = property_type(store, kind, property)?;
+            let ty = property_type(store, namespace, kind, property)?;
             Ok(stored_eq(ty, stored, value))
         }
         Predicate::Neq { property, value } => {
             let Some(stored) = maps.prop(kind, key, property) else {
                 return Ok(false);
             };
-            let ty = property_type(store, kind, property)?;
+            let ty = property_type(store, namespace, kind, property)?;
             Ok(!stored_eq(ty, stored, value))
         }
         Predicate::Range { property, min, max } => {
             let Some(stored) = maps.prop(kind, key, property) else {
                 return Ok(false);
             };
-            let ty = property_type(store, kind, property)?;
+            let ty = property_type(store, namespace, kind, property)?;
             ty.in_range(stored, min.as_deref(), max.as_deref())
                 .map_err(ComputeError::Predicate)
         }
         Predicate::Missing { property } => Ok(maps.prop(kind, key, property).is_none()),
         Predicate::And(args) => {
             for arg in args {
-                if !matches_predicate(store, kind, key_id, arg)? {
+                if !matches_predicate(store, namespace, kind, key_id, arg)? {
                     return Ok(false);
                 }
             }
@@ -179,25 +191,26 @@ fn matches_predicate(
         }
         Predicate::Or(args) => {
             for arg in args {
-                if matches_predicate(store, kind, key_id, arg)? {
+                if matches_predicate(store, namespace, kind, key_id, arg)? {
                     return Ok(true);
                 }
             }
             Ok(false)
         }
-        Predicate::Not(inner) => Ok(!matches_predicate(store, kind, key_id, inner)?),
+        Predicate::Not(inner) => Ok(!matches_predicate(store, namespace, kind, key_id, inner)?),
     }
 }
 
 fn filter_ids(
     store: &Store,
+    namespace: &str,
     kind: &str,
     ids: HashSet<u32>,
     pred: &Predicate,
 ) -> Result<HashSet<u32>, ComputeError> {
     let mut kept = HashSet::new();
     for id in ids {
-        if matches_predicate(store, kind, id, pred)? {
+        if matches_predicate(store, namespace, kind, id, pred)? {
             kept.insert(id);
         }
     }
@@ -210,7 +223,9 @@ fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, Co
             "evaluate accepts filter or predicate, not both".into(),
         ));
     }
-    let maps = store.joins();
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
     let ids = if let Some(filter) = &request.filter {
         maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value)
     } else {
@@ -218,7 +233,7 @@ fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, Co
     };
     let ids = visible_in_view(store, request, &request.root_kind, ids);
     if let Some(pred) = &request.predicate {
-        filter_ids(store, &request.root_kind, ids, pred)
+        filter_ids(store, &request.namespace, &request.root_kind, ids, pred)
     } else {
         Ok(ids)
     }
@@ -233,7 +248,9 @@ fn visible_in_view(
     if !request.acl.hides_objects() {
         return ids;
     }
-    let maps = store.joins();
+    let Ok(maps) = store.joins(&request.namespace) else {
+        return HashSet::new();
+    };
     ids.into_iter()
         .filter(|&id| {
             maps.intern_get(id)
@@ -247,7 +264,9 @@ fn walk_hops(
     request: &EvaluateRequest,
     roots: &HashSet<u32>,
 ) -> Result<(usize, i64, Vec<u32>), ComputeError> {
-    let maps = store.joins();
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
     let mut paths: Vec<(u32, u32)> = roots.iter().map(|&id| (id, id)).collect();
     let mut frontier_kind = request.root_kind.as_str();
     for hop in &request.hops {
@@ -269,7 +288,7 @@ fn walk_hops(
                     }
                 }
                 if let Some(pred) = &hop.predicate {
-                    if !matches_predicate(store, &hop.far_kind, child, pred)? {
+                    if !matches_predicate(store, &request.namespace, &hop.far_kind, child, pred)? {
                         continue;
                     }
                 }
@@ -300,8 +319,10 @@ fn walk_hops(
     Ok((count, total, leaves))
 }
 
-fn leaf_keys(store: &Store, ids: Vec<u32>) -> Vec<String> {
-    let maps = store.joins();
+fn leaf_keys(store: &Store, namespace: &str, ids: Vec<u32>) -> Vec<String> {
+    let Ok(maps) = store.joins(namespace) else {
+        return Vec::new();
+    };
     let mut keys: Vec<String> = ids
         .into_iter()
         .filter_map(|id| maps.intern_get(id).map(str::to_string))
@@ -314,34 +335,35 @@ fn evaluate_local(
     store: &Store,
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, ComputeError> {
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
     let hops = hop_triples(request);
     let (two_hop_count, sum_amount, keys) =
         if request.acl.hides_objects() || has_hop_predicate(request) {
             let roots = root_ids(store, request)?;
             let (count, sum, leaves) = walk_hops(store, request, &roots)?;
-            (count, sum, leaf_keys(store, leaves))
+            (count, sum, leaf_keys(store, &request.namespace, leaves))
         } else if request.predicate.is_some() {
             let roots = root_ids(store, request)?;
-            let (count, sum) = store.joins().count_and_sum_roots(
+            let (count, sum) = maps.count_and_sum_roots(
                 &request.root_kind,
                 &roots,
                 &hops,
                 &request.sum_kind,
                 &request.sum_property,
             );
-            let keys = store
-                .joins()
-                .result_keys_from_roots(&request.root_kind, &roots, &hops);
+            let keys = maps.result_keys_from_roots(&request.root_kind, &roots, &hops);
             (count, sum, keys)
         } else {
             let (count, sum) = match &request.filter {
-                None => store.joins().count_and_sum(
+                None => maps.count_and_sum(
                     &request.root_kind,
                     &hops,
                     &request.sum_kind,
                     &request.sum_property,
                 ),
-                Some(filter) => store.joins().count_and_sum_matching(
+                Some(filter) => maps.count_and_sum_matching(
                     &request.root_kind,
                     &hops,
                     &request.sum_kind,
@@ -354,7 +376,7 @@ fn evaluate_local(
                 .filter
                 .as_ref()
                 .map(|filter| (filter.property.as_str(), filter.value.as_str()));
-            let keys = store.joins().result_keys(&request.root_kind, &hops, filter);
+            let keys = maps.result_keys(&request.root_kind, &hops, filter);
             (count, sum, keys)
         };
     let (objects, cursor) = page_objects(store, request, keys)?;
@@ -411,7 +433,7 @@ fn page_objects(
     }
     let kind = result_kind(request);
     let ranked = match &request.sort {
-        Some(sort) => rank_keys(store, kind, keys, sort)?,
+        Some(sort) => rank_keys(store, &request.namespace, kind, keys, sort)?,
         None => keys
             .into_iter()
             .map(|key| RankedKey {
@@ -441,7 +463,7 @@ fn page_objects(
     for row in page {
         objects.push(
             store
-                .load(kind, &row.key, &request.acl)
+                .load(&request.namespace, kind, &row.key, &request.acl)
                 .map_err(ComputeError::Load)?,
         );
     }
@@ -450,12 +472,13 @@ fn page_objects(
 
 fn rank_keys(
     store: &Store,
+    namespace: &str,
     kind: &str,
     keys: Vec<String>,
     sort: &Sort,
 ) -> Result<Vec<RankedKey>, ComputeError> {
-    let ty = property_type(store, kind, &sort.property)?;
-    let maps = store.joins();
+    let ty = property_type(store, namespace, kind, &sort.property)?;
+    let maps = store.joins(namespace).map_err(ComputeError::Load)?;
     let mut ranked = Vec::with_capacity(keys.len());
     for key in keys {
         match maps.prop(kind, &key, &sort.property) {
@@ -515,6 +538,7 @@ fn apply_cursor(
         decode_cursor(token, request, store.snapshot_stamp()).map_err(ComputeError::Page)?;
     let ty = property_type(
         store,
+        &request.namespace,
         result_kind(request),
         &request
             .sort
@@ -591,6 +615,12 @@ impl ComputeBackend for LocalCompute {
     ) -> Result<EvaluateResponse, ComputeError> {
         match request.aggregate {
             Aggregate::CountAndSum => {
+                if request.namespace.is_empty() {
+                    return Err(ComputeError::Load("namespace required".into()));
+                }
+                store
+                    .joins(&request.namespace)
+                    .map_err(ComputeError::Load)?;
                 request
                     .acl
                     .check(&request.sum_kind, &request.sum_property)
@@ -608,7 +638,7 @@ impl ComputeBackend for LocalCompute {
                 }
                 if let Some(pred) = &request.predicate {
                     check_predicate_acl(request, &request.root_kind, pred)?;
-                    check_predicate_types(store, &request.root_kind, pred)?;
+                    check_predicate_types(store, &request.namespace, &request.root_kind, pred)?;
                 }
                 check_page_request(request)?;
                 if let Some(sort) = &request.sort {
@@ -631,7 +661,7 @@ impl ComputeBackend for LocalCompute {
                         .map_err(ComputeError::Acl)?;
                     if let Some(pred) = &hop.predicate {
                         check_predicate_acl(request, &hop.far_kind, pred)?;
-                        check_predicate_types(store, &hop.far_kind, pred)?;
+                        check_predicate_types(store, &request.namespace, &hop.far_kind, pred)?;
                     }
                     frontier_kind = hop.far_kind.as_str();
                 }

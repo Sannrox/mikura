@@ -1,11 +1,15 @@
 use mikura::ObjectRecord;
 use std::collections::HashMap;
 
-pub(crate) type Identity = (String, String);
+pub(crate) type Identity = (String, String, String);
 pub(crate) type Snapshot = HashMap<Identity, ObjectRecord>;
 
 pub(crate) fn identity(record: &ObjectRecord) -> Identity {
-    (record.kind.clone(), record.key.clone())
+    (
+        record.namespace.clone(),
+        record.kind.clone(),
+        record.key.clone(),
+    )
 }
 
 pub(crate) fn intern_token_budget(record: &ObjectRecord) -> usize {

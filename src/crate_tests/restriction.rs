@@ -14,9 +14,9 @@ fn restriction_hides_load_evaluate_and_mutations() {
     append_all(&mut store, product_loop_seed());
     let open = PropertyAcl::allow_all();
     let hidden = hide_incident();
-    let missing = store.load("incident", "inc-1", &hidden).unwrap_err();
+    let missing = store.load(NS, "incident", "inc-1", &hidden).unwrap_err();
     assert!(missing.contains("unknown identity"), "{missing}");
-    let visible = store.load("incident", "inc-1", &open).unwrap();
+    let visible = store.load(NS, "incident", "inc-1", &open).unwrap();
     assert_eq!(
         visible.props.get("name").map(String::as_str),
         Some("elevated latency")
@@ -42,6 +42,7 @@ fn restriction_hides_load_evaluate_and_mutations() {
     let overlay_err = store
         .apply_overlay_in_view(
             OverlayPatch {
+                namespace: NS.into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
                 props: HashMap::from([("note".into(), "secret".into())]),
@@ -57,6 +58,7 @@ fn restriction_hides_load_evaluate_and_mutations() {
     let action_err = store
         .apply_action_in_view(
             Action {
+                namespace: NS.into(),
                 id: "act-replace".into(),
                 kind: "incident".into(),
                 key: "inc-1".into(),
@@ -67,11 +69,11 @@ fn restriction_hides_load_evaluate_and_mutations() {
         )
         .unwrap_err();
     assert!(action_err.contains("not in this view"), "{action_err}");
-    let hide_err = store.hide("incident", "inc-1", &hidden).unwrap_err();
+    let hide_err = store.hide(NS, "incident", "inc-1", &hidden).unwrap_err();
     assert!(hide_err.contains("not in this view"), "{hide_err}");
     assert_eq!(
         store
-            .load("incident", "inc-1", &open)
+            .load(NS, "incident", "inc-1", &open)
             .unwrap()
             .props
             .get("name")
@@ -82,12 +84,12 @@ fn restriction_hides_load_evaluate_and_mutations() {
     drop(store);
     let reopened = Store::open(&log).unwrap();
     assert!(reopened
-        .load("incident", "inc-1", &hidden)
+        .load(NS, "incident", "inc-1", &hidden)
         .unwrap_err()
         .contains("unknown identity"));
     assert_eq!(
         reopened
-            .load("incident", "inc-1", &open)
+            .load(NS, "incident", "inc-1", &open)
             .unwrap()
             .props
             .get("name")
@@ -98,7 +100,7 @@ fn restriction_hides_load_evaluate_and_mutations() {
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let rebuilt = Store::open(&log).unwrap();
     assert!(rebuilt
-        .load("incident", "inc-1", &hidden)
+        .load(NS, "incident", "inc-1", &hidden)
         .unwrap_err()
         .contains("unknown identity"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -130,6 +132,7 @@ fn restriction_cursor_binds_hide_list() {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: NS.into(),
                 root_kind: "incident".into(),
                 hops: vec![],
                 sum_kind: "incident".into(),
@@ -151,6 +154,7 @@ fn restriction_cursor_binds_hide_list() {
     let mismatched = oss.evaluate(
         &store,
         &EvaluateRequest {
+            namespace: NS.into(),
             root_kind: "incident".into(),
             hops: vec![],
             sum_kind: "incident".into(),

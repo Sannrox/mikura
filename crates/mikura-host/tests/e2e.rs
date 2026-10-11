@@ -180,6 +180,7 @@ impl Drop for HostProcess {
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -210,6 +211,7 @@ fn evaluate_wire() -> serde_json::Value {
     serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "Customer",
             "hops": [
                 {"far_kind": "Order", "join_property": "customer_id"},
@@ -227,6 +229,7 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
         .evaluate(
             &store,
             &EvaluateRequest {
+                namespace: "ns".into(),
                 root_kind: "Customer".into(),
                 hops: vec![
                     Hop {
@@ -324,6 +327,7 @@ fn process_load_matches_in_process_and_survives_exit() {
     assert!(ingest.ok, "{ingest:?}");
     let hosted = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "Customer",
         "key": "c1"
     }));
@@ -333,6 +337,7 @@ fn process_load_matches_in_process_and_survives_exit() {
     assert_eq!(loaded.props.get("region").map(String::as_str), Some("us"));
     let omitted = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "Customer",
         "key": "c1",
         "deny": [{"kind": "Customer", "property": "region"}]
@@ -345,7 +350,7 @@ fn process_load_matches_in_process_and_survives_exit() {
     assert_eq!(
         loaded,
         store
-            .load("Customer", "c1", &PropertyAcl::allow_all())
+            .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap()
     );
 }
@@ -403,6 +408,7 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     assert!(ingest.ok, "{ingest:?}");
     let written = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-s2",
         "kind": "Shipment",
         "key": "s2",
@@ -411,6 +417,7 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     assert!(written.ok, "{written:?}");
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "Shipment",
         "key": "s2"
     }));
@@ -420,6 +427,7 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     assert_eq!(record.props.get("amount").map(String::as_str), Some("5"));
     let replay = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-s2",
         "kind": "Shipment",
         "key": "s2",
@@ -428,12 +436,14 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     assert!(replay.ok, "{replay:?}");
     let replayed = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "Shipment",
         "key": "s2"
     }));
     assert_eq!(replayed.load.expect("load payload").gen, record.gen);
     let conflict = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-s2",
         "kind": "Shipment",
         "key": "s2",
@@ -450,6 +460,7 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     );
     let other = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-s2",
         "kind": "Shipment",
         "key": "s1",
@@ -468,6 +479,7 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let after_open = reopened.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-s2",
         "kind": "Shipment",
         "key": "s2",
@@ -476,12 +488,14 @@ fn process_apply_action_round_trips_and_empty_id_fails_closed() {
     assert!(after_open.ok, "{after_open:?}");
     let after_open = reopened.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "Shipment",
         "key": "s2"
     }));
     assert_eq!(after_open.load.expect("load payload").gen, record.gen);
     let missing = reopened.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "",
         "kind": "Shipment",
         "key": "s3",
@@ -513,6 +527,7 @@ fn process_ingest_hide_under_a_claimed_action_id_conflicts_and_replays() {
     let load = || {
         host.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "Shipment",
             "key": "s2"
         }))
@@ -567,6 +582,7 @@ fn process_ingest_hide_under_a_claimed_action_id_conflicts_and_replays() {
     let reloaded = reopened
         .rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "Shipment",
             "key": "s2"
         }))
@@ -616,6 +632,7 @@ fn process_failed_ingest_batch_leaves_nothing_behind() {
     let load = |host: &HostProcess, key: &str| {
         host.rpc(&serde_json::json!({
             "op": "load",
+        "namespace": "ns",
             "kind": "Shipment",
             "key": key
         }))
@@ -649,6 +666,7 @@ fn process_acl_deny_returns_error_not_guess() {
     let denied = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "Customer",
             "hops": [
                 {"far_kind": "Order", "join_property": "customer_id"},
@@ -717,6 +735,7 @@ fn process_non_loopback_bearer_accepts_matching_token() {
         "op": "evaluate",
         "token": "secret",
         "request": {
+            "namespace": "ns",
             "root_kind": "Customer",
             "hops": [
                 {"far_kind": "Order", "join_property": "customer_id"},
@@ -733,7 +752,7 @@ fn process_non_loopback_bearer_accepts_matching_token() {
     drop(host);
     let store = Store::open(tmp.path()).unwrap();
     let live = store
-        .load("Customer", "c1", &PropertyAcl::allow_all())
+        .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(!live.props.contains_key("token"));
     assert_eq!(live.props.get("region").map(String::as_str), Some("us"));
@@ -779,6 +798,7 @@ fn process_rejects_unknown_wire_v_and_accepts_omit_or_one() {
     let versioned = host.rpc(&serde_json::json!({
         "v": 1,
         "op": "load",
+        "namespace": "ns",
         "kind": "Customer",
         "key": "c1"
     }));
@@ -787,6 +807,7 @@ fn process_rejects_unknown_wire_v_and_accepts_omit_or_one() {
     let unknown = host.rpc(&serde_json::json!({
         "v": 2,
         "op": "load",
+        "namespace": "ns",
         "kind": "Customer",
         "key": "c1"
     }));
@@ -827,6 +848,7 @@ fn process_product_loop_baseline() {
 
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "component",
         "key": "svc-api"
     }));
@@ -843,6 +865,7 @@ fn process_product_loop_baseline() {
     let filtered = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "component",
             "hops": [],
             "sum_kind": "component",
@@ -861,6 +884,7 @@ fn process_product_loop_baseline() {
     let hopped = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{
                 "far_kind": "component",
@@ -881,6 +905,7 @@ fn process_product_loop_baseline() {
 
     let edited = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -893,6 +918,7 @@ fn process_product_loop_baseline() {
     assert!(edited.ok, "{edited:?}");
     let after_edit = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -905,6 +931,7 @@ fn process_product_loop_baseline() {
     );
     let retried = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -917,6 +944,7 @@ fn process_product_loop_baseline() {
     assert!(retried.ok, "{retried:?}");
     let after_retry = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -932,6 +960,7 @@ fn process_product_loop_baseline() {
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let retried_open = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -944,6 +973,7 @@ fn process_product_loop_baseline() {
     assert!(retried_open.ok, "{retried_open:?}");
     let after_open = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -963,6 +993,7 @@ fn process_product_loop_baseline() {
     assert!(refresh.ok, "{refresh:?}");
     let after_refresh = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -974,11 +1005,11 @@ fn process_product_loop_baseline() {
 
     let store = Store::open(tmp.path()).unwrap();
     let reopened = store
-        .load("component", "svc-api", &PropertyAcl::allow_all())
+        .load("ns", "component", "svc-api", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(reopened.props.get("tier").map(String::as_str), Some("prod"));
     let incident = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         incident.props.get("name").map(String::as_str),
@@ -1001,7 +1032,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
             sums: Vec::new(),
             types: Vec::new(),
         }
-        .to_record()
+        .to_record("ns")
         .unwrap(),
         SchemaDescriptor {
             kind: "incident".into(),
@@ -1015,7 +1046,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
             sums: Vec::new(),
             types: Vec::new(),
         }
-        .to_record()
+        .to_record("ns")
         .unwrap(),
     ]
 }
@@ -1034,6 +1065,7 @@ fn process_product_loop_with_committed_schema() {
 
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "component",
         "key": "svc-api"
     }));
@@ -1043,6 +1075,7 @@ fn process_product_loop_with_committed_schema() {
 
     let schema = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "mikura.schema",
         "key": "incident"
     }));
@@ -1070,11 +1103,11 @@ fn process_product_loop_with_committed_schema() {
 
     let store = Store::open(tmp.path()).unwrap();
     assert_eq!(
-        store.schema("component").unwrap().unwrap().kind,
+        store.schema("ns", "component").unwrap().unwrap().kind,
         "component"
     );
     assert!(store
-        .load("component", "svc-web", &PropertyAcl::allow_all())
+        .load("ns", "component", "svc-web", &PropertyAcl::allow_all())
         .is_err());
 }
 
@@ -1093,6 +1126,7 @@ fn process_evaluate_object_bound_fails_closed() {
     let overflow = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "component",
             "hops": [],
             "sum_kind": "component",
@@ -1124,6 +1158,7 @@ fn product_loop_list_wire() -> serde_json::Value {
     serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "component",
             "hops": [],
             "sum_kind": "component",
@@ -1138,6 +1173,7 @@ fn product_loop_hop_wire() -> serde_json::Value {
     serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{
                 "far_kind": "component",
@@ -1154,6 +1190,7 @@ fn product_loop_hop_wire() -> serde_json::Value {
 fn load_object(host: &HostProcess, kind: &str, key: &str) -> ObjectRecord {
     let response = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": kind,
         "key": key
     }));
@@ -1202,6 +1239,7 @@ fn process_backup_restore_product_loop() {
     assert!(ingest.ok, "{ingest:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -1247,6 +1285,7 @@ fn process_product_loop_survives_shutdown_and_reopen() {
     assert!(ingest.ok, "{ingest:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -1288,6 +1327,7 @@ fn process_uncommitted_stream_push_invisible_after_reopen() {
     assert!(push.ok, "{push:?}");
     let live = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-uncommitted"
     }));
@@ -1298,6 +1338,7 @@ fn process_uncommitted_stream_push_invisible_after_reopen() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let missing = reopened.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-uncommitted"
     }));
@@ -1331,6 +1372,7 @@ fn process_product_loop_hide() {
     assert!(ingest.ok, "{ingest:?}");
     let hidden = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1346,6 +1388,7 @@ fn process_product_loop_hide() {
     assert!(live.3.is_empty());
     let unknown = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident",
         "key": "nope"
     }));
@@ -1360,6 +1403,7 @@ fn process_product_loop_hide() {
     );
     let denied = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "component",
         "key": "svc-api",
         "deny": [{"kind": "component", "property": "tier"}]
@@ -1372,6 +1416,7 @@ fn process_product_loop_hide() {
     let unknown_v = host.rpc(&serde_json::json!({
         "v": 2,
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1409,6 +1454,7 @@ fn process_overlay_refresh_keeps_note() {
     assert!(ingest.ok, "{ingest:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -1423,6 +1469,7 @@ fn process_overlay_refresh_keeps_note() {
     assert!(refresh.ok, "{refresh:?}");
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1435,6 +1482,7 @@ fn process_overlay_refresh_keeps_note() {
     assert_eq!(incident.action_id.as_deref(), Some("act-inc-1-note"));
     let stale = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note-2",
         "kind": "incident",
         "key": "inc-1",
@@ -1497,6 +1545,7 @@ fn process_disconnect_then_next_request_serves() {
     assert!(ingest.ok, "{ingest:?}");
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "component",
         "key": "svc-api"
     }));
@@ -1529,7 +1578,7 @@ fn incident_typed_schema_record() -> ObjectRecord {
             ("priority".into(), PropertyType::Integer),
         ],
     }
-    .to_record()
+    .to_record("ns")
     .unwrap()
 }
 
@@ -1559,6 +1608,7 @@ fn process_typed_scalars_round_trip() {
     assert!(ingest.ok, "{ingest:?}");
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1576,6 +1626,7 @@ fn process_typed_scalars_round_trip() {
     assert!(!invalid.ok, "{invalid:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-open",
         "kind": "incident",
         "key": "inc-1",
@@ -1587,6 +1638,7 @@ fn process_typed_scalars_round_trip() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let again = reopened.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1599,6 +1651,7 @@ fn process_typed_scalars_round_trip() {
     let replayed = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let rebuilt = replayed.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1633,7 +1686,7 @@ fn process_schema_evolution_preserves_meaning() {
     let ingest = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
         "records": [
-            initial.to_record().unwrap(),
+            initial.to_record("ns").unwrap(),
             rec(
                 "incident",
                 "inc-1",
@@ -1652,7 +1705,7 @@ fn process_schema_evolution_preserves_meaning() {
     recast.types = vec![("name".into(), PropertyType::Integer)];
     let recast_rpc = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
-        "records": [recast.to_record().unwrap()]
+        "records": [recast.to_record("ns").unwrap()]
     }));
     assert!(!recast_rpc.ok, "{recast_rpc:?}");
     assert!(
@@ -1680,11 +1733,12 @@ fn process_schema_evolution_preserves_meaning() {
     evolved.sums = vec!["name".into()];
     let evolve = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
-        "records": [evolved.to_record().unwrap()]
+        "records": [evolved.to_record("ns").unwrap()]
     }));
     assert!(evolve.ok, "{evolve:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -1693,6 +1747,7 @@ fn process_schema_evolution_preserves_meaning() {
     assert!(overlay.ok, "{overlay:?}");
     let action = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-body",
         "kind": "incident",
         "key": "inc-1",
@@ -1709,11 +1764,12 @@ fn process_schema_evolution_preserves_meaning() {
     shrunk.properties.retain(|name| name != "note");
     let shrink = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
-        "records": [shrunk.to_record().unwrap()]
+        "records": [shrunk.to_record("ns").unwrap()]
     }));
     assert!(shrink.ok, "{shrink:?}");
     let stale_overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note-2",
         "kind": "incident",
         "key": "inc-1",
@@ -1722,6 +1778,7 @@ fn process_schema_evolution_preserves_meaning() {
     assert!(!stale_overlay.ok, "{stale_overlay:?}");
     let stale_action = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-stale",
         "kind": "incident",
         "key": "inc-1",
@@ -1734,6 +1791,7 @@ fn process_schema_evolution_preserves_meaning() {
     assert!(!stale_action.ok, "{stale_action:?}");
     let replay = host.rpc(&serde_json::json!({
         "op": "apply_action",
+        "namespace": "ns",
         "id": "act-inc-1-body",
         "kind": "incident",
         "key": "inc-1",
@@ -1754,7 +1812,7 @@ fn process_schema_evolution_preserves_meaning() {
         "{replay:?}"
     );
 
-    let mut hidden = shrunk.to_record().unwrap();
+    let mut hidden = shrunk.to_record("ns").unwrap();
     hidden.hidden = true;
     let hide = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
@@ -1763,7 +1821,7 @@ fn process_schema_evolution_preserves_meaning() {
     assert!(hide.ok, "{hide:?}");
     let restore = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
-        "records": [shrunk.to_record().unwrap()]
+        "records": [shrunk.to_record("ns").unwrap()]
     }));
     assert!(restore.ok, "{restore:?}");
     drop(host);
@@ -1771,6 +1829,7 @@ fn process_schema_evolution_preserves_meaning() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let schema = reopened.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "mikura.schema",
         "key": "incident"
     }));
@@ -1793,6 +1852,7 @@ fn process_schema_evolution_preserves_meaning() {
     let replayed = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let loaded = replayed.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -1811,7 +1871,7 @@ fn query_component_schema() -> ObjectRecord {
         sums: Vec::new(),
         types: Vec::new(),
     }
-    .to_record()
+    .to_record("ns")
     .unwrap()
 }
 
@@ -1837,7 +1897,7 @@ fn query_incident_schema() -> ObjectRecord {
             ("priority".into(), PropertyType::Integer),
         ],
     }
-    .to_record()
+    .to_record("ns")
     .unwrap()
 }
 
@@ -1881,6 +1941,7 @@ fn process_composed_predicates_select_and_fail_closed() {
         &serde_json::json!({
             "op": "evaluate",
             "request": {
+            "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [],
                 "sum_kind": "incident",
@@ -1896,6 +1957,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let filter_then_hop = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{
                 "far_kind": "component",
@@ -1914,6 +1976,7 @@ fn process_composed_predicates_select_and_fail_closed() {
         &serde_json::json!({
             "op": "evaluate",
             "request": {
+            "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [{
                     "far_kind": "component",
@@ -1933,6 +1996,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let hop_then_filter = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{
                 "far_kind": "component",
@@ -1954,6 +2018,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let range = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -1976,6 +2041,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let missing = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -1998,6 +2064,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let unsupported = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2011,6 +2078,7 @@ fn process_composed_predicates_select_and_fail_closed() {
     let denied = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2024,6 +2092,7 @@ fn process_composed_predicates_select_and_fail_closed() {
 
     let hide = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-3"
     }));
@@ -2032,6 +2101,7 @@ fn process_composed_predicates_select_and_fail_closed() {
         .rpc(&serde_json::json!({
             "op": "evaluate",
             "request": {
+            "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [],
                 "sum_kind": "incident",
@@ -2055,6 +2125,7 @@ fn process_composed_predicates_select_and_fail_closed() {
         .rpc(&serde_json::json!({
             "op": "evaluate",
             "request": {
+            "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [],
                 "sum_kind": "incident",
@@ -2111,6 +2182,7 @@ fn process_ordered_pages_bind_snapshot() {
     let page1 = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2130,6 +2202,7 @@ fn process_ordered_pages_bind_snapshot() {
     let page2 = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2149,6 +2222,7 @@ fn process_ordered_pages_bind_snapshot() {
         &serde_json::json!({
             "op": "evaluate",
             "request": {
+            "namespace": "ns",
                 "root_kind": "incident",
                 "hops": [],
                 "sum_kind": "incident",
@@ -2163,6 +2237,7 @@ fn process_ordered_pages_bind_snapshot() {
     let denied = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2177,6 +2252,7 @@ fn process_ordered_pages_bind_snapshot() {
 
     let hide = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-2"
     }));
@@ -2184,6 +2260,7 @@ fn process_ordered_pages_bind_snapshot() {
     let stale = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [],
             "sum_kind": "incident",
@@ -2208,7 +2285,7 @@ fn association_records() -> Vec<ObjectRecord> {
             sums: Vec::new(),
             types: Vec::new(),
         }
-        .to_record()
+        .to_record("ns")
         .unwrap(),
     );
     records.push(
@@ -2231,7 +2308,7 @@ fn association_records() -> Vec<ObjectRecord> {
             sums: Vec::new(),
             types: Vec::new(),
         }
-        .to_record()
+        .to_record("ns")
         .unwrap(),
     );
     records.extend(product_loop_source());
@@ -2256,6 +2333,7 @@ fn evaluate_incident_labels() -> serde_json::Value {
     serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [
                 {"far_kind": "incident_label", "join_property": "incident"},
@@ -2292,6 +2370,7 @@ fn process_association_objects_traverse_and_hide() {
     let affects = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{
                 "far_kind": "component",
@@ -2308,6 +2387,7 @@ fn process_association_objects_traverse_and_hide() {
 
     let hidden = host.rpc(&serde_json::json!({
         "op": "hide",
+        "namespace": "ns",
         "kind": "incident_label",
         "key": "il-inc-1-region-eu"
     }));
@@ -2318,6 +2398,7 @@ fn process_association_objects_traverse_and_hide() {
     let denied = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [
                 {"far_kind": "incident_label", "join_property": "incident"},
@@ -2377,6 +2458,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
         "records": [
             {
                 "gen": 1,
+                "namespace": "ns",
                 "kind": "component",
                 "key": "svc-api",
                 "hidden": false,
@@ -2384,6 +2466,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
             },
             {
                 "gen": 1,
+                "namespace": "ns",
                 "kind": "incident",
                 "key": "inc-1",
                 "hidden": false,
@@ -2397,6 +2480,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
     });
     let missing = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1",
         "restriction": restriction
@@ -2412,6 +2496,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
     );
     let open = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -2419,6 +2504,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
     let hopped = host.rpc(&serde_json::json!({
         "op": "evaluate",
         "request": {
+            "namespace": "ns",
             "root_kind": "incident",
             "hops": [{"far_kind": "component", "join_property": "affects", "incoming": true}],
             "sum_kind": "component",
@@ -2431,6 +2517,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
     assert_eq!(hopped.evaluate.unwrap().two_hop_count, 0);
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-hidden",
         "kind": "incident",
         "key": "inc-1",
@@ -2448,6 +2535,7 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
     );
     let unknown = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1",
         "restriction": {"nope": true}
@@ -2464,6 +2552,7 @@ fn process_overlay_replays_matching_id() {
         "op": "ingest_batch",
         "records": [{
             "gen": 1,
+            "namespace": "ns",
             "kind": "incident",
             "key": "inc-1",
             "hidden": false,
@@ -2473,6 +2562,7 @@ fn process_overlay_replays_matching_id() {
     assert!(ingest.ok, "{ingest:?}");
     let overlay = serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -2482,6 +2572,7 @@ fn process_overlay_replays_matching_id() {
     assert!(first.ok, "{first:?}");
     let loaded = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
@@ -2490,12 +2581,14 @@ fn process_overlay_replays_matching_id() {
     assert!(replay.ok, "{replay:?}");
     let again = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-1"
     }));
     assert_eq!(again.load.as_ref().unwrap().gen, gen);
     let conflict = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -2524,6 +2617,7 @@ fn process_source_resume_replays_without_an_offset_file() {
     assert!(ingest.ok, "{ingest:?}");
     let overlay = host.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -2534,6 +2628,7 @@ fn process_source_resume_replays_without_an_offset_file() {
         "op": "ingest_stream_push",
         "record": {
             "gen": 1,
+            "namespace": "ns",
             "kind": "incident",
             "key": "inc-2",
             "hidden": false,
@@ -2545,12 +2640,14 @@ fn process_source_resume_replays_without_an_offset_file() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let missing = reopened.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "inc-2"
     }));
     assert!(!missing.ok, "{missing:?}");
     let replay = reopened.rpc(&serde_json::json!({
         "op": "apply_overlay",
+        "namespace": "ns",
         "id": "act-inc-1-note",
         "kind": "incident",
         "key": "inc-1",
@@ -2586,6 +2683,7 @@ fn process_health_reports_ready_after_ingest() {
     assert!(ingest.ok, "{ingest:?}");
     let bad = host.rpc(&serde_json::json!({
         "op": "load",
+        "namespace": "ns",
         "kind": "incident",
         "key": "missing"
     }));
@@ -2639,5 +2737,99 @@ fn process_serial_second_rpc_waits_for_first_line() {
     let response: HostResponse = serde_json::from_str(body.trim()).expect("host JSON response");
     assert!(response.ok, "{response:?}");
     assert!(response.health.expect("health").ready);
+    drop(host);
+}
+
+#[test]
+fn missing_or_unknown_namespace_fails_closed() {
+    let tmp = TempLog::new("namespace-fail-closed");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    let missing_eval = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "root_kind": "Customer",
+            "hops": [],
+            "sum_kind": "Customer",
+            "sum_property": "region"
+        }
+    }));
+    assert!(!missing_eval.ok, "{missing_eval:?}");
+    let missing_err = missing_eval.error.unwrap_or_default();
+    assert!(
+        missing_err.contains("namespace") || missing_err.contains("missing field"),
+        "{missing_err}"
+    );
+
+    let empty_eval = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "namespace": "",
+            "root_kind": "Customer",
+            "hops": [],
+            "sum_kind": "Customer",
+            "sum_property": "region"
+        }
+    }));
+    assert!(!empty_eval.ok, "{empty_eval:?}");
+    assert!(
+        empty_eval
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("namespace"),
+        "{empty_eval:?}"
+    );
+
+    let unknown_eval = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "namespace": "ghost",
+            "root_kind": "Customer",
+            "hops": [],
+            "sum_kind": "Customer",
+            "sum_property": "region"
+        }
+    }));
+    assert!(!unknown_eval.ok, "{unknown_eval:?}");
+    assert!(
+        unknown_eval
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown namespace"),
+        "{unknown_eval:?}"
+    );
+
+    let missing_load = host.rpc(&serde_json::json!({
+        "op": "load",
+        "kind": "Customer",
+        "key": "c1"
+    }));
+    assert!(!missing_load.ok, "{missing_load:?}");
+    let unknown_load = host.rpc(&serde_json::json!({
+        "op": "load",
+        "namespace": "ghost",
+        "kind": "Customer",
+        "key": "c1"
+    }));
+    assert!(!unknown_load.ok, "{unknown_load:?}");
+    assert!(
+        unknown_load
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown namespace"),
+        "{unknown_load:?}"
+    );
+
+    let known = host.rpc(&evaluate_wire());
+    assert!(known.ok, "{known:?}");
+    assert_eq!(known.evaluate.as_ref().unwrap().two_hop_count, 1);
     drop(host);
 }

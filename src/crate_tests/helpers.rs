@@ -1,9 +1,22 @@
 use super::super::*;
 pub(super) use std::collections::HashMap;
 
+pub(super) const NS: &str = "ns";
+
 pub(super) fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
+    rec_in(NS, kind, key, hidden, props)
+}
+
+pub(super) fn rec_in(
+    namespace: &str,
+    kind: &str,
+    key: &str,
+    hidden: bool,
+    props: &[(&str, &str)],
+) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: namespace.into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -17,6 +30,7 @@ pub(super) fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -
 
 pub(super) fn fixture_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop {
@@ -85,6 +99,7 @@ pub(super) fn generic_records() -> Vec<ObjectRecord> {
 
 pub(super) fn asset_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Customer".into(),
         hops: vec![Hop {
             far_kind: "Asset".into(),
@@ -182,6 +197,7 @@ pub(super) fn product_loop_seed() -> Vec<ObjectRecord> {
 
 pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "component".into(),
         hops: vec![],
         sum_kind: "component".into(),
@@ -202,6 +218,7 @@ pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
 
 pub(super) fn hop_incident_to_component(bound: usize) -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),

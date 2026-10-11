@@ -146,6 +146,7 @@ impl Sort {
 
 #[derive(Clone, Debug, Default)]
 pub struct EvaluateRequest {
+    pub namespace: String,
     pub root_kind: String,
     pub hops: Vec<Hop>,
     pub sum_kind: String,

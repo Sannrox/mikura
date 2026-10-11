@@ -16,6 +16,7 @@ pub const OVERLAY_CLEARED: &str = "cleared";
 /// Admitted named-property patch for one identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OverlayPatch {
+    pub namespace: String,
     pub kind: String,
     pub key: String,
     pub props: HashMap<String, String>,
@@ -58,7 +59,11 @@ impl OverlayPatch {
                 return Err(format!("cleared property {name} also has an override"));
             }
         }
+        if record.namespace.is_empty() {
+            return Err("namespace required".into());
+        }
         Ok(Self {
+            namespace: record.namespace.clone(),
             kind,
             key,
             props,
@@ -71,6 +76,9 @@ impl OverlayPatch {
     pub fn to_record(&self) -> Result<ObjectRecord, String> {
         if self.kind == SCHEMA_KIND || self.kind == OVERLAY_KIND {
             return Err(format!("overlay cannot describe {}", self.kind));
+        }
+        if self.namespace.is_empty() {
+            return Err("namespace required".into());
         }
         if self.kind.is_empty() || self.key.is_empty() {
             return Err("overlay identity must not be empty".into());
@@ -87,6 +95,7 @@ impl OverlayPatch {
         }
         Ok(ObjectRecord {
             gen: 0,
+            namespace: self.namespace.clone(),
             kind: OVERLAY_KIND.to_string(),
             key: Self::identity_key(&self.kind, &self.key),
             hidden: false,
@@ -130,6 +139,7 @@ mod tests {
     #[test]
     fn apply_overrides_and_clears() {
         let patch = OverlayPatch {
+            namespace: "ns".into(),
             kind: "incident".into(),
             key: "inc-1".into(),
             props: HashMap::from([("note".into(), "acked".into())]),

@@ -14,8 +14,12 @@ fn committed_schema_validates_writes_and_rebuilds() {
         ))
         .unwrap();
     let (component_schema, incident_schema) = product_loop_schemas();
-    store.append(component_schema.to_record().unwrap()).unwrap();
-    store.append(incident_schema.to_record().unwrap()).unwrap();
+    store
+        .append(component_schema.to_record("ns").unwrap())
+        .unwrap();
+    store
+        .append(incident_schema.to_record("ns").unwrap())
+        .unwrap();
     store
         .append(rec(
             "component",
@@ -47,11 +51,11 @@ fn committed_schema_validates_writes_and_rebuilds() {
         .unwrap_err();
     assert!(extra.contains("unknown property"), "{extra}");
     assert!(store
-        .load("component", "svc-web", &PropertyAcl::allow_all())
+        .load(NS, "component", "svc-web", &PropertyAcl::allow_all())
         .is_err());
 
     let historical = store
-        .load("component", "legacy", &PropertyAcl::allow_all())
+        .load(NS, "component", "legacy", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         historical.props.get("alias").map(String::as_str),
@@ -59,6 +63,7 @@ fn committed_schema_validates_writes_and_rebuilds() {
     );
     let checked = store
         .load_with_schema(
+            NS,
             "component",
             "svc-api",
             &PropertyAcl::allow_all(),
@@ -68,6 +73,7 @@ fn committed_schema_validates_writes_and_rebuilds() {
     assert_eq!(checked.props.get("tier").map(String::as_str), Some("prod"));
     let historical_check = store
         .load_with_schema(
+            NS,
             "component",
             "legacy",
             &PropertyAcl::allow_all(),
@@ -81,10 +87,10 @@ fn committed_schema_validates_writes_and_rebuilds() {
 
     store.append(rec("incident", "inc-1", true, &[])).unwrap();
     let hidden = store
-        .load("incident", "inc-1", &PropertyAcl::allow_all())
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(hidden.hidden);
-    assert!(!store.joins().is_visible("incident", "inc-1"));
+    assert!(!store.joins(NS).unwrap().is_visible("incident", "inc-1"));
 
     store
         .append(rec(
@@ -95,6 +101,7 @@ fn committed_schema_validates_writes_and_rebuilds() {
         ))
         .unwrap();
     let incoming = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "incident".into(),
         hops: vec![Hop {
             far_kind: "component".into(),
@@ -121,12 +128,12 @@ fn committed_schema_validates_writes_and_rebuilds() {
 
     let reopened = Store::open(&log).unwrap();
     assert_eq!(
-        reopened.schema("component").unwrap().unwrap().kind,
+        reopened.schema(NS, "component").unwrap().unwrap().kind,
         "component"
     );
     assert_eq!(
         reopened
-            .load("component", "svc-api", &PropertyAcl::allow_all())
+            .load(NS, "component", "svc-api", &PropertyAcl::allow_all())
             .unwrap()
             .props
             .get("name")
@@ -135,7 +142,7 @@ fn committed_schema_validates_writes_and_rebuilds() {
     );
     assert!(
         reopened
-            .load("incident", "inc-1", &PropertyAcl::allow_all())
+            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
             .unwrap()
             .hidden
     );
@@ -144,11 +151,11 @@ fn committed_schema_validates_writes_and_rebuilds() {
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
     assert_eq!(
-        replayed.schema("incident").unwrap().unwrap(),
+        replayed.schema(NS, "incident").unwrap().unwrap(),
         incident_schema
     );
     let rebuilt = replayed
-        .load("component", "legacy", &PropertyAcl::allow_all())
+        .load(NS, "component", "legacy", &PropertyAcl::allow_all())
         .unwrap();
     assert_eq!(
         rebuilt.props.get("alias").map(String::as_str),
@@ -196,6 +203,7 @@ fn evaluate_returns_bounded_product_loop_objects() {
     );
 
     let denied = EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "component".into(),
         hops: vec![],
         sum_kind: "component".into(),

@@ -8,6 +8,7 @@ mod stream;
 pub(crate) fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -42,6 +43,7 @@ pub(crate) fn fixture() -> Vec<ObjectRecord> {
 
 pub(crate) fn fixture_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop {
@@ -80,6 +82,7 @@ pub(crate) fn temp_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 
 pub(crate) fn shipment_request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Shipment".into(),
         hops: vec![],
         sum_kind: "Shipment".into(),
@@ -98,21 +101,31 @@ pub(crate) fn shipment_request() -> EvaluateRequest {
 pub(crate) fn assert_same_identity(live: &Store, reopened: &Store, records: &[ObjectRecord]) {
     for record in records {
         assert_eq!(
-            live.joins().is_visible(&record.kind, &record.key),
+            live.joins("ns")
+                .unwrap()
+                .is_visible(&record.kind, &record.key),
             !record.hidden
         );
         assert_eq!(
-            reopened.joins().is_visible(&record.kind, &record.key),
+            reopened
+                .joins("ns")
+                .unwrap()
+                .is_visible(&record.kind, &record.key),
             !record.hidden
         );
         if !record.hidden {
             for (name, value) in &record.props {
                 assert_eq!(
-                    live.joins().prop(&record.kind, &record.key, name),
+                    live.joins("ns")
+                        .unwrap()
+                        .prop(&record.kind, &record.key, name),
                     Some(value.as_str())
                 );
                 assert_eq!(
-                    reopened.joins().prop(&record.kind, &record.key, name),
+                    reopened
+                        .joins("ns")
+                        .unwrap()
+                        .prop(&record.kind, &record.key, name),
                     Some(value.as_str())
                 );
             }

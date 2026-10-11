@@ -14,7 +14,9 @@ fn claimed(key: &str, id: &str, amount: &str) -> ObjectRecord {
 }
 
 fn is_absent(store: &Store, kind: &str, key: &str) -> bool {
-    store.load(kind, key, &PropertyAcl::allow_all()).is_err()
+    store
+        .load(NS, kind, key, &PropertyAcl::allow_all())
+        .is_err()
 }
 
 fn hops(store: &Store) -> (usize, i64) {

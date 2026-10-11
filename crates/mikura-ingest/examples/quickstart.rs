@@ -10,6 +10,7 @@ use std::collections::HashMap;
 fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: "ns".into(),
         kind: kind.into(),
         key: key.into(),
         hidden,
@@ -23,6 +24,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
 
 fn request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop {
@@ -84,6 +86,7 @@ fn main() -> Result<(), String> {
     store.apply_action(
         Action {
             id: "act-s2".into(),
+            namespace: "ns".into(),
             kind: "Shipment".into(),
             key: "s2".into(),
             props: HashMap::from([

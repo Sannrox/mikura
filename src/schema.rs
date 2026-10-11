@@ -88,8 +88,12 @@ impl SchemaDescriptor {
     }
 
     /// Encode as a `mikura.schema` record. [`crate::Store::append`] assigns `gen`.
-    pub fn to_record(&self) -> Result<ObjectRecord, String> {
+    pub fn to_record(&self, namespace: impl Into<String>) -> Result<ObjectRecord, String> {
         self.check()?;
+        let namespace = namespace.into();
+        if namespace.is_empty() {
+            return Err("namespace required".into());
+        }
         let mut props = HashMap::new();
         props.insert(
             SCHEMA_PROPERTIES.to_string(),
@@ -120,6 +124,7 @@ impl SchemaDescriptor {
         }
         Ok(ObjectRecord {
             gen: 0,
+            namespace,
             kind: SCHEMA_KIND.to_string(),
             key: self.kind.clone(),
             hidden: false,
@@ -463,6 +468,7 @@ mod tests {
     fn instance(props: &[(&str, &str)]) -> ObjectRecord {
         ObjectRecord {
             gen: 1,
+            namespace: "ns".into(),
             kind: "incident".into(),
             key: "inc-1".into(),
             hidden: false,
@@ -477,7 +483,7 @@ mod tests {
     #[test]
     fn record_roundtrip_preserves_rules() {
         let schema = descriptor();
-        let record = schema.to_record().unwrap();
+        let record = schema.to_record("ns").unwrap();
         assert_eq!(record.kind, SCHEMA_KIND);
         assert_eq!(record.key, "incident");
         assert_eq!(
@@ -518,8 +524,8 @@ mod tests {
     fn reserved_kind_and_unknown_schema_keys_fail() {
         let mut reserved = descriptor();
         reserved.kind = SCHEMA_KIND.into();
-        assert!(reserved.to_record().unwrap_err().contains("reserved"));
-        let mut record = descriptor().to_record().unwrap();
+        assert!(reserved.to_record("ns").unwrap_err().contains("reserved"));
+        let mut record = descriptor().to_record("ns").unwrap();
         record.props.insert("note".into(), "x".into());
         let err = SchemaDescriptor::from_record(&record).unwrap_err();
         assert!(err.contains("unknown schema property"), "{err}");
@@ -530,20 +536,20 @@ mod tests {
         let mut schema = descriptor();
         schema.properties = vec!["affects".into(), "amount".into(), "name".into()];
         schema.sums = vec!["amount".into()];
-        let record = schema.to_record().unwrap();
+        let record = schema.to_record("ns").unwrap();
         assert_eq!(
             record.props.get(SCHEMA_SUMS).map(String::as_str),
             Some("amount")
         );
         assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
 
-        let mut historical = descriptor().to_record().unwrap();
+        let mut historical = descriptor().to_record("ns").unwrap();
         historical.props.remove(SCHEMA_SUMS);
         let loaded = SchemaDescriptor::from_record(&historical).unwrap();
         assert!(loaded.sums.is_empty());
 
         schema.sums = vec!["missing".into()];
-        let err = schema.to_record().unwrap_err();
+        let err = schema.to_record("ns").unwrap_err();
         assert!(
             err.contains("sum property missing is not declared"),
             "{err}"
@@ -563,20 +569,20 @@ mod tests {
             ("cost".into(), PropertyType::Decimal { scale: 2 }),
             ("open".into(), PropertyType::Boolean),
         ];
-        let record = schema.to_record().unwrap();
+        let record = schema.to_record("ns").unwrap();
         assert_eq!(
             record.props.get(SCHEMA_TYPES).map(String::as_str),
             Some("cost:decimal:2,open:boolean")
         );
         assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
 
-        let mut historical = descriptor().to_record().unwrap();
+        let mut historical = descriptor().to_record("ns").unwrap();
         historical.props.remove(SCHEMA_TYPES);
         let loaded = SchemaDescriptor::from_record(&historical).unwrap();
         assert!(loaded.types.is_empty());
 
         schema.types = vec![("missing".into(), PropertyType::Integer)];
-        let err = schema.to_record().unwrap_err();
+        let err = schema.to_record("ns").unwrap_err();
         assert!(
             err.contains("typed property missing is not declared"),
             "{err}"

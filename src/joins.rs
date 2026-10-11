@@ -297,8 +297,8 @@ impl CountScratch {
     }
 }
 
-pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN04";
-pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN4D";
+pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN05";
+pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN5D";
 pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 type MeasureKey = (u32, u32, u32);
@@ -317,7 +317,7 @@ pub(crate) struct LiveMeta {
 /// packed identity lists. Hidden records are absent from hop/sum indexes.
 /// The checkpoint stores interned owned property pairs for every identity
 /// (hidden props sit on the identity row), interned Action ids, and
-/// schema-named last-hop rollups (`MKJOIN04`). Hop and sum indexes are
+/// schema-named last-hop rollups (`MKJOIN05`). Hop and sum indexes are
 /// derived; undeclared sums still walk leaves.
 #[derive(Clone, Debug, Default)]
 pub struct JoinMaps {
@@ -1048,7 +1048,7 @@ pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
 
 pub(crate) struct Checkpoint {
     pub(crate) pages: u32,
-    pub(crate) joins: JoinMaps,
-    pub(crate) identity: HashMap<(String, String), LiveMeta>,
-    pub(crate) hidden_props: HashMap<(String, String), HashMap<String, String>>,
+    pub(crate) joins: HashMap<String, JoinMaps>,
+    pub(crate) identity: HashMap<(String, String, String), LiveMeta>,
+    pub(crate) hidden_props: HashMap<(String, String, String), HashMap<String, String>>,
 }
