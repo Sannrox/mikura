@@ -396,6 +396,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -437,6 +438,7 @@ fn ingest_action_id_replays_merged_overlay_and_canonical_typed_body() {
                 }],
                 sums: Vec::new(),
                 types: vec![("opened_at".into(), PropertyType::Timestamp)],
+                ..Default::default()
             }
             .to_record("ns")
             .unwrap(),

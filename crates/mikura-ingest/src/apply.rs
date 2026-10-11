@@ -36,7 +36,8 @@ pub enum ApplyStatus {
 /// offset applied to that identity (or the last committed source offset
 /// after resume). Replays and older offsets skip without a new generation.
 /// `flush` writes `mikura.source/<source>` and group-commits. Overlay merge
-/// on a visible source write stays user-wins ([`Store::append_uncommitted`]).
+/// on a visible source write follows the kind descriptor (default user-wins)
+/// ([`Store::append_uncommitted`]).
 #[derive(Debug)]
 pub struct StreamApply {
     namespace: String,

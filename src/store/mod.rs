@@ -6,7 +6,7 @@ use crate::acl::PropertyAcl;
 use crate::actions::Action;
 use crate::joins::{JoinMaps, LiveMeta};
 use crate::log::{read_records, read_v1_records, LogWriter, SyncPolicy};
-use crate::overlay::{OverlayPatch, OVERLAY_KIND};
+use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod sidecar;
@@ -288,7 +288,10 @@ impl Store {
         let mut patch_cleared = patch.cleared.clone();
         stored_cleared.sort();
         patch_cleared.sort();
-        if stored.props != patch.props || stored_cleared != patch_cleared {
+        if stored.props != patch.props
+            || stored_cleared != patch_cleared
+            || stored.at != patch.canonical_at()?
+        {
             return Err(format!("action id {action_id} body conflict"));
         }
         Ok(())
@@ -543,20 +546,28 @@ impl Store {
         patch.action_id = Some(action_id.clone());
         let instance_hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
         let instance_exists = self.identity.contains_key(&id);
+        let source = if instance_exists && !instance_hidden {
+            self.load(
+                &patch.namespace,
+                &patch.kind,
+                &patch.key,
+                &PropertyAcl::allow_all(),
+            )?
+            .props
+        } else {
+            HashMap::new()
+        };
+        if let Some(schema) = self.schema(&patch.namespace, &patch.kind)? {
+            let plan = schema.conflict_plan();
+            if plan.uses_newest_on(patch.props.keys().chain(patch.cleared.iter())) {
+                patch
+                    .canonical_at()?
+                    .ok_or_else(|| "newest conflict requires overlay at".to_string())?;
+            }
+        }
+        let rematerialized = patch.apply(source);
         self.append_uncommitted(patch.to_record()?)?;
         if !instance_hidden {
-            let source = if instance_exists {
-                self.load(
-                    &patch.namespace,
-                    &patch.kind,
-                    &patch.key,
-                    &PropertyAcl::allow_all(),
-                )?
-                .props
-            } else {
-                HashMap::new()
-            };
-            let props = patch.apply(source);
             self.write_uncommitted(
                 ObjectRecord {
                     gen: 0,
@@ -565,9 +576,9 @@ impl Store {
                     key: patch.key,
                     hidden: false,
                     action_id: Some(action_id),
-                    props,
+                    props: rematerialized,
                 },
-                true,
+                false,
                 ActionIdWrite::Copy,
             )?;
         }
@@ -618,11 +629,12 @@ impl Store {
     /// and do not claim a new id.
     ///
     /// Visible source writes of a non-hidden identity merge a visible
-    /// `mikura.overlay` and validate a visible `mikura.schema`. A visible
-    /// `mikura.schema` replacement is checked against the previous visible
-    /// descriptor (ADR 0013). Hide of the instance also hides that overlay.
-    /// [`Self::apply_action`] uses [`Self::append_replace`] so it stays a
-    /// whole-record replace.
+    /// `mikura.overlay` and validate a visible `mikura.schema`. Default
+    /// merge is user-wins; a descriptor may select newest-timestamp-wins
+    /// (ADR 0032). A visible `mikura.schema` replacement is checked against
+    /// the previous visible descriptor (ADR 0013). Hide of the instance
+    /// also hides that overlay. [`Self::apply_action`] uses
+    /// [`Self::append_replace`] so it stays a whole-record replace.
     pub fn append_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
         self.write_uncommitted(record, true, ActionIdWrite::Claim)
     }
@@ -631,6 +643,14 @@ impl Store {
     /// validation still runs on a visible instance.
     pub(crate) fn append_replace(&mut self, record: ObjectRecord) -> Result<(), String> {
         self.write_uncommitted(record, false, ActionIdWrite::Claim)
+    }
+
+    fn write_overlay_audit(
+        &mut self,
+        overlay: &OverlayPatch,
+        audit: &ConflictAudit,
+    ) -> Result<(), String> {
+        self.write_uncommitted(overlay.to_audit_record(audit)?, false, ActionIdWrite::Copy)
     }
 
     fn write_uncommitted(
@@ -647,6 +667,7 @@ impl Store {
             Self::require_action_id(id, "empty action id")?;
         }
         require_namespace(&record.namespace)?;
+        let mut overlay_audit = None;
         if record.kind == SCHEMA_KIND {
             let next = SchemaDescriptor::from_record(&record)?;
             if !record.hidden {
@@ -668,6 +689,12 @@ impl Store {
                 .identity
                 .get(&live_id(&record.namespace, &record.kind, &record.key))
                 .is_some_and(|meta| meta.hidden);
+            let schema = self.load_reserved(
+                &record.namespace,
+                SCHEMA_KIND,
+                &record.kind,
+                SchemaDescriptor::from_record,
+            )?;
             if !was_hidden && merge_overlay {
                 if let Some(overlay) = self.load_reserved(
                     &record.namespace,
@@ -675,18 +702,19 @@ impl Store {
                     &OverlayPatch::identity_key(&record.kind, &record.key),
                     OverlayPatch::from_record,
                 )? {
-                    record.props = overlay.apply(std::mem::take(&mut record.props));
+                    let plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
+                    let (merged, audit) =
+                        overlay.apply_with(std::mem::take(&mut record.props), plan.as_ref())?;
+                    record.props = merged;
                     if record.action_id.is_none() {
-                        record.action_id = overlay.action_id;
+                        record.action_id = overlay.action_id.clone();
+                    }
+                    if let Some(audit) = audit {
+                        overlay_audit = Some((overlay, audit));
                     }
                 }
             }
-            if let Some(schema) = self.load_reserved(
-                &record.namespace,
-                SCHEMA_KIND,
-                &record.kind,
-                SchemaDescriptor::from_record,
-            )? {
+            if let Some(schema) = schema {
                 schema.canonicalize_instance(&mut record)?;
                 schema.validate(&record)?;
             }
@@ -723,21 +751,27 @@ impl Store {
         } else if record.gen == 0 {
             record.gen = 1;
         }
+        self.writer.check_record_fits(&record)?;
+        if let Some((overlay, audit)) = &overlay_audit {
+            self.writer
+                .check_record_fits(&overlay.to_audit_record(audit)?)?;
+        }
         self.writer.append_record(&record)?;
         let schema_namespace = record.namespace.clone();
         let schema_kind = record.kind.clone();
         let schema_key = record.key.clone();
         self.apply_record(record);
         self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
+        if let Some((overlay, audit)) = overlay_audit {
+            self.write_overlay_audit(&overlay, &audit)?;
+        }
         if let Some((namespace, kind, key)) = overlay_target {
             if self.overlay(&namespace, &kind, &key)?.is_some() {
                 let mut hide = OverlayPatch {
                     namespace,
                     kind,
                     key,
-                    props: HashMap::new(),
-                    cleared: Vec::new(),
-                    action_id: None,
+                    ..Default::default()
                 }
                 .to_record()?;
                 hide.hidden = true;

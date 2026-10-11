@@ -164,6 +164,7 @@ fn row_filter_load_matches_missing_and_mutations_fail_closed() {
                 props: HashMap::from([("note".into(), "x".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-row".into(),
             None,

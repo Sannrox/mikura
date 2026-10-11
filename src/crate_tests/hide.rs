@@ -15,6 +15,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),

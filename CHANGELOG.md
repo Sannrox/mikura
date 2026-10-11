@@ -27,6 +27,13 @@ window.
 
 ### Added
 
+- Overlay vs source merge may follow the kind descriptor: implicit
+  user-wins (default, same bytes as today) or `newest` timestamp
+  comparison, optionally per property. Overlay `at` is the user time;
+  `conflict_time` names the source timestamp. An explicit strategy
+  records the loser on the overlay row. Changing `conflict` is not
+  retroactive ([#249](https://github.com/Sannrox/mikura/issues/249),
+  [ADR 0032](docs/decisions/0032-overlay-conflict-strategy.md)).
 - `StreamApply` applies a named source stream ordered per identity.
   Duplicate and older offsets skip without a new generation. The last
   committed offset is `mikura.source/<source>` on the log; resume after

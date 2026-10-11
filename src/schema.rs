@@ -1,8 +1,9 @@
-//! Clerk-supplied kind, property, and link rules (ADR 0008, ADR 0013).
+//! Clerk-supplied kind, property, and link rules (ADR 0008, ADR 0013, ADR 0032).
 //!
 //! Descriptors persist as ordinary objects of kind [`SCHEMA_KIND`] with key
 //! equal to the described kind. Values stay UTF-8 strings. Optional [`SCHEMA_SUMS`]
-//! names last-hop measure properties. A store with no visible schema row for
+//! names last-hop measure properties. Optional [`SCHEMA_CONFLICT`] selects
+//! overlay merge strategy. A store with no visible schema row for
 //! a kind accepts unvalidated string records. A later visible descriptor is
 //! checked against the previous visible row: recasting a declared type or
 //! retargeting an outgoing link fails closed.
@@ -31,6 +32,83 @@ pub const SCHEMA_SUMS: &str = "sums";
 /// Absent means every property is a string (ADR 0012).
 pub const SCHEMA_TYPES: &str = "types";
 
+/// Kind-wide overlay conflict strategy: `user` or `newest`. Absent means user-wins.
+pub const SCHEMA_CONFLICT: &str = "conflict";
+
+/// Comma-separated `name:user|newest` per-property overlay conflict overrides.
+pub const SCHEMA_CONFLICT_PROPERTIES: &str = "conflict_properties";
+
+/// Instance timestamp property compared to overlay `at` for newest-wins.
+pub const SCHEMA_CONFLICT_TIME: &str = "conflict_time";
+
+/// How overlay and source values combine on a later source write (ADR 0032).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictStrategy {
+    /// Overlay values replace source (today's default).
+    User,
+    /// The side with the newer timestamp wins; equal timestamps keep the overlay.
+    Newest,
+}
+
+impl ConflictStrategy {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Newest => "newest",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Result<Self, String> {
+        match token {
+            "user" => Ok(Self::User),
+            "newest" => Ok(Self::Newest),
+            other => Err(format!(
+                "conflict strategy must be user or newest, got {other}"
+            )),
+        }
+    }
+}
+
+/// Resolved overlay merge plan from a descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConflictPlan {
+    pub default: ConflictStrategy,
+    pub properties: HashMap<String, ConflictStrategy>,
+    pub time_property: Option<String>,
+    pub record_audit: bool,
+}
+
+impl ConflictPlan {
+    pub fn strategy_for(&self, name: &str) -> ConflictStrategy {
+        self.properties.get(name).copied().unwrap_or(self.default)
+    }
+
+    pub fn records_audit(&self) -> bool {
+        self.record_audit
+    }
+
+    pub fn uses_newest(&self) -> bool {
+        self.default == ConflictStrategy::Newest
+            || self
+                .properties
+                .values()
+                .any(|strategy| *strategy == ConflictStrategy::Newest)
+    }
+
+    /// True when this overlay patch has a property or clear that uses newest.
+    pub fn uses_newest_on(&self, names: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+        names
+            .into_iter()
+            .any(|name| self.strategy_for(name.as_ref()) == ConflictStrategy::Newest)
+    }
+
+    pub fn time_property(&self) -> Result<&str, String> {
+        self.time_property
+            .as_deref()
+            .ok_or_else(|| "newest conflict requires conflict_time".to_string())
+    }
+}
+
 const LINK_CARDINALITY: &str = "0..1";
 
 /// One named relation on a descriptor.
@@ -45,7 +123,7 @@ pub struct SchemaLink {
 }
 
 /// Clerk-authored rules for one kind.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SchemaDescriptor {
     pub kind: String,
     pub properties: Vec<String>,
@@ -54,6 +132,12 @@ pub struct SchemaDescriptor {
     pub sums: Vec<String>,
     /// Declared non-default types. Omitted names are [`PropertyType::String`].
     pub types: Vec<(String, PropertyType)>,
+    /// Kind-wide overlay merge strategy. `None` is implicit user-wins with no audit row.
+    pub conflict: Option<ConflictStrategy>,
+    /// Per-property overlay merge overrides.
+    pub conflict_properties: Vec<(String, ConflictStrategy)>,
+    /// Source timestamp property compared to overlay `at` when any strategy is newest.
+    pub conflict_time: Option<String>,
 }
 
 impl SchemaDescriptor {
@@ -72,6 +156,12 @@ impl SchemaDescriptor {
             links: parse_links(optional_csv(record, SCHEMA_LINKS)?)?,
             sums: optional_csv(record, SCHEMA_SUMS)?,
             types: parse_types(optional_csv(record, SCHEMA_TYPES)?)?,
+            conflict: optional_conflict(record)?,
+            conflict_properties: parse_conflict_properties(optional_csv(
+                record,
+                SCHEMA_CONFLICT_PROPERTIES,
+            )?)?,
+            conflict_time: optional_token(record, SCHEMA_CONFLICT_TIME)?,
         };
         descriptor.check()?;
         for name in record.props.keys() {
@@ -80,6 +170,9 @@ impl SchemaDescriptor {
                 && name != SCHEMA_LINKS
                 && name != SCHEMA_SUMS
                 && name != SCHEMA_TYPES
+                && name != SCHEMA_CONFLICT
+                && name != SCHEMA_CONFLICT_PROPERTIES
+                && name != SCHEMA_CONFLICT_TIME
             {
                 return Err(format!("unknown schema property {name}"));
             }
@@ -121,6 +214,21 @@ impl SchemaDescriptor {
                 .collect();
             encoded.sort();
             props.insert(SCHEMA_TYPES.to_string(), encoded.join(","));
+        }
+        if let Some(conflict) = self.conflict {
+            props.insert(SCHEMA_CONFLICT.to_string(), conflict.token().to_string());
+        }
+        if !self.conflict_properties.is_empty() {
+            let mut encoded: Vec<String> = self
+                .conflict_properties
+                .iter()
+                .map(|(name, strategy)| format!("{name}:{}", strategy.token()))
+                .collect();
+            encoded.sort();
+            props.insert(SCHEMA_CONFLICT_PROPERTIES.to_string(), encoded.join(","));
+        }
+        if let Some(time) = &self.conflict_time {
+            props.insert(SCHEMA_CONFLICT_TIME.to_string(), time.clone());
         }
         Ok(ObjectRecord {
             gen: 0,
@@ -240,6 +348,17 @@ impl SchemaDescriptor {
         Ok(())
     }
 
+    /// Overlay merge plan for this descriptor. Absent `conflict` is implicit
+    /// user-wins and does not record an audit row.
+    pub fn conflict_plan(&self) -> ConflictPlan {
+        ConflictPlan {
+            default: self.conflict.unwrap_or(ConflictStrategy::User),
+            properties: self.conflict_properties.iter().cloned().collect(),
+            time_property: self.conflict_time.clone(),
+            record_audit: self.conflict.is_some() || !self.conflict_properties.is_empty(),
+        }
+    }
+
     /// Declared type, or [`PropertyType::String`] when the name is declared
     /// without `types`.
     pub fn property_type(&self, name: &str) -> Option<PropertyType> {
@@ -331,6 +450,28 @@ impl SchemaDescriptor {
                 }
             }
         }
+        let mut conflict_properties = HashSet::new();
+        for (name, _) in &self.conflict_properties {
+            token(name, "conflict property")?;
+            if !properties.contains(name.as_str()) {
+                return Err(format!("conflict property {name} is not declared"));
+            }
+            if !conflict_properties.insert(name.as_str()) {
+                return Err(format!("duplicate conflict property {name}"));
+            }
+        }
+        if let Some(name) = &self.conflict_time {
+            token(name, "conflict_time")?;
+            if !properties.contains(name.as_str()) {
+                return Err(format!("conflict_time {name} is not declared"));
+            }
+            if self.property_type(name) != Some(PropertyType::Timestamp) {
+                return Err(format!("conflict_time {name} must be a timestamp"));
+            }
+        }
+        if self.conflict_plan().uses_newest() && self.conflict_time.is_none() {
+            return Err("newest conflict requires conflict_time".into());
+        }
         Ok(())
     }
 }
@@ -348,6 +489,44 @@ fn optional_csv(record: &ObjectRecord, name: &str) -> Result<Vec<String>, String
         None => Ok(Vec::new()),
         Some(raw) => split_csv(raw),
     }
+}
+
+fn optional_token(record: &ObjectRecord, name: &str) -> Result<Option<String>, String> {
+    match record.props.get(name) {
+        None => Ok(None),
+        Some(raw) if raw.is_empty() => Err(format!("empty schema {name}")),
+        Some(raw) => Ok(Some(raw.clone())),
+    }
+}
+
+fn optional_conflict(record: &ObjectRecord) -> Result<Option<ConflictStrategy>, String> {
+    match record.props.get(SCHEMA_CONFLICT) {
+        None => Ok(None),
+        Some(raw) => Ok(Some(ConflictStrategy::from_token(raw)?)),
+    }
+}
+
+fn parse_conflict_properties(
+    entries: Vec<String>,
+) -> Result<Vec<(String, ConflictStrategy)>, String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in entries {
+        let Some((name, token)) = entry.split_once(':') else {
+            return Err(format!(
+                "conflict property {entry} must be name:user or name:newest"
+            ));
+        };
+        if name.is_empty() || token.is_empty() {
+            return Err(format!("conflict property {entry} is empty"));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!("duplicate conflict property {name}"));
+        }
+        out.push((name.to_string(), ConflictStrategy::from_token(token)?));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
 }
 
 fn split_csv(raw: &str) -> Result<Vec<String>, String> {
@@ -462,6 +641,7 @@ mod tests {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -662,5 +842,44 @@ mod tests {
             ]))
             .unwrap_err();
         assert!(err.contains("invalid boolean"), "{err}");
+    }
+
+    #[test]
+    fn conflict_roundtrip_and_newest_requires_timestamp() {
+        let mut schema = descriptor();
+        schema.properties.push("status".into());
+        schema.properties.push("updated_at".into());
+        schema
+            .types
+            .push(("updated_at".into(), PropertyType::Timestamp));
+        schema.conflict = Some(ConflictStrategy::User);
+        schema.conflict_properties = vec![("status".into(), ConflictStrategy::Newest)];
+        schema.conflict_time = Some("updated_at".into());
+        let record = schema.to_record("ns").unwrap();
+        assert_eq!(
+            record.props.get(SCHEMA_CONFLICT).map(String::as_str),
+            Some("user")
+        );
+        assert_eq!(
+            record
+                .props
+                .get(SCHEMA_CONFLICT_PROPERTIES)
+                .map(String::as_str),
+            Some("status:newest")
+        );
+        assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
+
+        let mut missing_time = schema.clone();
+        missing_time.conflict_time = None;
+        let err = missing_time.to_record("ns").unwrap_err();
+        assert!(err.contains("conflict_time"), "{err}");
+
+        let mut not_ts = schema.clone();
+        not_ts.conflict_time = Some("status".into());
+        let err = not_ts.to_record("ns").unwrap_err();
+        assert!(err.contains("must be a timestamp"), "{err}");
+
+        schema.conflict = Some(ConflictStrategy::Newest);
+        descriptor().check_replacement(&schema).unwrap();
     }
 }

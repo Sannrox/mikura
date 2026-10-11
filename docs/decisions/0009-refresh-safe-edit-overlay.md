@@ -6,6 +6,7 @@
 - Related: [#112](https://github.com/Sannrox/mikura/issues/112), [#107](https://github.com/Sannrox/mikura/issues/107), [M0 contract](../plans/m0-application-contract.md), [ADR 0005](0005-current-object-load.md), [ADR 0006](0006-action-provenance.md), [ADR 0008](0008-type-link-delete.md), [ADR 0011](0011-action-id-retry-key.md)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0032](0032-overlay-conflict-strategy.md) (user-wins stays the default; newest-timestamp-wins is opt-in on the kind descriptor)
 
 ## Context
 

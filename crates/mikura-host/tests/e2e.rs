@@ -1031,6 +1031,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         }
         .to_record("ns")
         .unwrap(),
@@ -1045,6 +1046,7 @@ fn product_loop_schema_records() -> Vec<ObjectRecord> {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         }
         .to_record("ns")
         .unwrap(),
@@ -1577,6 +1579,7 @@ fn incident_typed_schema_record() -> ObjectRecord {
             ("opened_at".into(), PropertyType::Timestamp),
             ("priority".into(), PropertyType::Integer),
         ],
+        ..Default::default()
     }
     .to_record("ns")
     .unwrap()
@@ -1675,6 +1678,7 @@ fn evolving_incident_schema() -> SchemaDescriptor {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -1870,6 +1874,7 @@ fn query_component_schema() -> ObjectRecord {
         links: Vec::new(),
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
     .to_record("ns")
     .unwrap()
@@ -1896,6 +1901,7 @@ fn query_incident_schema() -> ObjectRecord {
             ("open".into(), PropertyType::Boolean),
             ("priority".into(), PropertyType::Integer),
         ],
+        ..Default::default()
     }
     .to_record("ns")
     .unwrap()
@@ -2284,6 +2290,7 @@ fn association_records() -> Vec<ObjectRecord> {
             links: Vec::new(),
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         }
         .to_record("ns")
         .unwrap(),
@@ -2307,6 +2314,7 @@ fn association_records() -> Vec<ObjectRecord> {
             ],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         }
         .to_record("ns")
         .unwrap(),

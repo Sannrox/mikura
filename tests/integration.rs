@@ -4,9 +4,9 @@
 //! `cargo test --workspace --locked`. These tests do not spawn `mikura-host`.
 
 use mikura::{
-    AclError, Action, Aggregate, ComputeError, EvaluateRequest, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType, SchemaDescriptor,
-    SchemaLink, Sort, Store, SCHEMA_SUMS, SCHEMA_TYPES,
+    AclError, Action, Aggregate, ComputeError, ConflictStrategy, EvaluateRequest, ExactMatch, Hop,
+    LocalCompute, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType,
+    SchemaDescriptor, SchemaLink, Sort, Store, OVERLAY_KIND, SCHEMA_SUMS, SCHEMA_TYPES,
 };
 use mikura_ingest::{
     snapshot_changelog, ApplyStatus, BatchIngest, ChangelogIngest, StreamApply, StreamChange,
@@ -94,6 +94,7 @@ fn shipment_sum_schema() -> SchemaDescriptor {
         }],
         sums: vec!["amount".into()],
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -937,6 +938,7 @@ fn query_fixture_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
             links: Vec::new(),
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
         SchemaDescriptor {
             kind: "incident".into(),
@@ -958,6 +960,7 @@ fn query_fixture_schemas() -> (SchemaDescriptor, SchemaDescriptor) {
                 ("open".into(), PropertyType::Boolean),
                 ("priority".into(), PropertyType::Integer),
             ],
+            ..Default::default()
         },
     )
 }
@@ -1286,6 +1289,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     };
     let incident_schema = SchemaDescriptor {
         kind: "incident".into(),
@@ -1298,6 +1302,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     };
     BatchIngest::run(
         &mut store,
@@ -1579,6 +1584,7 @@ fn overlay_refresh_keeps_admitted_note() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -1643,6 +1649,7 @@ fn apply_action_replaces_without_merging_overlay() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -1701,6 +1708,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -1828,6 +1836,7 @@ fn incident_typed_schema() -> SchemaDescriptor {
             ("opened_at".into(), PropertyType::Timestamp),
             ("priority".into(), PropertyType::Integer),
         ],
+        ..Default::default()
     }
 }
 
@@ -1883,6 +1892,7 @@ fn typed_scalars_round_trip_ingest_overlay_and_rebuild() {
                 props: HashMap::from([("open".into(), "false".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-open".into(),
             None,
@@ -1943,6 +1953,7 @@ fn evolving_incident_schema() -> SchemaDescriptor {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -2014,6 +2025,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
                 props: HashMap::from([("note".into(), "paged".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             None,
@@ -2058,6 +2070,7 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
                 props: HashMap::from([("note".into(), "stale".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note-2".into(),
             None,
@@ -2136,6 +2149,7 @@ fn association_schemas() -> Vec<SchemaDescriptor> {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
         SchemaDescriptor {
             kind: "incident".into(),
@@ -2148,6 +2162,7 @@ fn association_schemas() -> Vec<SchemaDescriptor> {
             }],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
         SchemaDescriptor {
             kind: "label".into(),
@@ -2156,6 +2171,7 @@ fn association_schemas() -> Vec<SchemaDescriptor> {
             links: Vec::new(),
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
         SchemaDescriptor {
             kind: "incident_label".into(),
@@ -2175,6 +2191,7 @@ fn association_schemas() -> Vec<SchemaDescriptor> {
             ],
             sums: Vec::new(),
             types: Vec::new(),
+            ..Default::default()
         },
     ]
 }
@@ -2381,6 +2398,7 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
                 props: HashMap::from([("note".into(), "x".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-hidden".into(),
             None,
@@ -2423,6 +2441,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
         props: HashMap::from([("note".into(), "acked".into())]),
         cleared: Vec::new(),
         action_id: None,
+        ..Default::default()
     };
     store
         .apply_overlay(patch.clone(), "act-inc-1-note".into(), Some(1))
@@ -2450,6 +2469,7 @@ fn apply_overlay_replays_matching_id_and_fails_closed_on_conflict() {
                 props: HashMap::from([("note".into(), "other".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             None,
@@ -2498,6 +2518,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
                 props: HashMap::from([("note".into(), "acked".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             Some(1),
@@ -2924,4 +2945,184 @@ fn public_api_keeps_identical_keys_in_separate_namespaces() {
             .map(String::as_str),
         Some("beta")
     );
+}
+
+fn contact_schema(conflict: Option<ConflictStrategy>) -> SchemaDescriptor {
+    SchemaDescriptor {
+        kind: "contact".into(),
+        properties: vec![
+            "name".into(),
+            "note".into(),
+            "status".into(),
+            "updated_at".into(),
+        ],
+        required: vec!["name".into()],
+        links: Vec::new(),
+        sums: Vec::new(),
+        types: vec![("updated_at".into(), PropertyType::Timestamp)],
+        conflict,
+        conflict_properties: Vec::new(),
+        conflict_time: Some("updated_at".into()),
+    }
+}
+
+#[test]
+fn overlay_conflict_strategies_survive_refresh_reopen_and_rebuild() {
+    let tmp = TempLog::new("overlay-conflict");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![
+            contact_schema(None).to_record("ns").unwrap(),
+            rec(
+                "contact",
+                "c-1",
+                false,
+                &[
+                    ("name", "Ada"),
+                    ("status", "open"),
+                    ("updated_at", "2026-10-11T10:00:00.000Z"),
+                ],
+            ),
+        ],
+    )
+    .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: "ns".into(),
+                kind: "contact".into(),
+                key: "c-1".into(),
+                props: HashMap::from([("status".into(), "acked".into())]),
+                ..Default::default()
+            },
+            "act-c-1-status".into(),
+            Some(1),
+        )
+        .unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "contact",
+            "c-1",
+            false,
+            &[
+                ("name", "Ada Lovelace"),
+                ("status", "closed"),
+                ("updated_at", "2026-10-11T12:00:00.000Z"),
+            ],
+        )],
+    )
+    .unwrap();
+    let user_wins = store
+        .load("ns", "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        user_wins.props.get("status").map(String::as_str),
+        Some("acked")
+    );
+    assert_eq!(
+        user_wins.props.get("name").map(String::as_str),
+        Some("Ada Lovelace")
+    );
+    let default_overlay = store
+        .load(
+            "ns",
+            OVERLAY_KIND,
+            &OverlayPatch::identity_key("contact", "c-1"),
+            &PropertyAcl::allow_all(),
+        )
+        .unwrap();
+    assert!(OverlayPatch::recorded_conflict(&default_overlay).is_none());
+    assert!(OverlayPatch::recorded_lost(&default_overlay).is_empty());
+
+    store
+        .append(
+            contact_schema(Some(ConflictStrategy::Newest))
+                .to_record("ns")
+                .unwrap(),
+        )
+        .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: "ns".into(),
+                kind: "contact".into(),
+                key: "c-1".into(),
+                props: HashMap::from([("status".into(), "acked".into())]),
+                at: Some("2026-10-11T11:00:00.000Z".into()),
+                ..Default::default()
+            },
+            "act-c-1-status-2".into(),
+            Some(user_wins.gen),
+        )
+        .unwrap();
+    BatchIngest::run(
+        &mut store,
+        vec![rec(
+            "contact",
+            "c-1",
+            false,
+            &[
+                ("name", "Ada Lovelace"),
+                ("status", "closed"),
+                ("updated_at", "2026-10-11T12:00:00.000Z"),
+            ],
+        )],
+    )
+    .unwrap();
+    let newest = store
+        .load("ns", "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        newest.props.get("status").map(String::as_str),
+        Some("closed")
+    );
+    let audit = store
+        .load(
+            "ns",
+            OVERLAY_KIND,
+            &OverlayPatch::identity_key("contact", "c-1"),
+            &PropertyAcl::allow_all(),
+        )
+        .unwrap();
+    assert_eq!(
+        OverlayPatch::recorded_conflict(&audit),
+        Some("status:newest")
+    );
+    assert_eq!(
+        OverlayPatch::recorded_lost(&audit)
+            .get("status")
+            .map(String::as_str),
+        Some("acked")
+    );
+    drop(store);
+
+    let reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        reopened
+            .load("ns", "contact", "c-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("status")
+            .map(String::as_str),
+        Some("closed")
+    );
+    drop(reopened);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    let live = rebuilt
+        .load("ns", "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(live.props.get("status").map(String::as_str), Some("closed"));
+    assert_eq!(
+        live.props.get("name").map(String::as_str),
+        Some("Ada Lovelace")
+    );
+    let overlay = rebuilt.overlay("ns", "contact", "c-1").unwrap().unwrap();
+    assert_eq!(
+        overlay.props.get("status").map(String::as_str),
+        Some("acked")
+    );
+    assert_eq!(overlay.at.as_deref(), Some("2026-10-11T11:00:00.000Z"));
 }

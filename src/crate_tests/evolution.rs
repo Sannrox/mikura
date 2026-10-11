@@ -13,6 +13,7 @@ fn incident_schema() -> SchemaDescriptor {
         }],
         sums: Vec::new(),
         types: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -194,6 +195,7 @@ fn overlay_and_action_follow_current_descriptor() {
                 props: HashMap::from([("note".into(), "paged".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note".into(),
             None,
@@ -229,6 +231,7 @@ fn overlay_and_action_follow_current_descriptor() {
                 props: HashMap::from([("note".into(), "stale".into())]),
                 cleared: Vec::new(),
                 action_id: None,
+                ..Default::default()
             },
             "act-inc-1-note-2".into(),
             None,

@@ -97,6 +97,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M10 capacity | One unpartitioned store. No partition key or ownership split. [#193](https://github.com/Sannrox/mikura/issues/193) closed no-action ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](docs/decisions/0024-unpartitioned-store.md)). |
 | store namespace | Required `namespace` on new logs (`MIKURAV2` / `MKJOIN05`). Missing or unknown fails closed. Identical `(kind, key)` in two namespaces stay isolated. Existing-log migration is [#251](https://github.com/Sannrox/mikura/issues/251) ([#234](https://github.com/Sannrox/mikura/issues/234), [ADR 0028](docs/decisions/0028-store-namespace.md)). |
 | ordered stream apply | `StreamApply` records the last committed source offset on the log; duplicate and out-of-order offsets skip; resume after reopen; seconds-scale visibility on the product-loop fixture ([#246](https://github.com/Sannrox/mikura/issues/246), [ADR 0031](docs/decisions/0031-ordered-stream-apply.md)). |
+| overlay conflict strategy | Kind descriptor selects user-wins (default) or newest-timestamp-wins, optionally per property. Losing values are on the overlay row. Not retroactive ([#249](https://github.com/Sannrox/mikura/issues/249), [ADR 0032](docs/decisions/0032-overlay-conflict-strategy.md)). |
 
 ## Next (this repository, in order)
 
