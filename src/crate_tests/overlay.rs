@@ -267,3 +267,53 @@ fn apply_action_replaces_without_merging_overlay() {
     assert_eq!(replaced.action_id.as_deref(), Some("act-inc-1-rename"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn malformed_source_cursor_fails_closed() {
+    let (dir, log) = temp_log("source-cursor-shape");
+    let mut store = Store::create(&log).unwrap();
+    let err = store
+        .append(rec(SOURCE_KIND, "orders", false, &[("note", "bad")]))
+        .unwrap_err();
+    assert!(
+        err.contains("source cursor"),
+        "expected cursor shape error, got {err}"
+    );
+    let hidden = rec(SOURCE_KIND, "orders", true, &[(SOURCE_OFFSET, "1")]);
+    let err = store.append(hidden).unwrap_err();
+    assert!(
+        err.contains("source cursor"),
+        "expected hidden cursor error, got {err}"
+    );
+    store
+        .append(rec(SOURCE_KIND, "orders", false, &[(SOURCE_OFFSET, "3")]))
+        .unwrap();
+    assert_eq!(
+        store
+            .load(NS, SOURCE_KIND, "orders", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get(SOURCE_OFFSET)
+            .map(String::as_str),
+        Some("3")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn overlay_cannot_describe_source_cursor() {
+    let err = OverlayPatch {
+        namespace: NS.into(),
+        kind: SOURCE_KIND.into(),
+        key: "orders".into(),
+        props: HashMap::from([(SOURCE_OFFSET.into(), "1".into())]),
+        cleared: Vec::new(),
+        action_id: None,
+    }
+    .to_record()
+    .unwrap_err();
+    assert!(
+        err.contains("overlay cannot describe"),
+        "expected reserved-kind rejection, got {err}"
+    );
+}

@@ -7,6 +7,7 @@
 - Amends: none. [#123](https://github.com/Sannrox/mikura/issues/123) stands: source offsets stay with the clerk; no public commit-position waiter.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0031](0031-ordered-stream-apply.md) (last committed offset of a named `StreamApply` source is a `mikura.source` object on the log; still no ledger file or waiter)
 
 ## Context
 
@@ -43,7 +44,7 @@ process. After crash, rebuild reads only committed pages
 
 | Fact | Owner | In mikura |
 | --- | --- | --- |
-| Source snapshot / stream position | Clerk | No |
+| Source snapshot / stream position | Clerk | Last committed `StreamApply` offset is `mikura.source/<source>` ([ADR 0031](0031-ordered-stream-apply.md)); changelog position stays clerk-owned |
 | Which source system produced a property | Clerk (merge before ingest) | One source write path + one overlay |
 | Admitted property overlay | Clerk admits; log stores last patch | `mikura.overlay/{kind}/{key}` |
 | Governed whole-record replace | Clerk Action id | `apply_action` replay (ADR 0011) |
@@ -87,7 +88,7 @@ source write of that identity.
 
 | Option | Why not |
 | --- | --- |
-| Persist source offsets on the log | Duplicates clerk progress. Couples recovery to a source system mikura does not own. #123 already rejected this for the pilot; a long-running consumer does not name a different need. |
+| Persist source offsets on the log | A ledger of every offset still duplicates clerk progress. [ADR 0031](0031-ordered-stream-apply.md) records only the last committed `StreamApply` cursor as one log object so reopen can resume that named stream. Changelog position stays clerk-owned. |
 | Public commit-position waiter | Committed ops are already visible. Asynchronous index wait was rejected in #123. |
 | Multi-source property ownership in Store | Second write path next to overlay. Clerk can merge sources. |
 | Source-time / out-of-order replay | No fixture. Last-write-wins on arrival is today's contract. |
