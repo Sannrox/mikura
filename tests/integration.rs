@@ -8,7 +8,10 @@ use mikura::{
     ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, PropertyType, SchemaDescriptor,
     SchemaLink, Sort, Store, SCHEMA_SUMS, SCHEMA_TYPES,
 };
-use mikura_ingest::{snapshot_changelog, BatchIngest, ChangelogIngest, StreamIngest};
+use mikura_ingest::{
+    snapshot_changelog, ApplyStatus, BatchIngest, ChangelogIngest, StreamApply, StreamChange,
+    StreamIngest, STREAM_APPLY_LATENCY_TARGET_SECS,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -2591,6 +2594,262 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
             "unexpected progress file {name}"
         );
     }
+}
+
+fn stream_change(offset: u64, record: ObjectRecord) -> StreamChange {
+    StreamChange { offset, record }
+}
+
+#[test]
+fn stream_apply_is_idempotent_on_duplicate_and_stale_offsets() {
+    let tmp = TempLog::new("stream-apply-order");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut apply = StreamApply::new("ns", "orders", 8).unwrap();
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    1,
+                    rec(
+                        "Shipment",
+                        "s1",
+                        false,
+                        &[("order_id", "o1"), ("amount", "10")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Applied
+    );
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    1,
+                    rec(
+                        "Shipment",
+                        "s1",
+                        false,
+                        &[("order_id", "o1"), ("amount", "99")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Duplicate
+    );
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    0,
+                    rec(
+                        "Shipment",
+                        "s1",
+                        false,
+                        &[("order_id", "o1"), ("amount", "1")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Stale
+    );
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    2,
+                    rec(
+                        "Shipment",
+                        "s2",
+                        false,
+                        &[("order_id", "o1"), ("amount", "4")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Applied
+    );
+    apply.flush(&mut store).unwrap();
+    let allow = PropertyAcl::allow_all();
+    assert_eq!(store.load("ns", "Shipment", "s1", &allow).unwrap().gen, 1);
+    assert_eq!(
+        store
+            .load("ns", "Shipment", "s1", &allow)
+            .unwrap()
+            .props
+            .get("amount")
+            .map(String::as_str),
+        Some("10")
+    );
+    assert_eq!(store.load("ns", "Shipment", "s2", &allow).unwrap().gen, 1);
+}
+
+#[test]
+fn stream_apply_resumes_from_committed_offset_without_duplication_or_loss() {
+    let tmp = TempLog::new("stream-apply-resume");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut apply = StreamApply::new("ns", "orders", 8).unwrap();
+    apply
+        .apply(
+            &mut store,
+            stream_change(
+                1,
+                rec(
+                    "Shipment",
+                    "s1",
+                    false,
+                    &[("order_id", "o1"), ("amount", "10")],
+                ),
+            ),
+        )
+        .unwrap();
+    apply.flush(&mut store).unwrap();
+    apply
+        .apply(
+            &mut store,
+            stream_change(
+                2,
+                rec(
+                    "Shipment",
+                    "s1",
+                    false,
+                    &[("order_id", "o1"), ("amount", "11")],
+                ),
+            ),
+        )
+        .unwrap();
+    drop(store);
+
+    let mut store = Store::open(tmp.path()).unwrap();
+    let allow = PropertyAcl::allow_all();
+    assert_eq!(
+        store
+            .load("ns", "Shipment", "s1", &allow)
+            .unwrap()
+            .props
+            .get("amount")
+            .map(String::as_str),
+        Some("10")
+    );
+    let mut apply = StreamApply::resume(&store, "ns", "orders", 8).unwrap();
+    assert_eq!(apply.last_committed_offset(), Some(1));
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    1,
+                    rec(
+                        "Shipment",
+                        "s1",
+                        false,
+                        &[("order_id", "o1"), ("amount", "10")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Duplicate
+    );
+    assert_eq!(
+        apply
+            .apply(
+                &mut store,
+                stream_change(
+                    2,
+                    rec(
+                        "Shipment",
+                        "s1",
+                        false,
+                        &[("order_id", "o1"), ("amount", "11")],
+                    ),
+                ),
+            )
+            .unwrap(),
+        ApplyStatus::Applied
+    );
+    apply.flush(&mut store).unwrap();
+    assert_eq!(
+        store
+            .load("ns", "Shipment", "s1", &allow)
+            .unwrap()
+            .props
+            .get("amount")
+            .map(String::as_str),
+        Some("11")
+    );
+    drop(store);
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let rebuilt = Store::open(tmp.path()).unwrap();
+    let apply = StreamApply::resume(&rebuilt, "ns", "orders", 8).unwrap();
+    assert_eq!(apply.last_committed_offset(), Some(2));
+}
+
+#[test]
+fn stream_apply_product_loop_visibility_is_within_seconds() {
+    use std::time::{Duration, Instant};
+
+    let tmp = TempLog::new("stream-apply-latency");
+    let mut store = Store::create(tmp.path()).unwrap();
+    let mut apply = StreamApply::new("ns", "product-loop", 8).unwrap();
+    apply
+        .apply(
+            &mut store,
+            stream_change(
+                1,
+                rec(
+                    "component",
+                    "svc-api",
+                    false,
+                    &[("name", "billing-api"), ("tier", "prod")],
+                ),
+            ),
+        )
+        .unwrap();
+    apply
+        .apply(
+            &mut store,
+            stream_change(
+                2,
+                rec(
+                    "incident",
+                    "inc-1",
+                    false,
+                    &[("name", "elevated latency"), ("affects", "svc-api")],
+                ),
+            ),
+        )
+        .unwrap();
+    apply.flush(&mut store).unwrap();
+
+    let started = Instant::now();
+    apply
+        .apply(
+            &mut store,
+            stream_change(
+                3,
+                rec(
+                    "incident",
+                    "inc-1",
+                    false,
+                    &[("name", "elevated latency"), ("affects", "svc-api")],
+                ),
+            ),
+        )
+        .unwrap();
+    apply.flush(&mut store).unwrap();
+    let loaded = store
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(loaded.gen, 2);
+    assert!(
+        elapsed < Duration::from_secs(STREAM_APPLY_LATENCY_TARGET_SECS),
+        "product-loop apply+flush+load took {elapsed:?}, target is seconds"
+    );
 }
 
 #[test]

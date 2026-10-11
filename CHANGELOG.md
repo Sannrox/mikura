@@ -27,6 +27,15 @@ window.
 
 ### Added
 
+- `StreamApply` applies a named source stream ordered per identity.
+  Duplicate and older offsets skip without a new generation. The last
+  committed offset is `mikura.source/<source>` on the log; resume after
+  reopen reads that row. A flushed change is visible within seconds on
+  the product-loop fixture. Overlay user-wins is unchanged. No broker
+  ([#246](https://github.com/Sannrox/mikura/issues/246),
+  [ADR 0031](docs/decisions/0031-ordered-stream-apply.md)).
+- `Store::hold_commits` and `Store::has_pending` so stream apply can keep
+  sealed pages off the superblock until the source cursor is committed.
 - `tenant_namespace(tenant_id, namespace)` composes a tenant-qualified
   store namespace; mikura does not administer tenants
   ([#251](https://github.com/Sannrox/mikura/issues/251)).

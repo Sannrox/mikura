@@ -35,6 +35,7 @@ a new ADR. Allocate the next number and list it here.
 | [0028](0028-store-namespace.md) | Required namespace on new object logs (`MIKURAV2`) | accepted |
 | [0029](0029-restriction-row-filters.md) | Typed row filters in the restriction document | accepted |
 | [0030](0030-unnamespaced-log-migration.md) | Explicit migration of pre-namespace logs | accepted |
+| [0031](0031-ordered-stream-apply.md) | Ordered stream apply; last committed offset on the log | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

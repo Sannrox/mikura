@@ -24,7 +24,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/crate_tests/` | In-crate tests split by persist, hops, load, schema, overlay, measures |
 | `src/schema.rs` | Clerk-supplied descriptors; write-time validation ([ADR 0008](docs/decisions/0008-type-link-delete.md)) |
 | `src/overlay.rs` | Clerk-admitted property overlay; merge on later source writes ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)) |
-| `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest`. Depends on `mikura` only |
+| `crates/mikura-ingest/` | Write orchestrator: `BatchIngest` / `ChangelogIngest` / `MergeIngest` / `StreamIngest` / `StreamApply`. Depends on `mikura` only |
 | `crates/mikura-host/` | Ingest/evaluate/load/apply_action/apply_overlay/hide host over `Store`, `mikura-host` binary, product-loop example |
 | `crates/mikura-host/tests/e2e.rs` | Host-process e2e suite (spawn binary, JSON-line RPC) |
 | `src/objectset.rs` | Evaluate request/response |

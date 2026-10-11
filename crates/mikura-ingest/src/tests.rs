@@ -1,5 +1,6 @@
 use mikura::{Aggregate, EvaluateRequest, Hop, ObjectRecord, ObjectSet, PropertyAcl, Store};
 
+mod apply;
 mod batch;
 mod changelog;
 mod merge;

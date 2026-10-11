@@ -16,6 +16,12 @@ mod sidecar;
 /// checkpoint or dirty rows exceed a quarter of identity.
 pub const JOIN_DELTA_COMPACT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Reserved kind for the last committed offset of a named `StreamApply` source.
+pub const SOURCE_KIND: &str = "mikura.source";
+
+/// Property on [`SOURCE_KIND`] holding the decimal last committed offset.
+pub const SOURCE_OFFSET: &str = "offset";
+
 /// Live identity: `(namespace, kind, key)`.
 type LiveId = (String, String, String);
 
@@ -655,6 +661,8 @@ impl Store {
             }
         } else if record.kind == OVERLAY_KIND {
             OverlayPatch::from_record(&record)?;
+        } else if record.kind == SOURCE_KIND {
+            require_source_cursor(&record)?;
         } else if !record.hidden {
             let was_hidden = self
                 .identity
@@ -743,6 +751,19 @@ impl Store {
     pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
         self.persist_projection()
+    }
+
+    /// While held, sealed pages do not advance the superblock. Stream apply
+    /// holds from the first pending change until flush so records and the
+    /// source cursor become durable together.
+    pub fn hold_commits(&mut self, hold: bool) {
+        self.writer.hold_commits(hold);
+    }
+
+    /// True when the writer has pages or a partial page the superblock does
+    /// not cover yet.
+    pub fn has_pending(&self) -> bool {
+        self.writer.has_pending()
     }
 
     /// Append `records` and commit them as one unit (ADR 0026).
@@ -1076,4 +1097,22 @@ fn require_namespace(namespace: &str) -> Result<&str, String> {
     } else {
         Ok(namespace)
     }
+}
+
+fn require_source_cursor(record: &ObjectRecord) -> Result<u64, String> {
+    if record.hidden {
+        return Err("source cursor cannot be hidden".into());
+    }
+    if record.key.is_empty() || record.key.contains('/') {
+        return Err("source cursor key must be non-empty and must not contain '/'".into());
+    }
+    if record.props.len() != 1 {
+        return Err("source cursor must have only offset".into());
+    }
+    let raw = record
+        .props
+        .get(SOURCE_OFFSET)
+        .ok_or_else(|| format!("source cursor missing {SOURCE_OFFSET}"))?;
+    raw.parse::<u64>()
+        .map_err(|_| format!("source cursor offset {raw} is invalid"))
 }

@@ -96,6 +96,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | M10 availability | One process remains the hosted form. Restore from the object log. No replica, quorum, or failover writer. [#191](https://github.com/Sannrox/mikura/issues/191) closed no-action ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](docs/decisions/0023-single-process-availability.md)). |
 | M10 capacity | One unpartitioned store. No partition key or ownership split. [#193](https://github.com/Sannrox/mikura/issues/193) closed no-action ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](docs/decisions/0024-unpartitioned-store.md)). |
 | store namespace | Required `namespace` on new logs (`MIKURAV2` / `MKJOIN05`). Missing or unknown fails closed. Identical `(kind, key)` in two namespaces stay isolated. Existing-log migration is [#251](https://github.com/Sannrox/mikura/issues/251) ([#234](https://github.com/Sannrox/mikura/issues/234), [ADR 0028](docs/decisions/0028-store-namespace.md)). |
+| ordered stream apply | `StreamApply` records the last committed source offset on the log; duplicate and out-of-order offsets skip; resume after reopen; seconds-scale visibility on the product-loop fixture ([#246](https://github.com/Sannrox/mikura/issues/246), [ADR 0031](docs/decisions/0031-ordered-stream-apply.md)). |
 
 ## Next (this repository, in order)
 

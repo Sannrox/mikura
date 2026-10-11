@@ -11,7 +11,7 @@ ingest  →  object log (SoR)  →  live maps  →  object-set evaluate
 ```
 
 The public surface is three crates: `mikura` (`src/lib.rs`) for the log and
-evaluate, `mikura-ingest` for batch/stream append, and `mikura-host` for
+evaluate, `mikura-ingest` for batch/stream append and ordered stream apply, and `mikura-host` for
 loopback ingest, evaluate, and load. A git tag of that surface is enough for
 a first consumer; `publish = false` until crates.io is authorized
 ([#57](https://github.com/Sannrox/mikura/issues/57)). A control plane maps
@@ -164,9 +164,11 @@ record of it and rebuilds the live projection from the committed log
 `Store::append_uncommitted` and its own per-push outcome. The `mikura` crate has no ingest
 types. Host `ingest_batch`, stream flush, `apply_action`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
-pointer, not a public waiter. Source-sync offsets stay with the clerk.
-Long-running resume is changelog/stream replay, not an offset ledger
-([ADR 0020](decisions/0020-resumable-source-reconciliation.md)).
+pointer, not a public waiter. Changelog source-sync offsets stay with the
+clerk. Long-running changelog resume is snapshot replay, not an offset
+ledger ([ADR 0020](decisions/0020-resumable-source-reconciliation.md)).
+A named `StreamApply` records its last committed offset as
+`mikura.source/<source>` on the log ([ADR 0031](decisions/0031-ordered-stream-apply.md)).
 
 `mikura-ingest::merge_source_and_edits` folds a source snapshot and admitted
 edits by `(kind, key)` for one write cycle. Within each input the last record
@@ -193,6 +195,18 @@ records. `push` calls `Store::append_uncommitted` (live maps update
 immediately). A push that would exceed the bound returns an error and does
 not append. `flush` calls `Store::commit`. A crash before flush drops the
 uncommitted tail; rebuild reads only committed pages.
+
+`mikura-ingest::StreamApply` applies a named source stream ordered per
+identity. Each change carries a monotone source offset. Duplicate and older
+offsets for that identity skip without a new generation. From the first
+pending apply until `flush`, sealed pages do not advance the superblock.
+`flush` writes `mikura.source/<source>` (`offset`) and group-commits.
+`resume` reads that row after reopen. Overlay merge on a visible source
+write stays user-wins. A flushed apply is visible to the next `load` /
+`evaluate` on this process; the documented end-to-end target is seconds
+on the product-loop fixture
+([ADR 0031](decisions/0031-ordered-stream-apply.md)). Connectors and
+brokers stay out.
 
 ## Evaluate
 

@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::schema::SCHEMA_KIND;
-use crate::store::ObjectRecord;
+use crate::store::{ObjectRecord, SOURCE_KIND};
 
 /// Reserved kind for the last accepted property overlay of another identity.
 pub const OVERLAY_KIND: &str = "mikura.overlay";
@@ -38,7 +38,7 @@ impl OverlayPatch {
             ));
         }
         let (kind, key) = split_identity_key(&record.key)?;
-        if kind == SCHEMA_KIND || kind == OVERLAY_KIND {
+        if kind == SCHEMA_KIND || kind == OVERLAY_KIND || kind == SOURCE_KIND {
             return Err(format!("overlay cannot describe {kind}"));
         }
         let mut props = HashMap::new();
@@ -74,7 +74,7 @@ impl OverlayPatch {
 
     /// Encode as a `mikura.overlay` record. [`crate::Store::append`] assigns `gen`.
     pub fn to_record(&self) -> Result<ObjectRecord, String> {
-        if self.kind == SCHEMA_KIND || self.kind == OVERLAY_KIND {
+        if self.kind == SCHEMA_KIND || self.kind == OVERLAY_KIND || self.kind == SOURCE_KIND {
             return Err(format!("overlay cannot describe {}", self.kind));
         }
         if self.namespace.is_empty() {
