@@ -14,5 +14,6 @@ mod pages;
 mod persist;
 mod predicates;
 mod restriction;
+mod row_filter;
 mod schema;
 mod values;

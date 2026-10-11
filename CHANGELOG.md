@@ -20,6 +20,15 @@ window.
   overlay, and Action name a namespace. Missing or unknown fails closed.
   Host JSON requires `namespace` on those ops and on ingested records.
 
+### Added
+
+- Restriction `row_filters`: per-kind conjunctions of exact-value set
+  membership on a property. Rows that fail are invisible to evaluate
+  roots, hops, lists, count and sum; load matches missing; mutations fail
+  closed; cursors bind the filter. Host `restriction.row_filters` is
+  additive ([#235](https://github.com/Sannrox/mikura/issues/235),
+  [ADR 0029](docs/decisions/0029-restriction-row-filters.md)).
+
 ## [0.2.0] - 2026-09-24
 
 ### Upgrade

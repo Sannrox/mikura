@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "mikura-row-filter-envelope"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway 10^7 two-hop with a selective restriction row filter. Not the store of record."
+
+[[bin]]
+name = "mikura-row-filter-envelope"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
+mikura-ingest = { path = "../../crates/mikura-ingest" }

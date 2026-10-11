@@ -2545,6 +2545,68 @@ fn process_restriction_hides_identity_and_fails_closed_on_unknown_keys() {
 }
 
 #[test]
+fn process_row_filter_matches_missing_and_fails_closed() {
+    let tmp = TempLog::new("row-filter");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [
+            {"gen": 1, "namespace": "ns", "kind": "component", "key": "eu-api",
+             "hidden": false, "props": {"name": "a", "region": "eu"}},
+            {"gen": 1, "namespace": "ns", "kind": "component", "key": "us-api",
+             "hidden": false, "props": {"name": "b", "region": "us"}}
+        ]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let eu = serde_json::json!({
+        "row_filters": [{"kind": "component", "property": "region", "values": ["eu"]}]
+    });
+    let listed = host.rpc(&serde_json::json!({
+        "op": "evaluate",
+        "request": {
+            "namespace": "ns",
+            "root_kind": "component",
+            "hops": [],
+            "sum_kind": "component",
+            "sum_property": "name",
+            "object_bound": 8,
+            "restriction": eu
+        }
+    }));
+    assert!(listed.ok, "{listed:?}");
+    let listed = listed.evaluate.unwrap();
+    assert_eq!(listed.two_hop_count, 1);
+    assert_eq!(listed.objects[0].key, "eu-api");
+    let filtered = host.rpc(&serde_json::json!({
+        "op": "load", "namespace": "ns", "kind": "component", "key": "us-api",
+        "restriction": eu
+    }));
+    assert!(
+        filtered
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("unknown identity"),
+        "{filtered:?}"
+    );
+    for bad in [
+        serde_json::json!({"row_filters": [{"kind": "component", "property": "region",
+            "values": ["eu"], "op": "prefix"}]}),
+        serde_json::json!({"row_filters": [{"kind": "component", "property": "region",
+            "values": []}]}),
+        serde_json::json!({"deny_properties": [{"kind": "component", "property": "region"}],
+            "row_filters": [{"kind": "component", "property": "region", "values": ["eu"]}]}),
+    ] {
+        let rejected = host.rpc(&serde_json::json!({
+            "op": "load", "namespace": "ns", "kind": "component", "key": "eu-api",
+            "restriction": bad
+        }));
+        assert!(!rejected.ok, "{rejected:?}");
+    }
+    drop(host);
+}
+
+#[test]
 fn process_overlay_replays_matching_id() {
     let tmp = TempLog::new("overlay-retry");
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);

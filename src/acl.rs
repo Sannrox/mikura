@@ -1,10 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 /// Bound on `hide_identities`. Exceeding it fails closed (no truncation).
 pub const HIDE_IDENTITIES_BOUND: usize = 4096;
 /// Bound on `hide_kinds`. Exceeding it fails closed (no truncation).
 pub const HIDE_KINDS_BOUND: usize = 256;
+/// Bound on kinds carrying a row filter. Exceeding it fails closed.
+pub const ROW_FILTER_KINDS_BOUND: usize = 256;
+/// Bound on conjunctive terms per kind. Exceeding it fails closed.
+pub const ROW_FILTER_TERMS_BOUND: usize = 16;
+/// Bound on allowed values per term. Exceeding it fails closed.
+pub const ROW_FILTER_VALUES_BOUND: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AclError {
@@ -41,6 +47,10 @@ pub struct PropertyAcl {
     denied: HashSet<(String, String)>,
     hide_kinds: HashSet<String>,
     hide_identities: HashSet<(String, String)>,
+    /// `kind -> property -> allowed values` (ADR 0029). Terms of one kind
+    /// are a conjunction; a row is visible only when every term's stored
+    /// value is in its allowed set.
+    row_filters: HashMap<String, BTreeMap<String, BTreeSet<String>>>,
 }
 
 impl PropertyAcl {
@@ -57,6 +67,9 @@ impl PropertyAcl {
     pub fn insert_deny(&mut self, kind: &str, property: &str) -> Result<(), AclError> {
         require_token(kind, "deny kind")?;
         require_token(property, "deny property")?;
+        if self.filters_on(kind, property) {
+            return Err(row_filter_on_denied(kind, property));
+        }
         let pair = (kind.to_string(), property.to_string());
         if !self.denied.insert(pair) {
             return Err(AclError::Malformed(format!(
@@ -108,18 +121,98 @@ impl PropertyAcl {
         Ok(())
     }
 
-    /// Whether this identity exists in the request view.
-    ///
-    /// Restriction-invisible is not a persisted tombstone.
-    pub fn object_visible(&self, kind: &str, key: &str) -> bool {
-        if self.hide_kinds.contains(kind) {
-            return false;
+    /// Add one row-filter term on `kind`: the stored `property` must equal
+    /// one of `values` exactly (ADR 0029). Terms on one kind are a
+    /// conjunction. Empty tokens, an empty or duplicate value, a repeated
+    /// `(kind, property)`, a denied property, and overflow fail closed.
+    pub fn insert_row_filter<V: AsRef<str>>(
+        &mut self,
+        kind: &str,
+        property: &str,
+        values: impl IntoIterator<Item = V>,
+    ) -> Result<(), AclError> {
+        require_token(kind, "row filter kind")?;
+        require_token(property, "row filter property")?;
+        if self.check(kind, property).is_err() {
+            return Err(row_filter_on_denied(kind, property));
         }
-        !self.hide_identities.contains(&(kind.into(), key.into()))
+        let mut allowed = BTreeSet::new();
+        for value in values {
+            let value = value.as_ref();
+            require_token(value, "row filter value")?;
+            if allowed.len() >= ROW_FILTER_VALUES_BOUND {
+                return Err(AclError::Malformed(format!(
+                    "row filter {kind}.{property} exceeds {ROW_FILTER_VALUES_BOUND} values"
+                )));
+            }
+            if !allowed.insert(value.to_string()) {
+                return Err(AclError::Malformed(format!(
+                    "duplicate row filter value {kind}.{property}={value}"
+                )));
+            }
+        }
+        if allowed.is_empty() {
+            return Err(AclError::Malformed(format!(
+                "row filter {kind}.{property} requires at least one value"
+            )));
+        }
+        if !self.row_filters.contains_key(kind) && self.row_filters.len() >= ROW_FILTER_KINDS_BOUND
+        {
+            return Err(AclError::Malformed(format!(
+                "row filters exceed {ROW_FILTER_KINDS_BOUND} kinds"
+            )));
+        }
+        let terms = self.row_filters.entry(kind.to_string()).or_default();
+        if terms.contains_key(property) {
+            return Err(AclError::Malformed(format!(
+                "duplicate row filter {kind}.{property}"
+            )));
+        }
+        if terms.len() >= ROW_FILTER_TERMS_BOUND {
+            return Err(AclError::Malformed(format!(
+                "row filter on {kind} exceeds {ROW_FILTER_TERMS_BOUND} terms"
+            )));
+        }
+        terms.insert(property.to_string(), allowed);
+        Ok(())
     }
 
-    pub fn require_visible(&self, kind: &str, key: &str) -> Result<(), AclError> {
-        if self.object_visible(kind, key) {
+    fn filters_on(&self, kind: &str, property: &str) -> bool {
+        self.row_filters
+            .get(kind)
+            .is_some_and(|terms| terms.contains_key(property))
+    }
+
+    /// Whether this identity exists in the request view.
+    ///
+    /// `prop` returns the identity's stored property value. It is consulted
+    /// only for kinds with a row filter; a missing value is invisible.
+    /// Restriction-invisible is not a persisted tombstone.
+    pub fn object_visible<'a>(
+        &self,
+        kind: &str,
+        key: &str,
+        prop: impl Fn(&str) -> Option<&'a str>,
+    ) -> bool {
+        if self.hide_kinds.contains(kind)
+            || self.hide_identities.contains(&(kind.into(), key.into()))
+        {
+            return false;
+        }
+        self.row_filters.get(kind).is_none_or(|terms| {
+            terms
+                .iter()
+                .all(|(property, allowed)| prop(property).is_some_and(|v| allowed.contains(v)))
+        })
+    }
+
+    pub fn require_visible<'a>(
+        &self,
+        kind: &str,
+        key: &str,
+        prop: impl Fn(&str) -> Option<&'a str>,
+    ) -> Result<(), AclError> {
+        if self.object_visible(kind, key, prop) {
             Ok(())
         } else {
             Err(AclError::Invisible {
@@ -130,7 +223,16 @@ impl PropertyAcl {
     }
 
     pub fn hides_objects(&self) -> bool {
-        !self.hide_kinds.is_empty() || !self.hide_identities.is_empty()
+        !self.hide_kinds.is_empty()
+            || !self.hide_identities.is_empty()
+            || !self.row_filters.is_empty()
+    }
+
+    /// Whether any identity of `kind` can be invisible in this view.
+    pub(crate) fn hides_in_kind(&self, kind: &str) -> bool {
+        self.hide_kinds.contains(kind)
+            || self.row_filters.contains_key(kind)
+            || self.hide_identities.iter().any(|(k, _)| k == kind)
     }
 
     pub(crate) fn denied_sorted(&self) -> Vec<(&str, &str)> {
@@ -157,6 +259,21 @@ impl PropertyAcl {
             .collect();
         ids.sort_unstable();
         ids
+    }
+
+    /// `(kind, property, sorted values)` in a stable order for cursor binding.
+    pub(crate) fn row_filters_sorted(&self) -> Vec<(&str, &str, &BTreeSet<String>)> {
+        let mut terms: Vec<_> = self
+            .row_filters
+            .iter()
+            .flat_map(|(kind, terms)| {
+                terms
+                    .iter()
+                    .map(move |(property, values)| (kind.as_str(), property.as_str(), values))
+            })
+            .collect();
+        terms.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        terms
     }
 
     /// Resolve named denies to intern ids. Unknown names cannot appear on a row.
@@ -208,6 +325,10 @@ impl PropertyAcl {
         props.retain(|property, _| self.check(kind, property).is_ok());
         props
     }
+}
+
+fn row_filter_on_denied(kind: &str, property: &str) -> AclError {
+    AclError::Malformed(format!("row filter on denied property {kind}.{property}"))
 }
 
 fn require_token(token: &str, what: &str) -> Result<(), AclError> {
@@ -274,10 +395,10 @@ mod tests {
     fn hide_identity_matches_missing_and_mutations_are_invisible() {
         let mut acl = PropertyAcl::allow_all();
         acl.insert_hide_identity("incident", "inc-1").unwrap();
-        assert!(!acl.object_visible("incident", "inc-1"));
-        assert!(acl.object_visible("incident", "inc-2"));
+        assert!(!acl.object_visible("incident", "inc-1", |_| None));
+        assert!(acl.object_visible("incident", "inc-2", |_| None));
         assert!(matches!(
-            acl.require_visible("incident", "inc-1"),
+            acl.require_visible("incident", "inc-1", |_| None),
             Err(AclError::Invisible { .. })
         ));
         let dup = acl.insert_hide_identity("incident", "inc-1").unwrap_err();

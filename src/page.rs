@@ -133,6 +133,16 @@ fn write_acl(out: &mut Vec<u8>, acl: &PropertyAcl) {
         write_str(out, kind);
         write_str(out, key);
     }
+    let terms = acl.row_filters_sorted();
+    out.extend_from_slice(&(terms.len() as u32).to_le_bytes());
+    for (kind, property, values) in terms {
+        write_str(out, kind);
+        write_str(out, property);
+        out.extend_from_slice(&(values.len() as u32).to_le_bytes());
+        for value in values {
+            write_str(out, value);
+        }
+    }
 }
 
 fn write_hop(out: &mut Vec<u8>, hop: &Hop) {

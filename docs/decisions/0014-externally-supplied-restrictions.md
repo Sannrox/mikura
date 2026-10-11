@@ -7,6 +7,7 @@
 - Amends: [ADR 0007](0007-host-bearer.md) (bearer stays a process secret; restriction is a separate request document)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0029](0029-restriction-row-filters.md) (per-kind row filters)
 
 ## Context
 

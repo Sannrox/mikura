@@ -253,8 +253,11 @@ fn visible_in_view(
     };
     ids.into_iter()
         .filter(|&id| {
-            maps.intern_get(id)
-                .is_some_and(|key| request.acl.object_visible(kind, key))
+            maps.intern_get(id).is_some_and(|key| {
+                request
+                    .acl
+                    .object_visible(kind, key, |property| maps.prop(kind, key, property))
+            })
         })
         .collect()
 }
@@ -283,7 +286,11 @@ fn walk_hops(
                     let Some(key) = maps.intern_get(child) else {
                         continue;
                     };
-                    if !request.acl.object_visible(&hop.far_kind, key) {
+                    let far = hop.far_kind.as_str();
+                    if !request
+                        .acl
+                        .object_visible(far, key, |property| maps.prop(far, key, property))
+                    {
                         continue;
                     }
                 }
@@ -339,46 +346,51 @@ fn evaluate_local(
         .joins(&request.namespace)
         .map_err(ComputeError::Load)?;
     let hops = hop_triples(request);
-    let (two_hop_count, sum_amount, keys) =
-        if request.acl.hides_objects() || has_hop_predicate(request) {
-            let roots = root_ids(store, request)?;
-            let (count, sum, leaves) = walk_hops(store, request, &roots)?;
-            (count, sum, leaf_keys(store, &request.namespace, leaves))
-        } else if request.predicate.is_some() {
-            let roots = root_ids(store, request)?;
-            let (count, sum) = maps.count_and_sum_roots(
+    // A restriction that only reaches the root kind narrows the roots and
+    // keeps the set-oriented fold; anything on a hop kind walks each path.
+    let hides_on_hops = request
+        .hops
+        .iter()
+        .any(|hop| request.acl.hides_in_kind(&hop.far_kind));
+    let (two_hop_count, sum_amount, keys) = if hides_on_hops || has_hop_predicate(request) {
+        let roots = root_ids(store, request)?;
+        let (count, sum, leaves) = walk_hops(store, request, &roots)?;
+        (count, sum, leaf_keys(store, &request.namespace, leaves))
+    } else if request.predicate.is_some() || request.acl.hides_objects() {
+        let roots = root_ids(store, request)?;
+        let (count, sum) = maps.count_and_sum_roots(
+            &request.root_kind,
+            &roots,
+            &hops,
+            &request.sum_kind,
+            &request.sum_property,
+        );
+        let keys = maps.result_keys_from_roots(&request.root_kind, &roots, &hops);
+        (count, sum, keys)
+    } else {
+        let (count, sum) = match &request.filter {
+            None => maps.count_and_sum(
                 &request.root_kind,
-                &roots,
                 &hops,
                 &request.sum_kind,
                 &request.sum_property,
-            );
-            let keys = maps.result_keys_from_roots(&request.root_kind, &roots, &hops);
-            (count, sum, keys)
-        } else {
-            let (count, sum) = match &request.filter {
-                None => maps.count_and_sum(
-                    &request.root_kind,
-                    &hops,
-                    &request.sum_kind,
-                    &request.sum_property,
-                ),
-                Some(filter) => maps.count_and_sum_matching(
-                    &request.root_kind,
-                    &hops,
-                    &request.sum_kind,
-                    &request.sum_property,
-                    &filter.property,
-                    &filter.value,
-                ),
-            };
-            let filter = request
-                .filter
-                .as_ref()
-                .map(|filter| (filter.property.as_str(), filter.value.as_str()));
-            let keys = maps.result_keys(&request.root_kind, &hops, filter);
-            (count, sum, keys)
+            ),
+            Some(filter) => maps.count_and_sum_matching(
+                &request.root_kind,
+                &hops,
+                &request.sum_kind,
+                &request.sum_property,
+                &filter.property,
+                &filter.value,
+            ),
         };
+        let filter = request
+            .filter
+            .as_ref()
+            .map(|filter| (filter.property.as_str(), filter.value.as_str()));
+        let keys = maps.result_keys(&request.root_kind, &hops, filter);
+        (count, sum, keys)
+    };
     let (objects, cursor) = page_objects(store, request, keys)?;
     Ok(EvaluateResponse {
         two_hop_count,

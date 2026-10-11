@@ -20,6 +20,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 | [010-persist-joins](010-persist-joins/NOTES.md) | Join maps + amounts; 10⁷ load **1.0 s** vs 13 s replay; count+sum dual-read hold | VALIDATED |
 | [011-hundred-million-envelope](011-hundred-million-envelope/NOTES.md) | Product join maps; after last-hop measures 10⁷ hop count+sum **40 ms hold** vs 500 ms on declared rollups; dual-read hold; earlier leaf-walk remasures missed | HOLD |
 | [012-overlay-apply](012-overlay-apply/NOTES.md) | New overlay on an existing identity vs a whole-record write; patch-only projection update | HOLD: same cost within fsync jitter, no change |
+| [013-row-filter-envelope](013-row-filter-envelope/NOTES.md) | 10⁷ two-hop with a 1 % restriction row filter vs open two-hop and root predicate | HOLD on root (104 ms); hop-target filter 7.9 s MISS |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.
