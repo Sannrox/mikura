@@ -38,6 +38,7 @@ a new ADR. Allocate the next number and list it here.
 | [0031](0031-ordered-stream-apply.md) | Ordered stream apply; last committed offset on the log | accepted |
 | [0032](0032-overlay-conflict-strategy.md) | Overlay conflict strategy on the kind descriptor | accepted |
 | [0033](0033-atomic-change-set.md) | Atomic multi-object change set under one Action id | accepted |
+| [0034](0034-log-checkpoints.md) | Log checkpoints for bounded open and restore | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

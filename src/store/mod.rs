@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use crate::acl::PropertyAcl;
 use crate::actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
 use crate::joins::{JoinMaps, LiveMeta};
-use crate::log::{read_records, read_v1_records, LogWriter, SyncPolicy};
+use crate::log::{read_records, read_records_after, read_v1_records, LogWriter, SyncPolicy};
 use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
+mod checkpoint;
 mod sidecar;
 
 /// Rewrite `{log}.joins` and delete `{log}.joins.delta` when the dirty-set
@@ -38,7 +39,7 @@ pub struct ObjectRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ActionCommit {
+pub(crate) struct ActionCommit {
     namespace: String,
     kind: String,
     key: String,
@@ -54,7 +55,7 @@ struct ActionCommit {
 /// A committed change-set member. `props` is the put body, filled from the
 /// first visible record under the set id on that identity after the marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SetMember {
+pub(crate) struct SetMember {
     hide: bool,
     kind: String,
     key: String,
@@ -100,6 +101,18 @@ impl Store {
         Self::sidecar_path(log, ".joins.delta")
     }
 
+    pub fn checkpoint_path(log: &Path) -> PathBuf {
+        Self::sidecar_path(log, ".ckpt")
+    }
+
+    pub fn checkpoint_prev_path(log: &Path) -> PathBuf {
+        Self::sidecar_path(log, ".ckpt.prev")
+    }
+
+    fn checkpoint_tmp_path(log: &Path) -> PathBuf {
+        Self::sidecar_path(log, ".ckpt.tmp")
+    }
+
     pub fn create(log: &Path) -> Result<Self, String> {
         Self::create_with_sync(log, SyncPolicy::Group(32))
     }
@@ -107,6 +120,9 @@ impl Store {
     pub fn create_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         let _ = std::fs::remove_file(Self::join_map_path(log));
         let _ = std::fs::remove_file(Self::join_delta_path(log));
+        let _ = std::fs::remove_file(Self::checkpoint_path(log));
+        let _ = std::fs::remove_file(Self::checkpoint_prev_path(log));
+        let _ = std::fs::remove_file(Self::checkpoint_tmp_path(log));
         Ok(Self::empty(
             log.to_path_buf(),
             LogWriter::create(log, sync)?,
@@ -129,6 +145,8 @@ impl Store {
             dst.to_path_buf(),
             Self::join_map_path(dst),
             Self::join_delta_path(dst),
+            Self::checkpoint_path(dst),
+            Self::checkpoint_prev_path(dst),
         ] {
             if path.exists() {
                 return Err(format!(
@@ -1227,7 +1245,13 @@ impl Store {
         self.joins.clear();
         self.dirty.clear();
         self.action_commits.clear();
-        for record in read_records(&self.log)? {
+        self.replay_tail(0)?;
+        self.action_commits_from_log = true;
+        Ok(())
+    }
+
+    fn replay_tail(&mut self, after_page: u32) -> Result<(), String> {
+        for record in read_records_after(&self.log, after_page)? {
             let schema_namespace = record.namespace.clone();
             let schema_kind = record.kind.clone();
             let schema_key = record.key.clone();
@@ -1235,7 +1259,6 @@ impl Store {
             self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
         }
         self.dirty.clear();
-        self.action_commits_from_log = true;
         Ok(())
     }
 

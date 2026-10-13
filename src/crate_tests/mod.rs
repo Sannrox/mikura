@@ -8,6 +8,7 @@ mod helpers;
 mod hide;
 mod hops;
 mod load;
+mod log_checkpoint;
 mod measures;
 mod migrate;
 mod namespace;

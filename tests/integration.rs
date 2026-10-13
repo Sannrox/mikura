@@ -686,6 +686,8 @@ fn dual_read_after_deleting_sidecar_rebuilds_from_log() {
     drop(store);
 
     std::fs::remove_file(&sidecar).unwrap();
+    let _ = std::fs::remove_file(Store::checkpoint_path(tmp.path()));
+    let _ = std::fs::remove_file(Store::checkpoint_prev_path(tmp.path()));
     let replayed = Store::open(tmp.path()).unwrap();
     let from_log = oss.evaluate(&replayed, &fixture_request()).unwrap();
     let from_log_asset = oss.evaluate(&replayed, &asset_request()).unwrap();
@@ -3125,4 +3127,60 @@ fn overlay_conflict_strategies_survive_refresh_reopen_and_rebuild() {
         Some("acked")
     );
     assert_eq!(overlay.at.as_deref(), Some("2026-10-11T11:00:00.000Z"));
+}
+
+#[test]
+fn checkpoint_and_compact_to_match_live_evaluate() {
+    let tmp = TempLog::new("log-checkpoint");
+    let compact = tmp.dir.join("compacted.mikura");
+    let mut store = Store::create(tmp.path()).unwrap();
+    BatchIngest::run(&mut store, fixture()).unwrap();
+    store
+        .apply_action(
+            Action {
+                namespace: "ns".into(),
+                id: "act-s2".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap();
+    store.checkpoint().unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let live = oss.evaluate(&store, &fixture_request()).unwrap();
+    store.compact_to(&compact).unwrap();
+    drop(store);
+
+    std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
+    let from_ckpt = Store::open(tmp.path()).unwrap();
+    let ckpt = oss.evaluate(&from_ckpt, &fixture_request()).unwrap();
+    assert_eq!(ckpt.two_hop_count, live.two_hop_count);
+    assert_eq!(ckpt.sum_amount, live.sum_amount);
+    drop(from_ckpt);
+
+    let compacted = Store::open(&compact).unwrap();
+    let from_compact = oss.evaluate(&compacted, &fixture_request()).unwrap();
+    assert_eq!(from_compact.two_hop_count, live.two_hop_count);
+    assert_eq!(from_compact.sum_amount, live.sum_amount);
+    let mut compacted = compacted;
+    compacted
+        .apply_action(
+            Action {
+                namespace: "ns".into(),
+                id: "act-s2".into(),
+                kind: "Shipment".into(),
+                key: "s2".into(),
+                props: HashMap::from([
+                    ("order_id".into(), "o1".into()),
+                    ("amount".into(), "5".into()),
+                ]),
+            },
+            None,
+        )
+        .unwrap();
 }

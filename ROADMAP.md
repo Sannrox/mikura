@@ -45,7 +45,7 @@ Rationale: [VISION.md](VISION.md). How v1 actually works:
 | v8 incoming hop | `Hop.incoming` follows `props[join_property]` to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)) |
 | v8 aggregate catalog | Count+sum stays the only aggregate until a consumer names another with a fixture ([#51](https://github.com/Sannrox/mikura/issues/51)) |
 | v8 host load | Host JSON `load` returns the live object; evaluate filter stays on the wire ([#52](https://github.com/Sannrox/mikura/issues/52)) |
-| v9 log compact | No compact/checkpoint until a later envelope misses on disk or `Store::open` because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)) |
+| v9 log checkpoints | `{log}.ckpt` snapshots live identity at a committed page; open replays the tail. Optional `compact_to`. Page format unchanged ([#238](https://github.com/Sannrox/mikura/issues/238), [ADR 0034](docs/decisions/0034-log-checkpoints.md)). [#53](https://github.com/Sannrox/mikura/issues/53) was the no-action precursor. |
 | v10 one process | One process remains the hosted form; split waits for a miss one process cannot fix ([#56](https://github.com/Sannrox/mikura/issues/56), [ADR 0003](docs/decisions/0003-hosted-service.md)) |
 | v10 tag | A git tag is enough for the first consumer; crates.io stays `publish = false` until a human authorizes it ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut the tag with prepare-release, not from this research. |
 | M0 contract | Sekai product-loop fixture is the first application contract; host baseline recorded ([#107](https://github.com/Sannrox/mikura/issues/107), [m0-application-contract.md](docs/plans/m0-application-contract.md)). |

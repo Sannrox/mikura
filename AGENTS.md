@@ -165,7 +165,7 @@ immediately after the correction.
 **Never**
 
 - Commit secrets, object logs (`*.mikura`), join sidecars (`*.mikura.joins`,
-  `*.joins.delta`, `*.joins.tmp`), checkpoint temps (`*.mikura.tmp`), SQLite
+  `*.joins.delta`, `*.joins.tmp`), checkpoint temps (`*.mikura.tmp`, `*.ckpt.tmp`), log checkpoints (`*.ckpt`, `*.ckpt.prev`), SQLite
   files, or `target/`.
 - Vendor mikura into another product or depend on a control plane from this
   crate.

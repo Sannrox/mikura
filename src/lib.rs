@@ -1,8 +1,8 @@
 //! In-process object database: object log, store, object-set evaluate.
 //!
 //! The object log is the store of record. [`Store`] rebuilds identity from
-//! that log and keeps join maps as a checksummed sidecar (rebuilt from the
-//! log if absent or stale). [`Store::load`] returns the live object for
+//! that log, from a log checkpoint plus tail, or from a matching join
+//! sidecar (rebuilt from the log if absent or stale). [`Store::load`] returns the live object for
 //! `(namespace, kind, key)` from that projection, including the optional
 //! Action id, and omits properties on the request deny list and treats
 //! restriction-hidden identities as missing. Missing or unknown namespace

@@ -139,10 +139,14 @@ only allowed owned pairs. An empty deny skips that walk. Denied
 properties are omitted from the returned map. Hidden rows stay out
 of hop/sum; their property pairs sit in the identity row so load can still
 return them. A missing identity fails closed. The sidecar stamp is log
-`committed_pages`. A missing or stale sidecar rebuilds from the log.
+`committed_pages`. A missing sidecar, or a stale sidecar without a covering
+delta, loads `{log}.ckpt` when present and replays only pages after that
+stamp; otherwise it rebuilds from the log
+([ADR 0034](decisions/0034-log-checkpoints.md)).
 Checksum mismatch, truncation, or bad magic (current `MKJOIN05` /
 `MKJOIN5D`; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
-the sidecar recovers from a `MIKURAV2` log. Pre-namespace logs are
+the sidecar recovers from a `MIKURAV2` log. A torn `{log}.ckpt` falls
+back to `{log}.ckpt.prev` or full replay; it does not fail closed. Pre-namespace logs are
 migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schema-named last-hop
 sums persist on that sidecar as parent → `(count, sum)` rollups
 ([ADR 0010](decisions/0010-last-hop-measures.md)).
@@ -153,7 +157,12 @@ that dirty set so later ingest chunks do not accumulate until every
 commit rewrites the checkpoint; later chunks append only the new dirty
 rows. Compact when dirty rows exceed a quarter of identity, or when the
 delta file exceeds `JOIN_DELTA_COMPACT_BYTES` (64 MiB). Compact rewrites
-the interned checkpoint and deletes the delta.
+the interned checkpoint and deletes the delta. A join-checkpoint rewrite
+also writes `{log}.ckpt` when the Action-id catalog is complete for this
+process. `Store::checkpoint` writes that file at the current commit
+point. `Store::compact_to(dst)` writes live generations (including
+hidden rows) to a new log plus a checkpoint that keeps the Action-id
+catalog; the source log is unchanged. Default open keeps full history.
 
 `JoinMaps` is generic over kind and property name. Strings are interned.
 Join children are packed identity lists. Hidden records are absent from
@@ -443,10 +452,13 @@ are not SLOs ([ADR 0016](decisions/0016-production-workload.md),
 [m9-workload-acceptance.md](plans/m9-workload-acceptance.md)).
 
 Backup is a file copy of the object log plus the optional `{log}.joins`
-sidecar. Copy those files next to a fresh `Host::open`. There is no backup
-RPC. The sidecar is a rebuildable projection, never recovery material.
-Deleting the copied sidecar still answers load, list, hop, and overlay from
-the log. A corrupt committed page or sidecar checksum mismatch fails closed.
+sidecar and optional `{log}.ckpt` log checkpoint. Copy those files next to
+a fresh `Host::open`. There is no backup RPC. The sidecar is a rebuildable
+projection, never recovery material. A valid log checkpoint lets open
+replay only the tail. Deleting the copied sidecar still answers load, list,
+hop, and overlay from the log (and checkpoint, if present). A corrupt
+committed page or sidecar checksum mismatch fails closed. A torn log
+checkpoint falls back.
 
 Closing stdin stops the listener. Stop does not flush the stream buffer;
 rebuild still reads only `1..=committed_pages`. Upgrade is replace the
@@ -465,8 +477,7 @@ a typed error. New logs are `MIKURAV2`. `MIKURAV1` fails closed
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)
 - Principals, tenant administration, quota, or policy compile in this crate
   (store namespace is an identity key, not a principal)
-- Compact or checkpoint the log (researched no-action until a later envelope
-  misses on disk or `Store::open` because of log growth; [#53](https://github.com/Sannrox/mikura/issues/53))
+- Distributed snapshots (log checkpoints are single-process; [#238](https://github.com/Sannrox/mikura/issues/238))
 - Partitioned ownership of the store (researched no-action: one process,
   one log; identity inside that log is namespaced
   ([#234](https://github.com/Sannrox/mikura/issues/234),
