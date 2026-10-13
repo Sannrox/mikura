@@ -166,7 +166,7 @@ which group-commits once. A batch is all or nothing: any error drops every
 record of it and rebuilds the live projection from the committed log
 ([ADR 0026](decisions/0026-atomic-ingest-batch.md)). Stream push keeps
 `Store::append_uncommitted` and its own per-push outcome. The `mikura` crate has no ingest
-types. Host `ingest_batch`, stream flush, `apply_action`, `apply_overlay`, and `hide`
+types. Host `ingest_batch`, stream flush, `apply_action`, `apply_change_set`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Changelog source-sync offsets stay with the
 clerk. Long-running changelog resume is snapshot replay, not an offset
@@ -355,7 +355,17 @@ The same unique-id rule covers ingest append: a remapped id fails closed
 and an identical body is a no-op
 ([ADR 0025](decisions/0025-ingest-action-id-uniqueness.md)). A hidden
 record under a claimed id must copy the claimed payload; a retry of that
-hide is a no-op. Hide stays a tombstone without its own retry key. Multi-object atomic edits stay out.
+hide is a no-op. Hide stays a tombstone without its own retry key.
+
+`Store::apply_change_set` commits puts and hides of up to 64 distinct
+identities in one namespace under one Action id, all or nothing. A
+`mikura.change_set/<id>` marker opens the set on the log; members carry
+the id as provenance. Group commit is held until the set ends, so a crash
+at any page boundary leaves the whole set off the rebuild. An invisible
+member, a denied property, a stale per-member `expected_gen`, or a failed
+write rejects the set. The same id with the same edits is a replay; a
+different body or an id used by another write fails closed
+([ADR 0033](decisions/0033-atomic-change-set.md)).
 Host JSON exposes the same writeback as `apply_action`. Ingest stays the
 source-snapshot path and does not become governed writeback.
 
@@ -390,7 +400,7 @@ backlog is the only queue. Line-assembly `--request-bound` and
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`. Evaluate accepts an
 optional exact-match `filter` or a structured `predicate` tree (`op` =
 `eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
 fails closed. Omit or `null` filter and predicate means all visible roots.

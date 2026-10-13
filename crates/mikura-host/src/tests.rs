@@ -1111,3 +1111,45 @@ fn availability_decision_retains_one_process() {
         "acknowledgement stays Store::commit, not a replica quorum"
     );
 }
+
+#[test]
+fn apply_change_set_commits_all_members_or_none_across_restart() {
+    let (dir, log) = temp_log("change-set");
+    let mut host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    let reassign = r#"{"op":"apply_change_set","id":"act-1","namespace":"ns","edits":[
+        {"edit":"put","kind":"Shipment","key":"s2","props":{"order_id":"o1","amount":"5"}},
+        {"edit":"hide","kind":"Shipment","key":"s1","expected_gen":1}]}"#
+        .replace('\n', "");
+    let denied = reassign.replace(
+        r#""edits""#,
+        r#""restriction":{"hide_identities":[{"kind":"Shipment","key":"s1"}]},"edits""#,
+    );
+    let refused = host.handle_line(&denied);
+    assert!(!refused.ok, "{refused:?}");
+    let unknown = host.handle_line(&reassign.replace(r#""edit":"hide""#, r#""edit":"merge""#));
+    assert!(!unknown.ok, "{unknown:?}");
+    let load = |host: &mut Host, key: &str| {
+        host.handle(HostRequest::Load {
+            namespace: "ns".into(),
+            kind: "Shipment".into(),
+            key: key.into(),
+            deny: Vec::new(),
+            restriction: None,
+        })
+    };
+    assert!(!load(&mut host, "s2").ok);
+
+    let written = host.handle_line(&reassign);
+    assert!(written.ok, "{written:?}");
+    drop(host);
+    let mut host = Host::open(&log, 8).unwrap();
+    let replay = host.handle_line(&reassign);
+    assert!(replay.ok, "{replay:?}");
+    let s2 = load(&mut host, "s2").load.expect("load payload");
+    assert_eq!((s2.gen, s2.action_id.as_deref()), (1, Some("act-1")));
+    let s1 = load(&mut host, "s1").load.expect("load payload");
+    assert!(s1.hidden);
+    assert_eq!(s1.gen, 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

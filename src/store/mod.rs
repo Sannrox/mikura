@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::acl::PropertyAcl;
-use crate::actions::Action;
+use crate::actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
 use crate::joins::{JoinMaps, LiveMeta};
 use crate::log::{read_records, read_v1_records, LogWriter, SyncPolicy};
 use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
@@ -47,6 +47,18 @@ struct ActionCommit {
     /// A later hide copied this id's payload onto the same identity.
     hide_applied: bool,
     props: HashMap<String, String>,
+    /// Members of a change set when this id opened one (ADR 0033).
+    members: Vec<SetMember>,
+}
+
+/// A committed change-set member. `props` is the put body, filled from the
+/// first visible record under the set id on that identity after the marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SetMember {
+    hide: bool,
+    kind: String,
+    key: String,
+    props: Option<HashMap<String, String>>,
 }
 
 enum ActionClaim {
@@ -224,7 +236,25 @@ impl Store {
                 hidden: record.hidden,
                 hide_applied: false,
                 props: record.props.clone(),
+                members: if record.kind == CHANGE_SET_KIND {
+                    marker_members(&record.props)
+                } else {
+                    Vec::new()
+                },
             });
+        if commit.kind == CHANGE_SET_KIND {
+            if !record.hidden {
+                if let Some(member) = commit.members.iter_mut().find(|member| {
+                    !member.hide
+                        && member.props.is_none()
+                        && member.kind == record.kind
+                        && member.key == record.key
+                }) {
+                    member.props = Some(record.props.clone());
+                }
+            }
+            return;
+        }
         if record.hidden
             && !commit.hidden
             && commit.namespace == record.namespace
@@ -684,6 +714,10 @@ impl Store {
             OverlayPatch::from_record(&record)?;
         } else if record.kind == SOURCE_KIND {
             require_source_cursor(&record)?;
+        } else if record.kind == CHANGE_SET_KIND {
+            return Err(format!(
+                "{CHANGE_SET_KIND} is written only by apply_change_set"
+            ));
         } else if !record.hidden {
             let was_hidden = self
                 .identity
@@ -819,13 +853,24 @@ impl Store {
     /// persist the derived sidecar after that is reported as such and must not
     /// be retried as a failed batch; the next open rebuilds the sidecar.
     pub fn append_batch(&mut self, records: Vec<ObjectRecord>) -> Result<(), String> {
+        self.atomically(|store| {
+            records
+                .into_iter()
+                .try_for_each(|record| store.append_uncommitted(record))
+        })
+    }
+
+    /// Run `append` with group commit held and commit its writes as one unit,
+    /// with the abort and poison rules of [`Self::append_batch`].
+    fn atomically(
+        &mut self,
+        append: impl FnOnce(&mut Self) -> Result<(), String>,
+    ) -> Result<(), String> {
         if self.writer.has_pending() {
             self.commit()?;
         }
         self.writer.hold_commits(true);
-        let appended = records
-            .into_iter()
-            .try_for_each(|record| self.append_uncommitted(record));
+        let appended = append(self);
         self.writer.hold_commits(false);
         let committed = appended.and_then(|()| self.writer.flush());
         if let Err(error) = committed {
@@ -841,7 +886,7 @@ impl Store {
             });
         }
         self.persist_projection().map_err(|error| {
-            format!("batch committed to the log; projection sidecar not persisted: {error}")
+            format!("committed to the log; projection sidecar not persisted: {error}")
         })
     }
 
@@ -952,6 +997,163 @@ impl Store {
             ActionIdWrite::Copy,
         )?;
         self.commit()
+    }
+
+    /// Commit every edit of `set` under its Action id, all or nothing
+    /// (ADR 0033).
+    ///
+    /// Edits name distinct, non-reserved identities of one namespace, at most
+    /// [`CHANGE_SET_BOUND`]. A `mikura.change_set/<id>` marker opens the set
+    /// on the log and members carry the id as provenance. An invisible
+    /// member, a denied property, a stale `expected_gen`, or a failed write
+    /// rejects the whole set and leaves the store at its committed log, with
+    /// the abort rules of [`Self::append_batch`]. The same id with the same
+    /// edits is a replay and does not consult `expected_gen`. A different
+    /// body, or an id already used by another write, fails closed.
+    pub fn apply_change_set(&mut self, set: ChangeSet) -> Result<(), String> {
+        self.apply_change_set_in_view(set, &PropertyAcl::allow_all())
+    }
+
+    /// [`Self::apply_change_set`] honoring a request restriction (ADR 0014).
+    pub fn apply_change_set_in_view(
+        &mut self,
+        set: ChangeSet,
+        acl: &PropertyAcl,
+    ) -> Result<(), String> {
+        let ChangeSet {
+            id,
+            namespace,
+            edits,
+        } = set;
+        Self::require_action_id(&id, "action id required")?;
+        self.require_known_namespace(&namespace)?;
+        if edits.is_empty() {
+            return Err("change set has no edits".into());
+        }
+        if edits.len() > CHANGE_SET_BOUND {
+            return Err(format!("change set exceeds {CHANGE_SET_BOUND} edits"));
+        }
+        let mut members = HashSet::with_capacity(edits.len());
+        for edit in &edits {
+            let (kind, key) = (edit.kind(), edit.key());
+            if kind.starts_with("mikura.") {
+                return Err(format!("change set cannot edit reserved kind {kind}"));
+            }
+            if !members.insert((kind, key)) {
+                return Err(format!("change set edits {kind}/{key} twice"));
+            }
+            self.require_visible_in_view(&namespace, kind, key, acl)?;
+            // A hide copies the stored payload, so every copied property must
+            // be allowed, as on `hide`.
+            let checked = match edit {
+                Edit::Put { props, .. } => props.keys().cloned().collect::<Vec<_>>(),
+                Edit::Hide { .. } => self
+                    .load(&namespace, kind, key, &PropertyAcl::allow_all())?
+                    .props
+                    .into_keys()
+                    .collect(),
+            };
+            for property in &checked {
+                acl.check(kind, property).map_err(|err| err.to_string())?;
+            }
+        }
+        self.ensure_action_commits()?;
+        if let Some(committed) = self.action_commits.get(&(namespace.clone(), id.clone())) {
+            return self.replay_change_set(committed, &edits, &id);
+        }
+        for edit in &edits {
+            self.require_expected_gen(&namespace, edit.kind(), edit.key(), edit.expected_gen())?;
+        }
+        let marker = ObjectRecord {
+            gen: 1,
+            namespace: namespace.clone(),
+            kind: CHANGE_SET_KIND.into(),
+            key: id.clone(),
+            hidden: false,
+            action_id: Some(id.clone()),
+            props: marker_props(&edits),
+        };
+        self.atomically(|store| {
+            store
+                .writer
+                .check_record_fits(&marker)
+                .map_err(|error| format!("change set too large: {error}"))?;
+            store.writer.append_record(&marker)?;
+            store.apply_record(marker);
+            for edit in edits {
+                let record = match edit {
+                    Edit::Put {
+                        kind, key, props, ..
+                    } => ObjectRecord {
+                        gen: 0,
+                        namespace: namespace.clone(),
+                        kind,
+                        key,
+                        hidden: false,
+                        action_id: Some(id.clone()),
+                        props,
+                    },
+                    Edit::Hide { kind, key, .. } => ObjectRecord {
+                        gen: 0,
+                        hidden: true,
+                        action_id: Some(id.clone()),
+                        ..store.load(&namespace, &kind, &key, &PropertyAcl::allow_all())?
+                    },
+                };
+                store.write_uncommitted(record, false, ActionIdWrite::Copy)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// A committed change-set id replays only with the same edits in the same
+    /// order. Put bodies compare after the current descriptor canonicalizes
+    /// them, as the stored bodies were; a put that descriptor rejects fails
+    /// closed, as on `apply_action` (ADR 0013).
+    fn replay_change_set(
+        &self,
+        committed: &ActionCommit,
+        edits: &[Edit],
+        id: &str,
+    ) -> Result<(), String> {
+        if committed.kind != CHANGE_SET_KIND {
+            return Err(format!(
+                "action id {id} already committed on {}/{}/{}",
+                committed.namespace, committed.kind, committed.key
+            ));
+        }
+        let conflict = || format!("action id {id} body conflict");
+        if committed.members.len() != edits.len() {
+            return Err(conflict());
+        }
+        for (member, edit) in committed.members.iter().zip(edits) {
+            if member.kind != edit.kind() || member.key != edit.key() {
+                return Err(conflict());
+            }
+            let props = match edit {
+                Edit::Hide { .. } if member.hide => continue,
+                Edit::Hide { .. } => return Err(conflict()),
+                Edit::Put { .. } if member.hide => return Err(conflict()),
+                Edit::Put { props, .. } => props,
+            };
+            let mut record = ObjectRecord {
+                gen: 0,
+                namespace: committed.namespace.clone(),
+                kind: member.kind.clone(),
+                key: member.key.clone(),
+                hidden: false,
+                action_id: Some(id.to_string()),
+                props: props.clone(),
+            };
+            if let Some(schema) = self.schema(&committed.namespace, &member.kind)? {
+                schema.canonicalize_instance(&mut record)?;
+                schema.validate(&record)?;
+            }
+            if member.props.as_ref() != Some(&record.props) {
+                return Err(conflict());
+            }
+        }
+        Ok(())
     }
 
     /// Join maps for a known namespace. Missing or unknown namespace fails
@@ -1131,6 +1333,36 @@ fn require_namespace(namespace: &str) -> Result<&str, String> {
     } else {
         Ok(namespace)
     }
+}
+
+/// Change-set marker body: `{i}.op` (`put` or `hide`), `{i}.kind`, and
+/// `{i}.key` for each edit in order (ADR 0033).
+fn marker_props(edits: &[Edit]) -> HashMap<String, String> {
+    edits
+        .iter()
+        .enumerate()
+        .flat_map(|(i, edit)| {
+            let op = if edit.is_hide() { "hide" } else { "put" };
+            [
+                (format!("{i}.op"), op.to_string()),
+                (format!("{i}.kind"), edit.kind().to_string()),
+                (format!("{i}.key"), edit.key().to_string()),
+            ]
+        })
+        .collect()
+}
+
+fn marker_members(props: &HashMap<String, String>) -> Vec<SetMember> {
+    (0..)
+        .map_while(|i| {
+            Some(SetMember {
+                hide: props.get(&format!("{i}.op"))? == "hide",
+                kind: props.get(&format!("{i}.kind"))?.clone(),
+                key: props.get(&format!("{i}.key"))?.clone(),
+                props: None,
+            })
+        })
+        .collect()
 }
 
 fn require_source_cursor(record: &ObjectRecord) -> Result<u64, String> {
