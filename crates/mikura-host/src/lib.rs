@@ -1,7 +1,7 @@
 //! Single-process host over [`mikura::Store`].
 //!
 //! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
-//! `ingest_stream_flush`, `apply_action`, `apply_overlay`, `hide`,
+//! `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`,
 //! `evaluate`, `load`, `health`. JSON lines are envelope `{ v, token?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
@@ -22,8 +22,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use mikura::{
-    Action, Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, LocalCompute,
-    ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
+    Action, Aggregate, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch, Hop,
+    LocalCompute, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -168,6 +168,17 @@ pub enum HostRequest {
         props: HashMap<String, String>,
         #[serde(default)]
         expected_gen: Option<u64>,
+        #[serde(default)]
+        deny: Vec<WireDeny>,
+        #[serde(default)]
+        restriction: Option<WireRestriction>,
+    },
+    /// Edits to several identities under one Action id, all or nothing
+    /// (ADR 0033). Each edit is `{ "edit": "put" | "hide", kind, key, … }`.
+    ApplyChangeSet {
+        id: String,
+        namespace: String,
+        edits: Vec<Edit>,
         #[serde(default)]
         deny: Vec<WireDeny>,
         #[serde(default)]
@@ -393,6 +404,25 @@ impl Host {
                             props,
                         },
                         expected_gen,
+                        &acl,
+                    )
+                }))
+            }
+            HostRequest::ApplyChangeSet {
+                id,
+                namespace,
+                edits,
+                deny,
+                restriction,
+            } => {
+                let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_change_set");
+                ack(acl.and_then(|acl| {
+                    self.store.apply_change_set_in_view(
+                        ChangeSet {
+                            id,
+                            namespace,
+                            edits,
+                        },
                         &acl,
                     )
                 }))

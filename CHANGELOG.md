@@ -27,6 +27,13 @@ window.
 
 ### Added
 
+- `Store::apply_change_set` and host `apply_change_set` commit puts and
+  hides of several identities under one Action id, all or nothing. A
+  crash at any page boundary leaves none of the set. Retry with the same
+  id and edits is a no-op; any invisible member, denied property, or
+  stale generation rejects the whole set
+  ([#240](https://github.com/Sannrox/mikura/issues/240),
+  [ADR 0033](docs/decisions/0033-atomic-change-set.md)).
 - Overlay vs source merge may follow the kind descriptor: implicit
   user-wins (default, same bytes as today) or `newest` timestamp
   comparison, optionally per property. Overlay `at` is the user time;

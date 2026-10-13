@@ -37,6 +37,7 @@ a new ADR. Allocate the next number and list it here.
 | [0030](0030-unnamespaced-log-migration.md) | Explicit migration of pre-namespace logs | accepted |
 | [0031](0031-ordered-stream-apply.md) | Ordered stream apply; last committed offset on the log | accepted |
 | [0032](0032-overlay-conflict-strategy.md) | Overlay conflict strategy on the kind descriptor | accepted |
+| [0033](0033-atomic-change-set.md) | Atomic multi-object change set under one Action id | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

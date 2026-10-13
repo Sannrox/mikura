@@ -28,6 +28,9 @@
 //! merge is user-wins; a schema [`ConflictStrategy`] may select
 //! newest-timestamp-wins per kind or per property.
 //!
+//! A [`ChangeSet`] commits edits to several identities under one Action
+//! id, all or nothing ([`Store::apply_change_set`]).
+//!
 //! See `docs/architecture.md` in the repository for the v1 contract.
 
 mod acl;
@@ -44,7 +47,7 @@ mod store;
 mod value;
 
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
-pub use actions::Action;
+pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;
 pub use objectset::{
