@@ -95,10 +95,12 @@ consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51),
 Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
 wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
 
-**v9 (compact no-action):** the append-only log plus a deletable sidecar stay
-enough. 10⁸ ingest finished after bounded persist ([#137](https://github.com/Sannrox/mikura/issues/137)).
-No log-checkpoint ADR. Revisit if a later envelope misses on disk or open
-time because of log growth ([#53](https://github.com/Sannrox/mikura/issues/53)).
+**v9 (log checkpoints):** a checksummed `{log}.ckpt` snapshots live identity
+at a committed page so `Store::open` replays only the tail
+([#238](https://github.com/Sannrox/mikura/issues/238),
+[ADR 0034](docs/decisions/0034-log-checkpoints.md)). Default keeps full
+history; compact is opt-in. 10⁸ ingest finished after bounded persist
+([#137](https://github.com/Sannrox/mikura/issues/137)).
 10⁹ closed without a billion-object ingest ([#54](https://github.com/Sannrox/mikura/issues/54)).
 10¹⁰ waits for a named consumer envelope ([#55](https://github.com/Sannrox/mikura/issues/55)).
 Compute backend only after a published in-process miss.

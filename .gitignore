@@ -12,6 +12,9 @@
 *.joins.delta
 *.joins.tmp
 *.mikura.tmp
+*.ckpt
+*.ckpt.prev
+*.ckpt.tmp
 *.swp
 .env
 .env.*

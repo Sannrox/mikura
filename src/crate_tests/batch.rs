@@ -167,6 +167,11 @@ fn a_failed_rollback_poisons_the_store_instead_of_committing_a_broken_projection
     assert!(refused.contains("uncertain"), "{refused}");
     let refused = store.commit().unwrap_err();
     assert!(refused.contains("uncertain"), "{refused}");
+    let refused = store.checkpoint().unwrap_err();
+    assert!(refused.contains("uncertain"), "{refused}");
+    let compact = dir.join("compacted.mikura");
+    let refused = store.compact_to(&compact).unwrap_err();
+    assert!(refused.contains("uncertain"), "{refused}");
     drop(store);
 
     let _ = std::fs::remove_file(Store::join_map_path(&log));

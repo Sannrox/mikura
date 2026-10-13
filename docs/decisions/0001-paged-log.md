@@ -48,7 +48,9 @@ per-page sync was ~175×.
 ## Consequences
 
 - Restart is “verify committed pages, decode records, rebuild live maps.”
-- Compaction / checkpoints are not specified and are not implemented.
+- Log checkpoints (`{log}.ckpt`) snapshot live identity at a committed
+  page so open can replay only the tail
+  ([ADR 0034](0034-log-checkpoints.md)). The page layout is unchanged.
 - `Store::append` of one record is a complete commit (flush writer, persist
   join maps). Multi-record ingest uses `Store::append_batch`, one group commit
   that is all or nothing ([ADR 0026](0026-atomic-ingest-batch.md)); stream

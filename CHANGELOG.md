@@ -27,6 +27,15 @@ window.
 
 ### Added
 
+- Log checkpoints (`{log}.ckpt` / `{log}.ckpt.prev`, `MKCKPT01`) snapshot
+  live identity, generations, join maps, and the Action-id catalog at a
+  committed page. `Store::open` starts from the newest valid checkpoint
+  and replays only the tail. A torn checkpoint falls back to the previous
+  file or a full replay. Default keeps full history;
+  `Store::compact_to` writes live generations to a new log. The 4 KiB
+  page layout is unchanged
+  ([#238](https://github.com/Sannrox/mikura/issues/238),
+  [ADR 0034](docs/decisions/0034-log-checkpoints.md)).
 - `Store::apply_change_set` and host `apply_change_set` commit puts and
   hides of several identities under one Action id, all or nothing. A
   crash at any page boundary leaves none of the set. Retry with the same

@@ -2,9 +2,11 @@
 //! Rebuild trusts only pages 1..=committed.
 
 use crc32fast::Hasher as Crc;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::codec::{read_str, take, write_str};
@@ -127,7 +129,7 @@ impl LogWriter {
         self.failed = true;
     }
 
-    fn ensure_usable(&self) -> Result<(), String> {
+    pub(crate) fn ensure_usable(&self) -> Result<(), String> {
         if self.failed {
             return Err(UNCERTAIN_COMMIT.into());
         }
@@ -273,7 +275,13 @@ impl LogWriter {
 }
 
 pub fn read_records(path: &Path) -> Result<Vec<ObjectRecord>, String> {
-    read_committed_records(path, None)
+    read_committed_records(path, None, 0)
+}
+
+/// Committed records on pages `(after_page + 1)..=committed_pages`.
+/// `after_page == 0` is a full replay.
+pub fn read_records_after(path: &Path, after_page: u32) -> Result<Vec<ObjectRecord>, String> {
+    read_committed_records(path, None, after_page)
 }
 
 /// Committed records of a pre-namespace `MIKURAV1` log, each assigned the
@@ -282,7 +290,7 @@ pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>
     if namespace.is_empty() {
         return Err("namespace required".into());
     }
-    read_committed_records(path, Some(namespace))
+    read_committed_records(path, Some(namespace), 0)
 }
 
 /// `v1_namespace` selects the `MIKURAV1` body layout and the namespace its
@@ -290,25 +298,36 @@ pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>
 fn read_committed_records(
     path: &Path,
     v1_namespace: Option<&str>,
+    after_page: u32,
 ) -> Result<Vec<ObjectRecord>, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    if bytes.len() < PAGE {
-        return Err("missing superblock".into());
-    }
-    let superblock = &bytes[..PAGE];
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut superblock = vec![0u8; PAGE];
+    file.read_exact(&mut superblock)
+        .map_err(|_| "missing superblock".to_string())?;
     let committed = match v1_namespace {
-        None => parse_superblock(superblock)?,
-        Some(_) => parse_v1_superblock(superblock)?,
-    } as usize;
-    let needed = PAGE * (1 + committed);
-    if bytes.len() < needed {
+        None => parse_superblock(&superblock)?,
+        Some(_) => parse_v1_superblock(&superblock)?,
+    };
+    let needed = PAGE as u64 * u64::from(1 + committed);
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    if len < needed {
         return Err("committed pages missing".into());
     }
+    if after_page > committed {
+        return Err("checkpoint page is past committed_pages".into());
+    }
     let mut records = Vec::new();
-    for index in 1..=committed {
-        let page = &bytes[index * PAGE..(index + 1) * PAGE];
-        verify_page(page).map_err(|e| format!("committed page {index}: {e}"))?;
-        decode_data_page(page, v1_namespace, &mut records)?;
+    if after_page < committed {
+        let start = PAGE as u64 * u64::from(after_page + 1);
+        file.seek(SeekFrom::Start(start))
+            .map_err(|e| e.to_string())?;
+        let mut page = vec![0u8; PAGE];
+        for index in (after_page + 1)..=committed {
+            file.read_exact(&mut page)
+                .map_err(|_| format!("committed page {index}: short read"))?;
+            verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
+            decode_data_page(&page, v1_namespace, &mut records)?;
+        }
     }
     Ok(records)
 }
@@ -404,11 +423,23 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
+#[cfg(test)]
+thread_local! {
+    static PAGES_DECODED: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_pages_decoded() -> u32 {
+    PAGES_DECODED.with(|c| c.replace(0))
+}
+
 fn decode_data_page(
     page: &[u8],
     v1_namespace: Option<&str>,
     records: &mut Vec<ObjectRecord>,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    PAGES_DECODED.with(|c| c.set(c.get() + 1));
     let used = u16::from_le_bytes(page[CRC_LEN..PAGE_HDR].try_into().unwrap()) as usize;
     if PAGE_HDR + used > PAGE {
         return Err("used past page".into());
@@ -504,6 +535,26 @@ pub(crate) fn write_v1_log(path: &Path, records: &[ObjectRecord]) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_records_after_skips_prefix_pages() {
+        let dir = std::env::temp_dir().join("mikura-log-tail");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("objects.mikura");
+        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        writer.append_record(&wide_record(0)).unwrap();
+        writer.flush().unwrap();
+        let prefix = writer.committed_pages();
+        writer.append_record(&wide_record(1)).unwrap();
+        writer.flush().unwrap();
+        let all = read_records(&path).unwrap();
+        let tail = read_records_after(&path, prefix).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].key, "k01");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn orphan_page_is_not_authority() {
