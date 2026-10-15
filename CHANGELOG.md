@@ -24,9 +24,23 @@ window.
 - Public identity is `(namespace, kind, key)`. Load, evaluate, hide,
   overlay, and Action name a namespace. Missing or unknown fails closed.
   Host JSON requires `namespace` on those ops and on ingested records.
+- Shrinking a descriptor's closed set now requires `migrate_drop`. Recast,
+  rename, and outgoing-link retarget require matching `migrate_*` keys.
+  Additive replacements are unchanged. Old descriptors without `version`
+  load as version 1
+  ([#236](https://github.com/Sannrox/mikura/issues/236),
+  [ADR 0035](docs/decisions/0035-versioned-schema-migration.md)).
 
 ### Added
 
+- Breaking `mikura.schema` replacements commit with a declared
+  `migrate_rename` / `migrate_cast` / `migrate_retarget` / `migrate_drop`.
+  Descriptors and instance generations carry a schema version (absent is 1).
+  `Store::load` is the current view; `Store::load_at_schema` names an earlier
+  version. Overlays of that kind migrate in the same commit or the write
+  fails with a report. No `MIKURAV2` bump
+  ([#236](https://github.com/Sannrox/mikura/issues/236),
+  [ADR 0035](docs/decisions/0035-versioned-schema-migration.md)).
 - Log checkpoints (`{log}.ckpt` / `{log}.ckpt.prev`, `MKCKPT01`) snapshot
   live identity, generations, join maps, and the Action-id catalog at a
   committed page. `Store::open` starts from the newest valid checkpoint

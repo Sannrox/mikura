@@ -95,12 +95,22 @@ fn compatible_replacements_preserve_load_and_rebuild() {
 
     let mut shrunk = evolved.clone();
     shrunk.properties.retain(|name| name != "note");
+    shrunk.migration.drop = vec!["note".into()];
     store.append(shrunk.to_record("ns").unwrap()).unwrap();
     let still_stored = store
         .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
+    assert!(
+        !still_stored.props.contains_key("note"),
+        "current schema omits a declared drop"
+    );
     assert_eq!(
-        still_stored.props.get("note").map(String::as_str),
+        store
+            .load_at_schema(NS, "incident", "inc-1", &PropertyAcl::allow_all(), 1)
+            .unwrap()
+            .props
+            .get("note")
+            .map(String::as_str),
         Some("acked")
     );
     let unknown = store
@@ -123,19 +133,18 @@ fn compatible_replacements_preserve_load_and_rebuild() {
         reopened.schema(NS, "incident").unwrap().unwrap().properties,
         shrunk.properties
     );
-    assert_eq!(
-        reopened
-            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
-            .unwrap()
-            .props
-            .get("note")
-            .map(String::as_str),
-        Some("acked")
-    );
+    assert!(!reopened
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .props
+        .contains_key("note"));
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
-    assert_eq!(replayed.schema(NS, "incident").unwrap().unwrap(), shrunk);
+    assert_eq!(
+        replayed.schema(NS, "incident").unwrap().unwrap().properties,
+        shrunk.properties
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -165,10 +174,9 @@ fn incompatible_replacements_leave_previous_state() {
         "{link_err}"
     );
 
-    assert_eq!(
-        store.schema(NS, "incident").unwrap().unwrap(),
-        incident_schema
-    );
+    let mut stored = incident_schema.clone();
+    stored.version = 1;
+    assert_eq!(store.schema(NS, "incident").unwrap().unwrap(), stored);
     assert_eq!(
         store
             .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
@@ -217,9 +225,25 @@ fn overlay_and_action_follow_current_descriptor() {
             None,
         )
         .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: NS.into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("name".into(), "elevated latency".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+                ..Default::default()
+            },
+            "act-inc-1-name".into(),
+            None,
+        )
+        .unwrap();
 
     let mut shrunk = incident_schema();
     shrunk.properties.retain(|name| name != "note");
+    shrunk.migration.drop = vec!["note".into()];
     store.append(shrunk.to_record("ns").unwrap()).unwrap();
 
     let overlay_err = store
@@ -312,8 +336,8 @@ fn hide_schema_then_restore_previous_body() {
         .append(incident_schema().to_record("ns").unwrap())
         .unwrap();
     assert_eq!(
-        store.schema(NS, "incident").unwrap().unwrap(),
-        incident_schema()
+        store.schema(NS, "incident").unwrap().unwrap().properties,
+        incident_schema().properties
     );
     let extra = store
         .append(rec(

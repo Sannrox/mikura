@@ -150,10 +150,9 @@ fn committed_schema_validates_writes_and_rebuilds() {
 
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
-    assert_eq!(
-        replayed.schema(NS, "incident").unwrap().unwrap(),
-        incident_schema
-    );
+    let mut stored = incident_schema.clone();
+    stored.version = 1;
+    assert_eq!(replayed.schema(NS, "incident").unwrap().unwrap(), stored);
     let rebuilt = replayed
         .load(NS, "component", "legacy", &PropertyAcl::allow_all())
         .unwrap();

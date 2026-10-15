@@ -18,8 +18,9 @@
 //! [`SparkCompute`] always returns [`ComputeError::UnsupportedBackend`].
 //! A committed [`SchemaDescriptor`] (`mikura.schema/<kind>`) validates later
 //! writes of that kind and optional [`Store::load_with_schema`] checks.
-//! A later visible descriptor is rejected when it recasts a previously
-//! declared type or retargets an outgoing link.
+//! A later visible descriptor is a new schema version: additive changes
+//! commit as before; recast, rename, retarget, and drop need a declared
+//! migration ([`Store::load_at_schema`] names an earlier version).
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
 //! Optional `types` declare boolean, integer, timestamp, and decimal values
 //! stored as canonical UTF-8 in `props` ([`PropertyType`]).
@@ -58,9 +59,10 @@ pub use overlay::{
     OVERLAY_LOST_PREFIX,
 };
 pub use schema::{
-    ConflictPlan, ConflictStrategy, SchemaDescriptor, SchemaLink, SCHEMA_CONFLICT,
-    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_PROPERTIES,
-    SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES,
+    ConflictPlan, ConflictStrategy, SchemaDescriptor, SchemaLink, SchemaMigration, SCHEMA_CONFLICT,
+    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_KIND, SCHEMA_LINKS,
+    SCHEMA_MIGRATE_CAST, SCHEMA_MIGRATE_DROP, SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET,
+    SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION,
 };
 pub use store::{
     tenant_namespace, ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,

@@ -185,6 +185,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
         key: key.into(),
         hidden,
         action_id: None,
+        schema_version: 1,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))
@@ -1763,9 +1764,19 @@ fn process_schema_evolution_preserves_meaning() {
         }
     }));
     assert!(action.ok, "{action:?}");
+    let keep = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "namespace": "ns",
+        "id": "act-inc-1-open",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"open": "true"}
+    }));
+    assert!(keep.ok, "{keep:?}");
 
     let mut shrunk = evolved.clone();
     shrunk.properties.retain(|name| name != "note");
+    shrunk.migration.drop = vec!["note".into()];
     let shrink = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
         "records": [shrunk.to_record("ns").unwrap()]
@@ -1823,9 +1834,12 @@ fn process_schema_evolution_preserves_meaning() {
         "records": [hidden]
     }));
     assert!(hide.ok, "{hide:?}");
+    let mut restored = shrunk.clone();
+    restored.migration = Default::default();
+    restored.version = 0;
     let restore = host.rpc(&serde_json::json!({
         "op": "ingest_batch",
-        "records": [shrunk.to_record("ns").unwrap()]
+        "records": [restored.to_record("ns").unwrap()]
     }));
     assert!(restore.ok, "{restore:?}");
     drop(host);
@@ -1863,7 +1877,7 @@ fn process_schema_evolution_preserves_meaning() {
     assert!(loaded.ok, "{loaded:?}");
     let loaded = loaded.load.expect("load payload");
     assert_eq!(loaded.props.get("open").map(String::as_str), Some("true"));
-    assert_eq!(loaded.props.get("note").map(String::as_str), Some("paged"));
+    assert!(!loaded.props.contains_key("note"));
 }
 
 fn query_component_schema() -> ObjectRecord {

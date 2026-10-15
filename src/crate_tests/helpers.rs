@@ -21,6 +21,7 @@ pub(super) fn rec_in(
         key: key.into(),
         hidden,
         action_id: None,
+        schema_version: 1,
         props: props
             .iter()
             .map(|(k, v)| ((*k).into(), (*v).into()))

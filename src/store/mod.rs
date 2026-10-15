@@ -36,6 +36,29 @@ pub struct ObjectRecord {
     #[serde(default)]
     pub action_id: Option<String>,
     pub props: HashMap<String, String>,
+    /// Descriptor version this generation was written under. Omitted bytes
+    /// and 0 mean 1 (ADR 0035).
+    #[serde(default = "schema_version_one")]
+    pub schema_version: u32,
+}
+
+fn schema_version_one() -> u32 {
+    1
+}
+
+impl Default for ObjectRecord {
+    fn default() -> Self {
+        Self {
+            gen: 0,
+            namespace: String::new(),
+            kind: String::new(),
+            key: String::new(),
+            hidden: false,
+            action_id: None,
+            schema_version: 1,
+            props: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +107,9 @@ pub struct Store {
     delta_compact_bytes: u64,
     action_commits: HashMap<(String, String), ActionCommit>,
     action_commits_from_log: bool,
+    /// Visible schema rows by (namespace, kind), oldest version first.
+    schema_history: HashMap<(String, String), Vec<SchemaDescriptor>>,
+    schema_history_from_checkpoint: bool,
 }
 
 impl Store {
@@ -190,6 +216,7 @@ impl Store {
     pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         let mut store = Self::empty(log.to_path_buf(), LogWriter::open(log, sync)?);
         store.install_projection()?;
+        store.ensure_schema_history()?;
         Ok(store)
     }
 
@@ -206,6 +233,8 @@ impl Store {
             delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
             action_commits: HashMap::new(),
             action_commits_from_log: true,
+            schema_history: HashMap::new(),
+            schema_history_from_checkpoint: false,
         }
     }
 
@@ -321,6 +350,7 @@ impl Store {
             key: committed.key,
             hidden: committed.hidden,
             action_id: Some(action_id.to_string()),
+            schema_version: 1,
             props: committed.props,
         })?;
         if stored.namespace != patch.namespace
@@ -370,22 +400,40 @@ impl Store {
 
     fn apply_record(&mut self, record: ObjectRecord) {
         self.remember_action(&record);
+        let schema_remap = if record.kind == SCHEMA_KIND && !record.hidden {
+            SchemaDescriptor::from_record(&record).ok().inspect(|desc| {
+                self.remember_schema(&record.namespace, desc.clone());
+            })
+        } else {
+            None
+        };
         let id = live_id(&record.namespace, &record.kind, &record.key);
         let action_id = record
             .action_id
             .as_deref()
             .filter(|id| !id.is_empty())
             .map(|id| self.joins_for_write(&record.namespace).intern(id));
+        let namespace = record.namespace.clone();
         self.install_live(
             id.clone(),
             LiveMeta {
                 gen: record.gen,
                 hidden: record.hidden,
                 action_id,
+                schema_version: if record.schema_version == 0 {
+                    1
+                } else {
+                    record.schema_version
+                },
             },
             record.props,
         );
         self.dirty.insert(id);
+        if let Some(desc) = schema_remap {
+            if !desc.migration.is_empty() {
+                self.remap_kind(&namespace, &desc);
+            }
+        }
     }
 
     fn require_action_id(id: &str, empty: &'static str) -> Result<(), String> {
@@ -445,6 +493,7 @@ impl Store {
                 key: key.to_string(),
                 hidden: false,
                 action_id: Some(action_id.to_string()),
+                schema_version: 1,
                 props: props.clone(),
             })?;
         }
@@ -498,12 +547,9 @@ impl Store {
             maps.row_props_omitting(kind, key, &denied)
         };
         // Row-filter properties are never denied, so `props` still holds them.
-        if !acl.object_visible(kind, key, |property| {
-            props.get(property).map(String::as_str)
-        }) {
-            return Err(missing());
-        }
-        Ok(ObjectRecord {
+        // Declared drops are omitted before visibility so current load matches
+        // evaluate and mutation checks (ADR 0035).
+        let mut record = ObjectRecord {
             gen: meta.gen,
             namespace: namespace.to_string(),
             kind: kind.to_string(),
@@ -518,7 +564,20 @@ impl Store {
                 ),
             },
             props,
-        })
+            schema_version: if meta.schema_version == 0 {
+                1
+            } else {
+                meta.schema_version
+            },
+        };
+        self.apply_schema_view(&mut record, None)?;
+        if !acl.object_visible(kind, key, |property| {
+            record.props.get(property).map(String::as_str)
+        }) {
+            return Err(missing());
+        }
+        record.props = acl.omit_denied(&record.kind, record.props);
+        Ok(record)
     }
 
     /// Last visible `mikura.schema` row for `kind` in `namespace`, or `None`
@@ -624,6 +683,7 @@ impl Store {
                     key: patch.key,
                     hidden: false,
                     action_id: Some(action_id),
+                    schema_version: 1,
                     props: rematerialized,
                 },
                 false,
@@ -716,8 +776,43 @@ impl Store {
         }
         require_namespace(&record.namespace)?;
         let mut overlay_audit = None;
+        let mut migrated_overlays = Vec::new();
         if record.kind == SCHEMA_KIND {
             let next = SchemaDescriptor::from_record(&record)?;
+            if let Some(id) = claim_id.as_deref() {
+                self.ensure_action_commits()?;
+                if let Some(committed) = self
+                    .action_commits
+                    .get(&(record.namespace.clone(), id.to_string()))
+                    .cloned()
+                {
+                    if committed.kind == SCHEMA_KIND
+                        && committed.key == record.key
+                        && !committed.hidden
+                        && !record.hidden
+                    {
+                        let stored = SchemaDescriptor::from_record(&ObjectRecord {
+                            gen: committed.gen,
+                            namespace: committed.namespace,
+                            kind: SCHEMA_KIND.to_string(),
+                            key: committed.key,
+                            hidden: false,
+                            action_id: Some(id.to_string()),
+                            props: committed.props,
+                            schema_version: 1,
+                        })?;
+                        let mut incoming = next.clone();
+                        let mut stored = stored;
+                        if incoming.version == 0 {
+                            incoming.version = stored.effective_version();
+                        }
+                        stored.version = stored.effective_version();
+                        if incoming == stored {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             if !record.hidden {
                 if let Some(previous) = self.load_reserved(
                     &record.namespace,
@@ -725,7 +820,31 @@ impl Store {
                     &record.key,
                     SchemaDescriptor::from_record,
                 )? {
-                    previous.check_replacement(&next)?;
+                    let next = previous.check_replacement(&next)?;
+                    migrated_overlays = self.plan_overlay_migrations(&record.namespace, &next)?;
+                    self.plan_instance_migrations(&record.namespace, &next)?;
+                    record.props = next.to_record(record.namespace.clone())?.props;
+                } else if let Some(previous) = self
+                    .schema_history
+                    .get(&(record.namespace.clone(), record.key.clone()))
+                    .and_then(|rows| rows.last())
+                    .cloned()
+                {
+                    let next = previous.check_replacement(&next)?;
+                    migrated_overlays = self.plan_overlay_migrations(&record.namespace, &next)?;
+                    self.plan_instance_migrations(&record.namespace, &next)?;
+                    record.props = next.to_record(record.namespace.clone())?.props;
+                } else if !next.migration.is_empty() {
+                    return Err(format!("migrate_* is not valid on first {}", next.kind));
+                } else if next.version > 1 {
+                    return Err(format!(
+                        "schema version {} must be 1 on first {}",
+                        next.version, next.kind
+                    ));
+                } else if next.version == 0 {
+                    let mut first = next;
+                    first.version = 1;
+                    record.props = first.to_record(record.namespace.clone())?.props;
                 }
             }
         } else if record.kind == OVERLAY_KIND {
@@ -767,6 +886,7 @@ impl Store {
                 }
             }
             if let Some(schema) = schema {
+                record.schema_version = schema.effective_version();
                 schema.canonicalize_instance(&mut record)?;
                 schema.validate(&record)?;
             }
@@ -804,9 +924,16 @@ impl Store {
             record.gen = 1;
         }
         self.writer.check_record_fits(&record)?;
+        for overlay in &migrated_overlays {
+            self.writer.check_record_fits(overlay)?;
+        }
         if let Some((overlay, audit)) = &overlay_audit {
             self.writer
                 .check_record_fits(&overlay.to_audit_record(audit)?)?;
+        }
+        let held = self.writer.holds_commits();
+        if !migrated_overlays.is_empty() {
+            self.writer.hold_commits(true);
         }
         self.writer.append_record(&record)?;
         let schema_namespace = record.namespace.clone();
@@ -814,6 +941,16 @@ impl Store {
         let schema_key = record.key.clone();
         self.apply_record(record);
         self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
+        let overlay_result = migrated_overlays
+            .into_iter()
+            .try_for_each(|overlay| self.write_uncommitted(overlay, false, ActionIdWrite::Copy));
+        if !held {
+            self.writer.hold_commits(false);
+        }
+        if let Err(error) = overlay_result {
+            self.abort_uncommitted()?;
+            return Err(error);
+        }
         if let Some((overlay, audit)) = overlay_audit {
             self.write_overlay_audit(&overlay, &audit)?;
         }
@@ -919,8 +1056,12 @@ impl Store {
         self.has_checkpoint = false;
         self.delta_bytes = 0;
         self.action_commits.clear();
+        self.schema_history.clear();
+        self.schema_history_from_checkpoint = false;
         self.action_commits_from_log = true;
-        self.install_projection()
+        self.install_projection()?;
+        self.ensure_schema_history()?;
+        Ok(())
     }
 
     /// Writer `fsync` count. Used by ingest tests to characterize group commit.
@@ -978,6 +1119,7 @@ impl Store {
             key: action.key,
             hidden: false,
             action_id: Some(action.id),
+            schema_version: 1,
             props: action.props,
         })?;
         self.commit()
@@ -1009,6 +1151,7 @@ impl Store {
                 key: current.key,
                 hidden: true,
                 action_id: current.action_id,
+                schema_version: 1,
                 props: current.props,
             },
             true,
@@ -1089,6 +1232,7 @@ impl Store {
             key: id.clone(),
             hidden: false,
             action_id: Some(id.clone()),
+            schema_version: 1,
             props: marker_props(&edits),
         };
         self.atomically(|store| {
@@ -1109,6 +1253,7 @@ impl Store {
                         key,
                         hidden: false,
                         action_id: Some(id.clone()),
+                        schema_version: 1,
                         props,
                     },
                     Edit::Hide { kind, key, .. } => ObjectRecord {
@@ -1161,6 +1306,7 @@ impl Store {
                 key: member.key.clone(),
                 hidden: false,
                 action_id: Some(id.to_string()),
+                schema_version: 1,
                 props: props.clone(),
             };
             if let Some(schema) = self.schema(&committed.namespace, &member.kind)? {
@@ -1207,8 +1353,460 @@ impl Store {
         acl: &PropertyAcl,
     ) -> Result<(), String> {
         let maps = self.joins_in(namespace)?;
-        acl.require_visible(kind, key, |property| maps.prop(kind, key, property))
-            .map_err(|err| err.to_string())
+        acl.require_visible(kind, key, |property| {
+            if self.omits_current_property(namespace, kind, property) {
+                None
+            } else {
+                maps.prop(kind, key, property)
+            }
+        })
+        .map_err(|err| err.to_string())
+    }
+
+    /// Live object projected to `as_of` schema version, or the current
+    /// version when `as_of` is `None` (ADR 0035).
+    pub fn load_at_schema(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+        as_of: u32,
+    ) -> Result<ObjectRecord, String> {
+        let mut record = self.load_stored(namespace, kind, key, acl)?;
+        self.apply_schema_view(&mut record, Some(as_of))?;
+        if !acl.object_visible(kind, key, |property| {
+            record.props.get(property).map(String::as_str)
+        }) {
+            return Err(format!("unknown identity {namespace}/{kind}/{key}"));
+        }
+        record.props = acl.omit_denied(&record.kind, record.props);
+        Ok(record)
+    }
+
+    fn load_stored(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+    ) -> Result<ObjectRecord, String> {
+        let namespace = self.require_known_namespace(namespace)?;
+        let missing = || format!("unknown identity {namespace}/{kind}/{key}");
+        let id = live_id(namespace, kind, key);
+        let meta = self.identity.get(&id).ok_or_else(missing)?;
+        let maps = self.joins_in(namespace)?;
+        let _ = acl;
+        let props = if meta.hidden {
+            self.hidden_props.get(&id).cloned().unwrap_or_default()
+        } else {
+            maps.row_props(kind, key)
+        };
+        Ok(ObjectRecord {
+            gen: meta.gen,
+            namespace: namespace.to_string(),
+            kind: kind.to_string(),
+            key: key.to_string(),
+            hidden: meta.hidden,
+            action_id: match meta.action_id {
+                None => None,
+                Some(intern) => Some(
+                    maps.intern_get(intern)
+                        .ok_or_else(|| "missing intern action".to_string())?
+                        .to_string(),
+                ),
+            },
+            props,
+            schema_version: if meta.schema_version == 0 {
+                1
+            } else {
+                meta.schema_version
+            },
+        })
+    }
+
+    fn ensure_schema_history(&mut self) -> Result<(), String> {
+        self.rebuild_schema_history_from_log_if_empty()?;
+        self.capture_schema_history_from_identity();
+        Ok(())
+    }
+
+    fn rebuild_schema_history_from_log_if_empty(&mut self) -> Result<(), String> {
+        if self.schema_history_from_checkpoint {
+            return Ok(());
+        }
+        if !self.identity.keys().any(|(_, kind, _)| kind == SCHEMA_KIND) {
+            return Ok(());
+        }
+        self.schema_history.clear();
+        for record in read_records(&self.log)? {
+            if record.kind == SCHEMA_KIND && !record.hidden {
+                if let Ok(desc) = SchemaDescriptor::from_record(&record) {
+                    self.remember_schema(&record.namespace, desc);
+                }
+            }
+        }
+        self.schema_history_from_checkpoint = true;
+        Ok(())
+    }
+
+    fn capture_schema_history_from_identity(&mut self) {
+        let ids: Vec<_> = self
+            .identity
+            .iter()
+            .filter(|((_, kind, _), meta)| *kind == SCHEMA_KIND && !meta.hidden)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for (namespace, _, key) in ids {
+            if let Ok(Some(desc)) =
+                self.load_reserved(&namespace, SCHEMA_KIND, &key, SchemaDescriptor::from_record)
+            {
+                self.remember_schema(&namespace, desc);
+            }
+        }
+    }
+
+    fn remember_schema(&mut self, namespace: &str, desc: SchemaDescriptor) {
+        let key = (namespace.to_string(), desc.kind.clone());
+        let rows = self.schema_history.entry(key).or_default();
+        rows.retain(|row| row.effective_version() != desc.effective_version());
+        rows.push(desc);
+        rows.sort_by_key(|row| row.effective_version());
+    }
+
+    fn plan_overlay_migrations(
+        &self,
+        namespace: &str,
+        next: &SchemaDescriptor,
+    ) -> Result<Vec<ObjectRecord>, String> {
+        if next.migration.is_empty() {
+            return Ok(Vec::new());
+        }
+        let prefix = format!("{}/", next.kind);
+        let mut errors = Vec::new();
+        let mut out = Vec::new();
+        let ids: Vec<_> = self
+            .identity
+            .keys()
+            .filter(|(ns, kind, key)| {
+                ns == namespace && kind == OVERLAY_KIND && key.starts_with(&prefix)
+            })
+            .cloned()
+            .collect();
+        for (_, _, overlay_key) in ids {
+            let Ok(live) = self.load_stored(
+                namespace,
+                OVERLAY_KIND,
+                &overlay_key,
+                &PropertyAcl::allow_all(),
+            ) else {
+                continue;
+            };
+            if live.hidden {
+                continue;
+            }
+            let mut patch = OverlayPatch::from_record(&live)?;
+            let ident = format!("{namespace}/{}/{}", next.kind, patch.key);
+            let original = patch.clone();
+            let live_overlay = live;
+            let dropped: HashSet<&str> = next.migration.drop.iter().map(String::as_str).collect();
+            let allowed: HashSet<&str> = next.properties.iter().map(String::as_str).collect();
+            let mut local = Vec::new();
+            for name in patch.props.keys().chain(patch.cleared.iter()) {
+                if dropped.contains(name.as_str()) {
+                    local.push(format!("overlay {ident} cannot carry dropped {name}"));
+                }
+            }
+            if local.is_empty() {
+                if let Err(err) = next.migration.apply(&mut patch.props, false) {
+                    local.push(format!("overlay {ident} {err}"));
+                }
+            }
+            if local.is_empty() {
+                let mut cleared = Vec::new();
+                for name in &patch.cleared {
+                    let renamed = next
+                        .migration
+                        .rename
+                        .iter()
+                        .find(|(old, _)| old == name)
+                        .map(|(_, new)| new.clone())
+                        .unwrap_or_else(|| name.clone());
+                    if !cleared.contains(&renamed) {
+                        cleared.push(renamed);
+                    }
+                }
+                patch.cleared = cleared;
+                for name in patch.props.keys().chain(patch.cleared.iter()) {
+                    if !allowed.contains(name.as_str()) {
+                        local.push(format!("overlay {ident} cannot carry {name}"));
+                    }
+                }
+            }
+            if !local.is_empty() {
+                errors.extend(local);
+                continue;
+            }
+            if patch == original {
+                continue;
+            }
+            match (|| {
+                let audit = OverlayPatch::remapped_audit(
+                    &live_overlay,
+                    &next.migration.rename,
+                    &next.migration.drop,
+                )?;
+                match audit {
+                    Some(audit) => patch.to_audit_record(&audit),
+                    None => patch.to_record(),
+                }
+            })() {
+                Ok(record) => out.push(record),
+                Err(err) => errors.push(format!("overlay {ident} {err}")),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(format!(
+                "cannot migrate overlays on {}: {}",
+                next.kind,
+                errors.join("; ")
+            ));
+        }
+        Ok(out)
+    }
+
+    fn plan_instance_migrations(
+        &self,
+        namespace: &str,
+        next: &SchemaDescriptor,
+    ) -> Result<(), String> {
+        if next.migration.cast.is_empty() && next.migration.rename.is_empty() {
+            return Ok(());
+        }
+        let mut errors = Vec::new();
+        let ids: Vec<_> = self
+            .identity
+            .keys()
+            .filter(|(ns, kind, _)| ns == namespace && kind == &next.kind)
+            .cloned()
+            .collect();
+        for id in ids {
+            let Some(meta) = self.identity.get(&id) else {
+                continue;
+            };
+            let mut props = if meta.hidden {
+                self.hidden_props.get(&id).cloned().unwrap_or_default()
+            } else {
+                self.joins
+                    .get(namespace)
+                    .map(|joins| joins.row_props(&id.1, &id.2))
+                    .unwrap_or_default()
+            };
+            if let Some(current) = self.current_kind_properties(namespace, &next.kind) {
+                let current: HashSet<&str> = current.iter().map(String::as_str).collect();
+                let mut keep = current.clone();
+                for (from, to) in &next.migration.rename {
+                    keep.insert(from.as_str());
+                    if from != to && !current.contains(to.as_str()) && props.contains_key(to) {
+                        errors.push(format!(
+                            "{}/{}/{} rename destination {to} collides with a dropped property",
+                            id.0, id.1, id.2
+                        ));
+                    }
+                }
+                props.retain(|name, _| keep.contains(name.as_str()));
+            }
+            if let Err(err) = next.migration.apply(&mut props, false) {
+                errors.push(format!("{}/{}/{} {err}", id.0, id.1, id.2));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(format!(
+                "cannot migrate instances on {}: {}",
+                next.kind,
+                errors.join("; ")
+            ));
+        }
+        Ok(())
+    }
+
+    fn remap_kind(&mut self, namespace: &str, desc: &SchemaDescriptor) {
+        let ids: Vec<_> = self
+            .identity
+            .keys()
+            .filter(|(ns, kind, _)| ns == namespace && kind == &desc.kind)
+            .cloned()
+            .collect();
+        for id in ids {
+            let Some(meta) = self.identity.get(&id).cloned() else {
+                continue;
+            };
+            let mut props = if meta.hidden {
+                self.hidden_props.get(&id).cloned().unwrap_or_default()
+            } else {
+                self.joins
+                    .get(namespace)
+                    .map(|joins| joins.row_props(&id.1, &id.2))
+                    .unwrap_or_default()
+            };
+            let previous = self
+                .schema_history
+                .get(&(namespace.to_string(), desc.kind.clone()))
+                .and_then(|rows| {
+                    rows.iter()
+                        .rev()
+                        .find(|row| row.effective_version() < desc.effective_version())
+                });
+            let mut extras = HashMap::new();
+            if let Some(previous) = previous {
+                let allowed: HashSet<&str> =
+                    previous.properties.iter().map(String::as_str).collect();
+                let mut keep = allowed.clone();
+                for (from, _) in &desc.migration.rename {
+                    keep.insert(from.as_str());
+                }
+                extras.extend(
+                    props
+                        .iter()
+                        .filter(|(name, _)| !keep.contains(name.as_str()))
+                        .map(|(name, value)| (name.clone(), value.clone())),
+                );
+                props.retain(|name, _| keep.contains(name.as_str()));
+            }
+            // Rename/cast update the live query projection. Dropped keys stay
+            // stored when their names are free so named historical reads work.
+            if desc.migration.apply(&mut props, false).is_ok() {
+                for (name, value) in extras {
+                    props.entry(name).or_insert(value);
+                }
+                self.install_live(id.clone(), meta, props);
+                self.dirty.insert(id);
+            }
+        }
+    }
+
+    fn apply_schema_view(
+        &self,
+        record: &mut ObjectRecord,
+        as_of: Option<u32>,
+    ) -> Result<(), String> {
+        if record.kind == SCHEMA_KIND
+            || record.kind == OVERLAY_KIND
+            || record.kind == SOURCE_KIND
+            || record.kind == CHANGE_SET_KIND
+        {
+            return Ok(());
+        }
+        if as_of.is_none() && self.live_schema_hidden(&record.namespace, &record.kind) {
+            return unschematized_schema_view(record, as_of);
+        }
+        let Some(history) = self
+            .schema_history
+            .get(&(record.namespace.clone(), record.kind.clone()))
+        else {
+            return unschematized_schema_view(record, as_of);
+        };
+        if history.is_empty() {
+            return unschematized_schema_view(record, as_of);
+        }
+        let current = history
+            .last()
+            .map(|row| row.effective_version())
+            .unwrap_or(1);
+        let target = as_of.unwrap_or(current);
+        if target == 0 {
+            return Err(format!(
+                "unknown schema version {target} for {}/{}",
+                record.namespace, record.kind
+            ));
+        }
+        if target > current {
+            return Err(format!(
+                "schema version {target} is past current {current} for {}/{}",
+                record.namespace, record.kind
+            ));
+        }
+        let known = history.iter().any(|row| row.effective_version() == target);
+        if !known {
+            return Err(format!(
+                "unknown schema version {target} for {}/{}",
+                record.namespace, record.kind
+            ));
+        }
+        if target < current {
+            for row in history.iter().rev() {
+                if row.effective_version() <= target {
+                    break;
+                }
+                row.migration.reverse(&mut record.props);
+            }
+        }
+        if let Some(desc) = history.iter().find(|row| row.effective_version() == target) {
+            let allowed: HashSet<&str> = desc.properties.iter().map(String::as_str).collect();
+            if target < current {
+                record
+                    .props
+                    .retain(|name, _| allowed.contains(name.as_str()));
+            } else {
+                for row in history
+                    .iter()
+                    .filter(|row| row.effective_version() <= target)
+                {
+                    for name in &row.migration.drop {
+                        if !allowed.contains(name.as_str()) {
+                            record.props.remove(name);
+                        }
+                    }
+                }
+            }
+        }
+        record.schema_version = target;
+        Ok(())
+    }
+
+    /// Current evaluate and ACL row filters omit declared drops; the join
+    /// maps still store those keys so `load_at_schema` can name an older
+    /// version (ADR 0035).
+    pub(crate) fn omits_current_property(
+        &self,
+        namespace: &str,
+        kind: &str,
+        property: &str,
+    ) -> bool {
+        if self.live_schema_hidden(namespace, kind) {
+            return false;
+        }
+        let Some(history) = self
+            .schema_history
+            .get(&(namespace.to_string(), kind.to_string()))
+        else {
+            return false;
+        };
+        let Some(current) = history.last() else {
+            return false;
+        };
+        if current.properties.iter().any(|name| name == property) {
+            return false;
+        }
+        history
+            .iter()
+            .any(|row| row.migration.drop.iter().any(|name| name == property))
+    }
+
+    fn live_schema_hidden(&self, namespace: &str, kind: &str) -> bool {
+        self.identity
+            .get(&live_id(namespace, SCHEMA_KIND, kind))
+            .is_some_and(|meta| meta.hidden)
+    }
+
+    fn current_kind_properties(&self, namespace: &str, kind: &str) -> Option<&[String]> {
+        if self.live_schema_hidden(namespace, kind) {
+            return None;
+        }
+        self.schema_history
+            .get(&(namespace.to_string(), kind.to_string()))
+            .and_then(|rows| rows.last())
+            .map(|desc| desc.properties.as_slice())
     }
 
     fn hidden_props_omitting(
@@ -1245,7 +1843,10 @@ impl Store {
         self.joins.clear();
         self.dirty.clear();
         self.action_commits.clear();
+        self.schema_history.clear();
+        self.schema_history_from_checkpoint = false;
         self.replay_tail(0)?;
+        self.schema_history_from_checkpoint = true;
         self.action_commits_from_log = true;
         Ok(())
     }
@@ -1335,6 +1936,18 @@ impl Store {
 
 fn live_id(namespace: &str, kind: &str, key: &str) -> LiveId {
     (namespace.to_string(), kind.to_string(), key.to_string())
+}
+
+fn unschematized_schema_view(record: &mut ObjectRecord, as_of: Option<u32>) -> Result<(), String> {
+    let target = as_of.unwrap_or(1);
+    if target != 1 {
+        return Err(format!(
+            "unknown schema version {target} for {}/{}",
+            record.namespace, record.kind
+        ));
+    }
+    record.schema_version = 1;
+    Ok(())
 }
 
 /// Store namespace for `namespace` owned by `tenant_id`, so storage keys

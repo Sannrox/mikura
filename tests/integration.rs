@@ -52,6 +52,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
         key: key.into(),
         hidden,
         action_id: None,
+        schema_version: 1,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))
@@ -1360,9 +1361,11 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
+    let mut stored_component = component_schema.clone();
+    stored_component.version = 1;
     assert_eq!(
         reopened.schema("ns", "component").unwrap().unwrap(),
-        component_schema
+        stored_component
     );
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
@@ -1375,9 +1378,11 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
             .map(String::as_str),
         Some("prod")
     );
+    let mut stored_incident = incident_schema.clone();
+    stored_incident.version = 1;
     assert_eq!(
         replayed.schema("ns", "incident").unwrap().unwrap(),
-        incident_schema
+        stored_incident
     );
 }
 
@@ -1990,7 +1995,9 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     retarget.links[0].far_kind = "service".into();
     let link_err = store.append(retarget.to_record("ns").unwrap()).unwrap_err();
     assert!(link_err.contains("cannot retarget"), "{link_err}");
-    assert_eq!(store.schema("ns", "incident").unwrap().unwrap(), initial);
+    let mut stored = initial.clone();
+    stored.version = 1;
+    assert_eq!(store.schema("ns", "incident").unwrap().unwrap(), stored);
 
     let mut evolved = initial.clone();
     evolved
@@ -2050,13 +2057,34 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
             None,
         )
         .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: "ns".into(),
+                kind: "incident".into(),
+                key: "inc-1".into(),
+                props: HashMap::from([("open".into(), "true".into())]),
+                cleared: Vec::new(),
+                action_id: None,
+                ..Default::default()
+            },
+            "act-inc-1-open".into(),
+            None,
+        )
+        .unwrap();
 
     let mut shrunk = evolved.clone();
     shrunk.properties.retain(|name| name != "note");
+    shrunk.migration.drop = vec!["note".into()];
     store.append(shrunk.to_record("ns").unwrap()).unwrap();
+    assert!(!store
+        .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .props
+        .contains_key("note"));
     assert_eq!(
         store
-            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
+            .load_at_schema("ns", "incident", "inc-1", &PropertyAcl::allow_all(), 1)
             .unwrap()
             .props
             .get("note")
@@ -2118,15 +2146,32 @@ fn schema_evolution_preserves_meaning_and_rejects_recast() {
     let mut hidden = shrunk.to_record("ns").unwrap();
     hidden.hidden = true;
     store.append(hidden).unwrap();
-    store.append(shrunk.to_record("ns").unwrap()).unwrap();
+    let mut restored = shrunk.clone();
+    restored.migration = Default::default();
+    restored.version = 0;
+    store.append(restored.to_record("ns").unwrap()).unwrap();
     drop(store);
 
     let reopened = Store::open(tmp.path()).unwrap();
-    assert_eq!(reopened.schema("ns", "incident").unwrap().unwrap(), shrunk);
+    assert_eq!(
+        reopened
+            .schema("ns", "incident")
+            .unwrap()
+            .unwrap()
+            .properties,
+        restored.properties
+    );
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
-    assert_eq!(replayed.schema("ns", "incident").unwrap().unwrap(), shrunk);
+    assert_eq!(
+        replayed
+            .schema("ns", "incident")
+            .unwrap()
+            .unwrap()
+            .properties,
+        restored.properties
+    );
     assert_eq!(
         replayed
             .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())
@@ -2965,6 +3010,7 @@ fn contact_schema(conflict: Option<ConflictStrategy>) -> SchemaDescriptor {
         conflict,
         conflict_properties: Vec::new(),
         conflict_time: Some("updated_at".into()),
+        ..Default::default()
     }
 }
 

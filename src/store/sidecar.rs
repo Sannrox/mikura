@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::joins::{
     append_checksummed, check_join_crc, read_checksummed, write_checksummed, Checkpoint, JoinMaps,
-    LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_MAGIC,
+    LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
 };
 use crate::log::read_records_after;
 
@@ -38,6 +38,7 @@ impl Store {
         self.dirty.clear();
         self.has_checkpoint = true;
         self.delta_bytes = 0;
+        self.ensure_schema_history()?;
         self.persist_log_checkpoint()
     }
 
@@ -112,6 +113,7 @@ impl Store {
         body.extend_from_slice(JOIN_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
         self.encode_projection_after_magic(&mut body)?;
+        self.encode_instance_schema_versions(&mut body)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
@@ -123,22 +125,24 @@ impl Store {
         ids.sort();
         let n = u32::try_from(ids.len()).map_err(|_| "too many dirty rows".to_string())?;
         body.extend_from_slice(&n.to_le_bytes());
-        for id in ids {
+        let mut versions = Vec::with_capacity(ids.len());
+        for id in &ids {
             let meta = self
                 .identity
-                .get(&id)
+                .get(id)
                 .ok_or_else(|| "missing dirty identity".to_string())?;
             write_str(&mut body, &id.0)?;
             write_str(&mut body, &id.1)?;
             write_str(&mut body, &id.2)?;
             body.extend_from_slice(&meta.gen.to_le_bytes());
             body.push(u8::from(meta.hidden));
+            versions.push(meta.schema_version.max(1));
             let joins = self
                 .joins
                 .get(&id.0)
                 .ok_or_else(|| "missing namespace joins".to_string())?;
             let props = if meta.hidden {
-                self.hidden_props.get(&id).cloned().unwrap_or_default()
+                self.hidden_props.get(id).cloned().unwrap_or_default()
             } else {
                 joins.row_props(&id.1, &id.2)
             };
@@ -166,6 +170,9 @@ impl Store {
                     .transpose()?
                     .unwrap_or(""),
             )?;
+        }
+        for version in versions {
+            body.extend_from_slice(&version.to_le_bytes());
         }
         let path = Self::join_delta_path(&self.log);
         if path.exists() {
@@ -245,6 +252,7 @@ impl Store {
                         gen,
                         hidden,
                         action_id,
+                        schema_version: 1,
                     },
                 );
                 if hidden {
@@ -269,7 +277,13 @@ impl Store {
         }
         let mut cur = &body[8..];
         let pages = read_u32(&mut cur)?;
-        let (joins, identity, hidden_props) = Self::decode_projection_after_magic(&mut cur)?;
+        let (joins, mut identity, hidden_props) = Self::decode_projection_after_magic(&mut cur)?;
+        if !cur.is_empty() {
+            Store::apply_instance_schema_versions(
+                &mut identity,
+                Store::decode_instance_schema_versions(&mut cur)?,
+            );
+        }
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
@@ -305,11 +319,9 @@ impl Store {
     }
 
     fn apply_delta_body(&mut self, body: &[u8]) -> Result<u32, String> {
-        if body.len() < 12 || &body[..8] != JOIN_DELTA_MAGIC {
-            return Err("bad join magic".into());
-        }
+        let versioned = delta_frame_versioned(body)?;
         let mut cur = &body[8..];
-        let (pages, rows) = read_delta_rows(&mut cur)?;
+        let (pages, rows) = read_delta_rows(&mut cur, versioned)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
@@ -328,6 +340,7 @@ impl Store {
                     gen: row.gen,
                     hidden: row.hidden,
                     action_id,
+                    schema_version: row.schema_version,
                 },
                 row.props,
             );
@@ -423,16 +436,35 @@ fn take_delta_frame<'a>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
     Ok(body)
 }
 
+/// Whether a delta frame carries the per-row schema version trailer.
+fn delta_frame_versioned(bytes: &[u8]) -> Result<bool, String> {
+    match bytes.get(..8) {
+        Some(magic) if magic == JOIN_DELTA_MAGIC => Ok(true),
+        Some(magic) if magic == JOIN_DELTA_MAGIC_V5 => Ok(false),
+        _ => Err("bad join magic".into()),
+    }
+}
+
 fn delta_frame_body_len(bytes: &[u8]) -> Result<usize, String> {
-    if bytes.len() < 16 || &bytes[..8] != JOIN_DELTA_MAGIC {
+    if bytes.len() < 16 {
         return Err("bad join magic".into());
     }
+    let versioned = delta_frame_versioned(bytes)?;
     let mut cur = &bytes[8..];
-    skip_delta_rows(&mut cur)?;
+    let (_, n) = skip_delta_rows(&mut cur)?;
+    if versioned {
+        let trailer = n
+            .checked_mul(4)
+            .ok_or_else(|| "join sidecar too short".to_string())?;
+        if cur.len() < trailer {
+            return Err("join sidecar too short".into());
+        }
+        cur = &cur[trailer..];
+    }
     Ok(bytes.len() - cur.len())
 }
 
-fn skip_delta_rows(cur: &mut &[u8]) -> Result<u32, String> {
+fn skip_delta_rows(cur: &mut &[u8]) -> Result<(u32, usize), String> {
     let pages = read_u32(cur)?;
     let n = read_u32(cur)? as usize;
     for _ in 0..n {
@@ -448,7 +480,7 @@ fn skip_delta_rows(cur: &mut &[u8]) -> Result<u32, String> {
         }
         let _action = read_str(cur)?;
     }
-    Ok(pages)
+    Ok((pages, n))
 }
 
 struct DeltaRow {
@@ -459,9 +491,10 @@ struct DeltaRow {
     hidden: bool,
     props: HashMap<String, String>,
     action: String,
+    schema_version: u32,
 }
 
-fn read_delta_rows(cur: &mut &[u8]) -> Result<(u32, Vec<DeltaRow>), String> {
+fn read_delta_rows(cur: &mut &[u8], versioned: bool) -> Result<(u32, Vec<DeltaRow>), String> {
     let pages = read_u32(cur)?;
     let n = read_u32(cur)? as usize;
     let mut rows = Vec::with_capacity(n);
@@ -487,7 +520,16 @@ fn read_delta_rows(cur: &mut &[u8]) -> Result<(u32, Vec<DeltaRow>), String> {
             hidden,
             props,
             action,
+            schema_version: 1,
         });
+    }
+    if versioned {
+        for row in &mut rows {
+            row.schema_version = read_u32(cur)?;
+            if row.schema_version == 0 {
+                row.schema_version = 1;
+            }
+        }
     }
     Ok((pages, rows))
 }

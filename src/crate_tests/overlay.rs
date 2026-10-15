@@ -341,6 +341,7 @@ fn contact_schema(conflict: Option<ConflictStrategy>) -> SchemaDescriptor {
         conflict,
         conflict_properties: Vec::new(),
         conflict_time: Some("updated_at".into()),
+        ..Default::default()
     }
 }
 

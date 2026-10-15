@@ -149,6 +149,10 @@ impl LogWriter {
         self.synced = self.committed;
     }
 
+    pub fn holds_commits(&self) -> bool {
+        self.hold_commits
+    }
+
     /// Drop every page and record the superblock does not cover, as a crash
     /// before commit would (ADR 0001).
     pub fn discard_pending(&mut self) -> Result<(), String> {
@@ -414,10 +418,19 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, &key)?;
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
-    // MIKURAV2 body discriminator: one optional trailing string, present
-    // only when the generation has an Action id. Absent and empty both
-    // decode as None.
-    if let Some(action_id) = record.action_id.as_deref().filter(|id| !id.is_empty()) {
+    // Trailing Action id string when present. Schema version follows as a
+    // little-endian u32 only when it is not 1 (ADR 0035). Version-only
+    // records write an empty Action string then the u32.
+    let version = if record.schema_version == 0 {
+        1
+    } else {
+        record.schema_version
+    };
+    let action_id = record.action_id.as_deref().filter(|id| !id.is_empty());
+    if version > 1 {
+        write_str(&mut body, action_id.unwrap_or(""))?;
+        body.extend_from_slice(&version.to_le_bytes());
+    } else if let Some(action_id) = action_id {
         write_str(&mut body, action_id)?;
     }
     Ok(body)
@@ -482,17 +495,21 @@ fn decode_body(body: &[u8], v1_namespace: Option<&str>) -> Result<ObjectRecord, 
         let v = read_str(&mut cur)?;
         props.insert(k, v);
     }
-    let action_id = if cur.is_empty() {
-        None
+    let (action_id, schema_version) = if cur.is_empty() {
+        (None, 1)
     } else {
         let id = read_str(&mut cur)?;
-        if !cur.is_empty() {
-            return Err("trailing body bytes".into());
-        }
-        if id.is_empty() {
-            None
+        let action_id = if id.is_empty() { None } else { Some(id) };
+        if cur.is_empty() {
+            (action_id, 1)
+        } else if cur.len() == 4 {
+            let version = u32::from_le_bytes(take::<4>(&mut cur)?.try_into().unwrap());
+            if version == 0 {
+                return Err("schema version must be at least 1".into());
+            }
+            (action_id, version)
         } else {
-            Some(id)
+            return Err("trailing body bytes".into());
         }
     };
     Ok(ObjectRecord {
@@ -503,6 +520,7 @@ fn decode_body(body: &[u8], v1_namespace: Option<&str>) -> Result<ObjectRecord, 
         hidden,
         action_id,
         props,
+        schema_version,
     })
 }
 
@@ -571,6 +589,7 @@ mod tests {
                 key: "c1".into(),
                 hidden: false,
                 action_id: None,
+                schema_version: 1,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();
@@ -596,6 +615,7 @@ mod tests {
             key: format!("k{key:02}"),
             hidden: false,
             action_id: None,
+            schema_version: 1,
             props: HashMap::from([("payload".into(), "x".repeat(1500))]),
         }
     }
@@ -707,6 +727,7 @@ mod tests {
             hidden,
             action_id: None,
             props,
+            schema_version: 1,
         })
     }
 
@@ -719,6 +740,7 @@ mod tests {
             key: "c1".into(),
             hidden: false,
             action_id: None,
+            schema_version: 1,
             props: HashMap::from([("region".into(), "eu".into())]),
         };
         let encoded = encode_body(&none).unwrap();
@@ -743,6 +765,34 @@ mod tests {
     }
 
     #[test]
+    fn schema_version_trailer_is_omitted_unless_greater_than_one() {
+        let v1 = ObjectRecord {
+            gen: 1,
+            namespace: "ns".into(),
+            kind: "Customer".into(),
+            key: "c1".into(),
+            hidden: false,
+            action_id: None,
+            schema_version: 1,
+            props: HashMap::from([("region".into(), "eu".into())]),
+        };
+        let encoded = encode_body(&v1).unwrap();
+        assert_eq!(decode_body(&encoded, None).unwrap().schema_version, 1);
+        decode_body_reject_trailing(&encoded).unwrap();
+
+        let v2 = ObjectRecord {
+            schema_version: 2,
+            ..v1
+        };
+        let encoded = encode_body(&v2).unwrap();
+        let decoded = decode_body(&encoded, None).unwrap();
+        assert_eq!(decoded.schema_version, 2);
+        assert_eq!(decoded.action_id, None);
+        let err = decode_body_reject_trailing(&encoded).unwrap_err();
+        assert!(err.contains("trailing"), "{err}");
+    }
+
+    #[test]
     fn second_trailing_body_field_fails_closed() {
         let body = encode_body(&ObjectRecord {
             gen: 1,
@@ -751,6 +801,7 @@ mod tests {
             key: "c1".into(),
             hidden: false,
             action_id: Some("act-1".into()),
+            schema_version: 1,
             props: HashMap::new(),
         })
         .unwrap();
@@ -776,6 +827,7 @@ mod tests {
                 key: "c1".into(),
                 hidden: false,
                 action_id: None,
+                schema_version: 1,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();
@@ -807,6 +859,7 @@ mod tests {
                 key: "c1".into(),
                 hidden: false,
                 action_id: None,
+                schema_version: 1,
                 props: HashMap::new(),
             })
             .unwrap();
@@ -831,6 +884,7 @@ mod tests {
             key: "c1".into(),
             hidden: false,
             action_id: None,
+            schema_version: 1,
             props: HashMap::new(),
         })
         .unwrap_err();

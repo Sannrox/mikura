@@ -70,6 +70,7 @@ fn rec(kind: &str, key: &str, props: &[(&str, &str)]) -> ObjectRecord {
         key: key.into(),
         hidden: false,
         action_id: None,
+        schema_version: 1,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))
