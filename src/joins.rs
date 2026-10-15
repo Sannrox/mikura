@@ -298,7 +298,10 @@ impl CountScratch {
 }
 
 pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN05";
-pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN5D";
+/// Delta frames without per-row schema versions; still read, never written.
+pub(crate) const JOIN_DELTA_MAGIC_V5: &[u8; 8] = b"MKJOIN5D";
+/// Delta frames that end with one schema version per row (ADR 0035).
+pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN6D";
 pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 type MeasureKey = (u32, u32, u32);
@@ -309,6 +312,8 @@ pub(crate) struct LiveMeta {
     pub(crate) gen: u64,
     pub(crate) hidden: bool,
     pub(crate) action_id: Option<u32>,
+    /// Descriptor version this live generation was written under (ADR 0035).
+    pub(crate) schema_version: u32,
 }
 
 /// Rebuildable hop/join projection.

@@ -7,6 +7,7 @@
 - Amends: [ADR 0008](0008-type-link-delete.md) descriptor replacement (value types stay [ADR 0012](0012-typed-values.md))
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0035](0035-versioned-schema-migration.md) (declared breaking migrations)
 
 ## Context
 
@@ -31,9 +32,11 @@ for missing required fields.
 **Replace the descriptor in place. Compare the new row to the previous
 visible descriptor for that kind. Additive optional changes are compatible.
 Recasting a property's type, renaming, or retargeting a stored link is
-rejected at descriptor write. Historical `load` still returns stored bytes.
-The next visible instance write, overlay merge, and Action body must satisfy
-the new descriptor or fail closed. No `MIKURAV2`, no dual-write, no
+rejected at descriptor write unless a declared migration is supplied
+([ADR 0035](0035-versioned-schema-migration.md)). Historical `load` still
+returns stored bytes (current load may omit declared drops). The next
+visible instance write, overlay merge, and Action body must satisfy the
+new descriptor or fail closed. No `MIKURAV2`, no dual-write, no
 catalog-only decode path.**
 
 The previous visible `mikura.schema/<kind>` row is the compatibility

@@ -52,6 +52,7 @@ fn wide_item(key: &str, fill: char) -> ObjectRecord {
         key: key.into(),
         hidden: false,
         action_id: None,
+        schema_version: 1,
         props: HashMap::from([("payload".into(), fill.to_string().repeat(1500))]),
     }
 }

@@ -233,6 +233,7 @@ fn cursor_record(namespace: &str, source: &str, offset: u64) -> ObjectRecord {
         key: source.to_string(),
         hidden: false,
         action_id: None,
+        schema_version: 1,
         props: HashMap::from([(SOURCE_OFFSET.to_string(), offset.to_string())]),
     }
 }

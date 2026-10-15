@@ -76,6 +76,9 @@ impl OverlayPatch {
                 continue;
             }
             if name == OVERLAY_CONFLICT || name.starts_with(OVERLAY_LOST_PREFIX) {
+                // Audit fields live on the row; [`Self::from_record`] is the
+                // patch body. [`Self::remapped_audit`] reads them from the
+                // stored record when a schema migration rewrites the overlay.
                 continue;
             }
             props.insert(name.clone(), value.clone());
@@ -153,6 +156,7 @@ impl OverlayPatch {
             hidden: false,
             action_id: self.action_id.clone(),
             props,
+            schema_version: 1,
         })
     }
 
@@ -251,6 +255,47 @@ impl OverlayPatch {
         Ok(record)
     }
 
+    /// Recorded conflict audit with property names mapped through `rename`
+    /// and entries for `drop` omitted.
+    pub fn remapped_audit(
+        record: &ObjectRecord,
+        rename: &[(String, String)],
+        drop: &[String],
+    ) -> Result<Option<ConflictAudit>, String> {
+        let dropped: HashSet<&str> = drop.iter().map(String::as_str).collect();
+        let map_name = |name: &str| -> Option<String> {
+            if dropped.contains(name) {
+                return None;
+            }
+            Some(
+                rename
+                    .iter()
+                    .find(|(old, _)| old == name)
+                    .map(|(_, new)| new.clone())
+                    .unwrap_or_else(|| name.to_string()),
+            )
+        };
+        let mut strategies = Vec::new();
+        if let Some(raw) = Self::recorded_conflict(record) {
+            for (name, strategy) in decode_conflict_strategies(raw)? {
+                if let Some(name) = map_name(&name) {
+                    strategies.push((name, strategy));
+                }
+            }
+        }
+        let mut lost = HashMap::new();
+        for (name, value) in Self::recorded_lost(record) {
+            if let Some(name) = map_name(&name) {
+                lost.insert(name, value);
+            }
+        }
+        if strategies.is_empty() && lost.is_empty() {
+            return Ok(None);
+        }
+        strategies.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(Some(ConflictAudit { strategies, lost }))
+    }
+
     /// Strategy tokens recorded on an overlay row, if present.
     pub fn recorded_conflict(record: &ObjectRecord) -> Option<&str> {
         record.props.get(OVERLAY_CONFLICT).map(String::as_str)
@@ -301,6 +346,30 @@ fn canonicalize_overlay_at(raw: &str) -> Result<String, String> {
     PropertyType::Timestamp
         .canonicalize_write(raw)
         .map_err(|err| format!("overlay at: {err}"))
+}
+
+fn decode_conflict_strategies(raw: &str) -> Result<Vec<(String, ConflictStrategy)>, String> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in raw.split(',') {
+        let Some((name, token)) = entry.split_once(':') else {
+            return Err(format!(
+                "overlay conflict {entry} must be name:user or name:newest"
+            ));
+        };
+        if name.is_empty() || token.is_empty() {
+            return Err(format!("overlay conflict {entry} is empty"));
+        }
+        if !seen.insert(name) {
+            return Err(format!("duplicate overlay conflict {name}"));
+        }
+        out.push((name.to_string(), ConflictStrategy::from_token(token)?));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
 }
 
 fn encode_conflict_strategies(strategies: &[(String, ConflictStrategy)]) -> String {

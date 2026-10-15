@@ -1,17 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
 use crate::acl::PropertyAcl;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
-use crate::joins::{crc32, read_checksummed, Checkpoint};
+use crate::joins::{crc32, read_checksummed, Checkpoint, LiveMeta};
 use crate::log::{read_records_after, LogWriter, SyncPolicy};
 
-use super::{ActionCommit, SetMember, Store};
+use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
+
+use super::{ActionCommit, LiveId, SetMember, Store};
 
 type ActionCatalog = HashMap<(String, String), ActionCommit>;
-type LoadedLogCheckpoint = (Checkpoint, ActionCatalog);
+type SchemaHistory = HashMap<(String, String), Vec<SchemaDescriptor>>;
+type InstanceSchemaVersions = HashMap<LiveId, u32>;
+type LoadedLogCheckpoint = (
+    Checkpoint,
+    ActionCatalog,
+    Option<SchemaHistory>,
+    Option<InstanceSchemaVersions>,
+);
 
 pub(super) const CHECKPOINT_MAGIC: &[u8; 8] = b"MKCKPT01";
 
@@ -21,6 +30,7 @@ impl Store {
     pub fn checkpoint(&mut self) -> Result<(), String> {
         self.require_committed()?;
         self.ensure_action_commits()?;
+        self.ensure_schema_history()?;
         if self.dirty.is_empty() && self.has_checkpoint {
             return self.persist_log_checkpoint();
         }
@@ -34,6 +44,7 @@ impl Store {
     pub fn compact_to(&mut self, dst: &Path) -> Result<usize, String> {
         self.require_committed()?;
         self.ensure_action_commits()?;
+        self.ensure_schema_history()?;
         for path in [
             dst.to_path_buf(),
             Self::join_map_path(dst),
@@ -46,10 +57,41 @@ impl Store {
             }
         }
         let mut records = Vec::with_capacity(self.identity.len());
+        let mut schema_live = HashSet::new();
+        let mut history_keys: Vec<_> = self.schema_history.keys().cloned().collect();
+        history_keys.sort();
+        for (namespace, kind) in history_keys {
+            schema_live.insert((namespace.clone(), SCHEMA_KIND.to_string(), kind.clone()));
+            let rows = self
+                .schema_history
+                .get(&(namespace.clone(), kind.clone()))
+                .cloned()
+                .unwrap_or_default();
+            for (index, desc) in rows.iter().enumerate() {
+                let mut record = desc.to_record(namespace.clone())?;
+                if index + 1 == rows.len() {
+                    if let Ok(live) =
+                        self.load_stored(&namespace, SCHEMA_KIND, &kind, &PropertyAcl::allow_all())
+                    {
+                        if !live.hidden {
+                            record.gen = live.gen;
+                            record.action_id = live.action_id;
+                        }
+                    }
+                }
+                records.push(record);
+            }
+        }
         let mut ids: Vec<_> = self.identity.keys().cloned().collect();
         ids.sort();
         for id in ids {
-            records.push(self.load(&id.0, &id.1, &id.2, &PropertyAcl::allow_all())?);
+            if schema_live.contains(&id) {
+                let hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
+                if !hidden {
+                    continue;
+                }
+            }
+            records.push(self.load_stored(&id.0, &id.1, &id.2, &PropertyAcl::allow_all())?);
         }
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -107,12 +149,24 @@ impl Store {
                 continue;
             }
             match load_log_checkpoint(&path) {
-                Ok((loaded, actions)) if loaded.pages <= pages => {
+                Ok((loaded, actions, history, versions)) if loaded.pages <= pages => {
                     self.action_commits = actions;
+                    if let Some(history) = history {
+                        self.schema_history = history;
+                        self.schema_history_from_checkpoint = true;
+                    }
+                    if let Some(versions) = versions {
+                        raise_instance_schema_versions(&mut self.identity, versions);
+                    }
                     self.action_commits_from_log = true;
                     if loaded.pages < pages {
                         for record in read_records_after(&self.log, loaded.pages)? {
                             self.remember_action(&record);
+                            if record.kind == SCHEMA_KIND && !record.hidden {
+                                if let Ok(desc) = SchemaDescriptor::from_record(&record) {
+                                    self.remember_schema(&record.namespace, desc);
+                                }
+                            }
                         }
                     }
                     return Ok(());
@@ -130,12 +184,40 @@ impl Store {
         self.write_log_checkpoint_at(&self.log, self.writer.committed_pages())
     }
 
+    /// Pre-0035 `MKCKPT01` body: projection and Action catalog, no schema
+    /// history trailer. Crate tests use this to prove recovery rewrites a
+    /// complete trailer before the next open trusts it.
+    #[cfg(test)]
+    pub(crate) fn persist_legacy_log_checkpoint_without_schema_history(
+        &self,
+    ) -> Result<(), String> {
+        if !self.action_commits_from_log {
+            return Err("action catalog is not from the log".into());
+        }
+        let pages = self.writer.committed_pages();
+        let mut body = Vec::new();
+        body.extend_from_slice(CHECKPOINT_MAGIC);
+        body.extend_from_slice(&pages.to_le_bytes());
+        self.encode_projection_after_magic(&mut body)?;
+        self.encode_action_commits(&mut body)?;
+        let path = Self::checkpoint_path(&self.log);
+        let tmp = Self::checkpoint_tmp_path(&self.log);
+        let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+        file.write_all(&body).map_err(|e| e.to_string())?;
+        file.write_all(&crc32(&body).to_le_bytes())
+            .map_err(|e| e.to_string())?;
+        file.sync_data().map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+
     fn write_log_checkpoint_at(&self, log: &Path, pages: u32) -> Result<(), String> {
         let mut body = Vec::new();
         body.extend_from_slice(CHECKPOINT_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
         self.encode_projection_after_magic(&mut body)?;
         self.encode_action_commits(&mut body)?;
+        self.encode_schema_history(&mut body)?;
+        self.encode_instance_schema_versions(&mut body)?;
         let path = Self::checkpoint_path(log);
         let tmp = Self::checkpoint_tmp_path(log);
         let prev = Self::checkpoint_prev_path(log);
@@ -160,10 +242,14 @@ impl Store {
                 continue;
             }
             match load_log_checkpoint(&path) {
-                Ok((loaded, actions)) if loaded.pages <= pages => {
+                Ok((loaded, actions, history, _)) if loaded.pages <= pages => {
                     let from = loaded.pages;
                     self.adopt_checkpoint(loaded)?;
                     self.action_commits = actions;
+                    if let Some(history) = history {
+                        self.schema_history = history;
+                        self.schema_history_from_checkpoint = true;
+                    }
                     self.action_commits_from_log = true;
                     // `replay_tail` checks the log still covers `from`
                     // (truncated files fail closed). It does not CRC pages
@@ -219,6 +305,47 @@ impl Store {
         }
         Ok(())
     }
+
+    fn encode_schema_history(&self, body: &mut Vec<u8>) -> Result<(), String> {
+        let mut keys: Vec<_> = self.schema_history.keys().cloned().collect();
+        keys.sort();
+        let n = u32::try_from(keys.len()).map_err(|_| "too many schema kinds".to_string())?;
+        body.extend_from_slice(&n.to_le_bytes());
+        for key in keys {
+            let rows = self
+                .schema_history
+                .get(&key)
+                .ok_or_else(|| "missing schema history".to_string())?;
+            write_str(body, &key.0)?;
+            write_str(body, &key.1)?;
+            let rn =
+                u32::try_from(rows.len()).map_err(|_| "too many schema versions".to_string())?;
+            body.extend_from_slice(&rn.to_le_bytes());
+            for desc in rows {
+                encode_props(body, &desc.to_record(key.0.clone())?.props)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn encode_instance_schema_versions(&self, body: &mut Vec<u8>) -> Result<(), String> {
+        let mut rows: Vec<_> = self
+            .identity
+            .iter()
+            .filter(|(_, meta)| meta.schema_version > 1)
+            .map(|(id, meta)| (id.clone(), meta.schema_version))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        let n = u32::try_from(rows.len()).map_err(|_| "too many identities".to_string())?;
+        body.extend_from_slice(&n.to_le_bytes());
+        for ((namespace, kind, key), version) in rows {
+            write_str(body, &namespace)?;
+            write_str(body, &kind)?;
+            write_str(body, &key)?;
+            body.extend_from_slice(&version.to_le_bytes());
+        }
+        Ok(())
+    }
 }
 
 fn encode_props(body: &mut Vec<u8>, props: &HashMap<String, String>) -> Result<(), String> {
@@ -256,8 +383,21 @@ fn load_log_checkpoint(path: &Path) -> Result<LoadedLogCheckpoint, String> {
     }
     let mut cur = &body[8..];
     let pages = read_u32(&mut cur)?;
-    let (joins, identity, hidden_props) = Store::decode_projection_after_magic(&mut cur)?;
+    let (joins, mut identity, hidden_props) = Store::decode_projection_after_magic(&mut cur)?;
     let actions = decode_action_commits(&mut cur)?;
+    let history = if cur.is_empty() {
+        None
+    } else {
+        Some(decode_schema_history(&mut cur)?)
+    };
+    let versions = if cur.is_empty() {
+        None
+    } else {
+        Some(Store::decode_instance_schema_versions(&mut cur)?)
+    };
+    if let Some(versions) = versions.as_ref() {
+        set_instance_schema_versions(&mut identity, versions.clone());
+    }
     if !cur.is_empty() {
         return Err("trailing checkpoint bytes".into());
     }
@@ -269,7 +409,92 @@ fn load_log_checkpoint(path: &Path) -> Result<LoadedLogCheckpoint, String> {
             hidden_props,
         },
         actions,
+        history,
+        versions,
     ))
+}
+
+impl Store {
+    pub(super) fn decode_instance_schema_versions(
+        cur: &mut &[u8],
+    ) -> Result<InstanceSchemaVersions, String> {
+        read_instance_schema_versions(cur)
+    }
+
+    pub(super) fn apply_instance_schema_versions(
+        identity: &mut HashMap<LiveId, LiveMeta>,
+        versions: InstanceSchemaVersions,
+    ) {
+        set_instance_schema_versions(identity, versions);
+    }
+}
+
+fn read_instance_schema_versions(cur: &mut &[u8]) -> Result<InstanceSchemaVersions, String> {
+    let n = read_u32(cur)? as usize;
+    let mut out = HashMap::with_capacity(n);
+    for _ in 0..n {
+        let namespace = read_str(cur)?;
+        let kind = read_str(cur)?;
+        let key = read_str(cur)?;
+        let version = read_u32(cur)?;
+        out.insert(
+            (namespace, kind, key),
+            if version == 0 { 1 } else { version },
+        );
+    }
+    Ok(out)
+}
+
+fn set_instance_schema_versions(
+    identity: &mut HashMap<LiveId, LiveMeta>,
+    versions: InstanceSchemaVersions,
+) {
+    for (id, version) in versions {
+        if let Some(meta) = identity.get_mut(&id) {
+            meta.schema_version = version;
+        }
+    }
+}
+
+/// Applies an older checkpoint's versions without lowering newer ones. The
+/// projection is already loaded and may hold later generations; an
+/// instance's schema version only grows, so the higher value is current.
+fn raise_instance_schema_versions(
+    identity: &mut HashMap<LiveId, LiveMeta>,
+    versions: InstanceSchemaVersions,
+) {
+    for (id, version) in versions {
+        if let Some(meta) = identity.get_mut(&id) {
+            meta.schema_version = meta.schema_version.max(version);
+        }
+    }
+}
+
+fn decode_schema_history(cur: &mut &[u8]) -> Result<SchemaHistory, String> {
+    let n = read_u32(cur)? as usize;
+    let mut out = HashMap::with_capacity(n);
+    for _ in 0..n {
+        let namespace = read_str(cur)?;
+        let kind = read_str(cur)?;
+        let rn = read_u32(cur)? as usize;
+        let mut rows = Vec::with_capacity(rn);
+        for _ in 0..rn {
+            let props = decode_props(cur)?;
+            let desc = SchemaDescriptor::from_record(&super::ObjectRecord {
+                gen: 0,
+                namespace: namespace.clone(),
+                kind: SCHEMA_KIND.to_string(),
+                key: kind.clone(),
+                hidden: false,
+                action_id: None,
+                props,
+                schema_version: 1,
+            })?;
+            rows.push(desc);
+        }
+        out.insert((namespace, kind), rows);
+    }
+    Ok(out)
 }
 
 fn decode_action_commits(cur: &mut &[u8]) -> Result<ActionCatalog, String> {

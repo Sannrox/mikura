@@ -19,4 +19,5 @@ mod predicates;
 mod restriction;
 mod row_filter;
 mod schema;
+mod schema_migrate;
 mod values;

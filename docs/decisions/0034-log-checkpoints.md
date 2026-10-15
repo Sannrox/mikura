@@ -33,7 +33,7 @@ The page format does not change.**
 | --- | --- |
 | Files | `{log}.ckpt` is current; `{log}.ckpt.prev` is the previous complete file. Atomic replace via `{log}.ckpt.tmp` + rename. |
 | Magic | `MKCKPT01`. Unknown magic is ignored (fall back), not a fail-closed open. |
-| Contents | Pages stamp, the same interned identity/join/measure body as `MKJOIN05`, then the Action-id catalog so retry keys survive optional compact. |
+| Contents | Pages stamp, the same interned identity/join/measure body as `MKJOIN05`, then the Action-id catalog so retry keys survive optional compact, then schema version history ([ADR 0035](0035-versioned-schema-migration.md)), then live instance schema versions so compact and dual recovery keep the generation they were written under. Older checkpoints without those trailers still open. |
 | Open | A join sidecar whose stamp matches `committed_pages` stays the fast path. A valid but stale sidecar, or a valid log checkpoint, is adopted and only pages after its stamp are decoded. |
 | Torn write | A truncated or checksum-mismatched `{log}.ckpt` falls back to `{log}.ckpt.prev`, then to a stale sidecar plus tail, then to full log replay. A corrupt `{log}.joins` still fails closed (ADR 0002). |
 | Dual-read | Load, evaluate, and Action retry answers match a full replay of the same log. |

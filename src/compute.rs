@@ -2,7 +2,8 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use crate::acl::AclError;
-use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Predicate, Sort};
+use crate::joins::JoinMaps;
+use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Hop, Predicate, Sort};
 use crate::page::{decode_cursor, encode_cursor};
 use crate::store::{ObjectRecord, Store};
 use crate::value::PropertyType;
@@ -31,6 +32,44 @@ fn result_kind(request: &EvaluateRequest) -> &str {
 
 fn has_hop_predicate(request: &EvaluateRequest) -> bool {
     request.hops.iter().any(|hop| hop.predicate.is_some())
+}
+
+fn query_prop<'a>(
+    store: &Store,
+    maps: &'a JoinMaps,
+    namespace: &str,
+    kind: &str,
+    key: &str,
+    property: &str,
+) -> Option<&'a str> {
+    if store.omits_current_property(namespace, kind, property) {
+        None
+    } else {
+        maps.prop(kind, key, property)
+    }
+}
+
+fn hop_join_owner<'a>(frontier: &'a str, hop: &'a Hop) -> &'a str {
+    if hop.incoming {
+        frontier
+    } else {
+        hop.far_kind.as_str()
+    }
+}
+
+fn hop_uses_dropped_join(store: &Store, request: &EvaluateRequest) -> bool {
+    let mut frontier = request.root_kind.as_str();
+    for hop in &request.hops {
+        if store.omits_current_property(
+            &request.namespace,
+            hop_join_owner(frontier, hop),
+            &hop.join_property,
+        ) {
+            return true;
+        }
+        frontier = hop.far_kind.as_str();
+    }
+    false
 }
 
 fn property_type(
@@ -159,28 +198,30 @@ fn matches_predicate(
     };
     match pred {
         Predicate::Eq { property, value } => {
-            let Some(stored) = maps.prop(kind, key, property) else {
+            let Some(stored) = query_prop(store, maps, namespace, kind, key, property) else {
                 return Ok(false);
             };
             let ty = property_type(store, namespace, kind, property)?;
             Ok(stored_eq(ty, stored, value))
         }
         Predicate::Neq { property, value } => {
-            let Some(stored) = maps.prop(kind, key, property) else {
+            let Some(stored) = query_prop(store, maps, namespace, kind, key, property) else {
                 return Ok(false);
             };
             let ty = property_type(store, namespace, kind, property)?;
             Ok(!stored_eq(ty, stored, value))
         }
         Predicate::Range { property, min, max } => {
-            let Some(stored) = maps.prop(kind, key, property) else {
+            let Some(stored) = query_prop(store, maps, namespace, kind, key, property) else {
                 return Ok(false);
             };
             let ty = property_type(store, namespace, kind, property)?;
             ty.in_range(stored, min.as_deref(), max.as_deref())
                 .map_err(ComputeError::Predicate)
         }
-        Predicate::Missing { property } => Ok(maps.prop(kind, key, property).is_none()),
+        Predicate::Missing { property } => {
+            Ok(query_prop(store, maps, namespace, kind, key, property).is_none())
+        }
         Predicate::And(args) => {
             for arg in args {
                 if !matches_predicate(store, namespace, kind, key_id, arg)? {
@@ -227,7 +268,11 @@ fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, Co
         .joins(&request.namespace)
         .map_err(ComputeError::Load)?;
     let ids = if let Some(filter) = &request.filter {
-        maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value)
+        if store.omits_current_property(&request.namespace, &request.root_kind, &filter.property) {
+            HashSet::new()
+        } else {
+            maps.matching_root_ids(&request.root_kind, &filter.property, &filter.value)
+        }
     } else {
         maps.visible_ids(&request.root_kind)
     };
@@ -254,9 +299,9 @@ fn visible_in_view(
     ids.into_iter()
         .filter(|&id| {
             maps.intern_get(id).is_some_and(|key| {
-                request
-                    .acl
-                    .object_visible(kind, key, |property| maps.prop(kind, key, property))
+                request.acl.object_visible(kind, key, |property| {
+                    query_prop(store, maps, &request.namespace, kind, key, property)
+                })
             })
         })
         .collect()
@@ -274,6 +319,15 @@ fn walk_hops(
     let mut frontier_kind = request.root_kind.as_str();
     for hop in &request.hops {
         let mut next = Vec::new();
+        if store.omits_current_property(
+            &request.namespace,
+            hop_join_owner(frontier_kind, hop),
+            &hop.join_property,
+        ) {
+            paths.clear();
+            frontier_kind = hop.far_kind.as_str();
+            continue;
+        }
         for (root, parent) in &paths {
             for child in maps.hop_targets(
                 frontier_kind,
@@ -287,10 +341,9 @@ fn walk_hops(
                         continue;
                     };
                     let far = hop.far_kind.as_str();
-                    if !request
-                        .acl
-                        .object_visible(far, key, |property| maps.prop(far, key, property))
-                    {
+                    if !request.acl.object_visible(far, key, |property| {
+                        query_prop(store, maps, &request.namespace, far, key, property)
+                    }) {
                         continue;
                     }
                 }
@@ -314,7 +367,13 @@ fn walk_hops(
         if seen_roots.insert(root) {
             count += 1;
         }
-        if frontier_kind == request.sum_kind {
+        if frontier_kind == request.sum_kind
+            && !store.omits_current_property(
+                &request.namespace,
+                frontier_kind,
+                &request.sum_property,
+            )
+        {
             if let Some(amount) = maps.leaf_amount(frontier_kind, leaf, &request.sum_property) {
                 total += amount;
             }
@@ -352,45 +411,56 @@ fn evaluate_local(
         .hops
         .iter()
         .any(|hop| request.acl.hides_in_kind(&hop.far_kind));
-    let (two_hop_count, sum_amount, keys) = if hides_on_hops || has_hop_predicate(request) {
-        let roots = root_ids(store, request)?;
-        let (count, sum, leaves) = walk_hops(store, request, &roots)?;
-        (count, sum, leaf_keys(store, &request.namespace, leaves))
-    } else if request.predicate.is_some() || request.acl.hides_objects() {
-        let roots = root_ids(store, request)?;
-        let (count, sum) = maps.count_and_sum_roots(
-            &request.root_kind,
-            &roots,
-            &hops,
-            &request.sum_kind,
-            &request.sum_property,
-        );
-        let keys = maps.result_keys_from_roots(&request.root_kind, &roots, &hops);
-        (count, sum, keys)
-    } else {
-        let (count, sum) = match &request.filter {
-            None => maps.count_and_sum(
+    let dropped_join = hop_uses_dropped_join(store, request);
+    let dropped_sum =
+        store.omits_current_property(&request.namespace, &request.sum_kind, &request.sum_property);
+    let dropped_filter = request.filter.as_ref().is_some_and(|filter| {
+        store.omits_current_property(&request.namespace, &request.root_kind, &filter.property)
+    });
+    let (two_hop_count, sum_amount, keys) =
+        if dropped_join || hides_on_hops || has_hop_predicate(request) {
+            let roots = root_ids(store, request)?;
+            let (count, sum, leaves) = walk_hops(store, request, &roots)?;
+            (count, sum, leaf_keys(store, &request.namespace, leaves))
+        } else if request.predicate.is_some() || request.acl.hides_objects() {
+            let roots = root_ids(store, request)?;
+            let (count, sum) = maps.count_and_sum_roots(
                 &request.root_kind,
+                &roots,
                 &hops,
                 &request.sum_kind,
                 &request.sum_property,
-            ),
-            Some(filter) => maps.count_and_sum_matching(
-                &request.root_kind,
-                &hops,
-                &request.sum_kind,
-                &request.sum_property,
-                &filter.property,
-                &filter.value,
-            ),
+            );
+            let sum = if dropped_sum { 0 } else { sum };
+            let keys = maps.result_keys_from_roots(&request.root_kind, &roots, &hops);
+            (count, sum, keys)
+        } else if dropped_filter {
+            (0, 0, Vec::new())
+        } else {
+            let (count, sum) = match &request.filter {
+                None => maps.count_and_sum(
+                    &request.root_kind,
+                    &hops,
+                    &request.sum_kind,
+                    &request.sum_property,
+                ),
+                Some(filter) => maps.count_and_sum_matching(
+                    &request.root_kind,
+                    &hops,
+                    &request.sum_kind,
+                    &request.sum_property,
+                    &filter.property,
+                    &filter.value,
+                ),
+            };
+            let sum = if dropped_sum { 0 } else { sum };
+            let filter = request
+                .filter
+                .as_ref()
+                .map(|filter| (filter.property.as_str(), filter.value.as_str()));
+            let keys = maps.result_keys(&request.root_kind, &hops, filter);
+            (count, sum, keys)
         };
-        let filter = request
-            .filter
-            .as_ref()
-            .map(|filter| (filter.property.as_str(), filter.value.as_str()));
-        let keys = maps.result_keys(&request.root_kind, &hops, filter);
-        (count, sum, keys)
-    };
     let (objects, cursor) = page_objects(store, request, keys)?;
     Ok(EvaluateResponse {
         two_hop_count,
@@ -493,7 +563,7 @@ fn rank_keys(
     let maps = store.joins(namespace).map_err(ComputeError::Load)?;
     let mut ranked = Vec::with_capacity(keys.len());
     for key in keys {
-        match maps.prop(kind, &key, &sort.property) {
+        match query_prop(store, maps, namespace, kind, &key, &sort.property) {
             None => ranked.push(RankedKey {
                 key,
                 missing: true,

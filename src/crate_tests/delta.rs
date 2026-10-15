@@ -211,3 +211,50 @@ fn large_delta_compacts_without_dirty_quarter() {
     assert_eq!(from_log_asset.sum_amount, 4);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Delta frames written before ADR 0035 carry no schema version trailer and
+/// use the `MKJOIN5D` magic. Open must still apply them, not rebuild.
+#[test]
+fn version5_delta_frames_still_apply() {
+    let (dir, log) = temp_log("join-delta-v5");
+    let sidecar = Store::join_map_path(&log);
+    let delta = Store::join_delta_path(&log);
+    let mut store = Store::create(&log).unwrap();
+    for record in generic_records() {
+        store.append_uncommitted(record).unwrap();
+    }
+    store.commit().unwrap();
+    store
+        .append(rec(
+            "Shipment",
+            "s2",
+            false,
+            &[("order_id", "o1"), ("amount", "5")],
+        ))
+        .unwrap();
+    drop(store);
+
+    // Rewrite the single frame in the old format: old magic, no trailer.
+    let bytes = std::fs::read(&delta).unwrap();
+    let body = &bytes[..bytes.len() - 4];
+    assert_eq!(&body[..8], crate::joins::JOIN_DELTA_MAGIC);
+    let rows = u32::from_le_bytes(body[12..16].try_into().unwrap()) as usize;
+    let mut old = crate::joins::JOIN_DELTA_MAGIC_V5.to_vec();
+    old.extend_from_slice(&body[8..body.len() - rows * 4]);
+    let crc = crate::joins::crc32(&old);
+    old.extend_from_slice(&crc.to_le_bytes());
+    std::fs::write(&delta, &old).unwrap();
+    let checkpoint = std::fs::read(&sidecar).unwrap();
+
+    let reopened = Store::open(&log).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
+    assert_eq!(response.sum_amount, 15);
+    assert_eq!(
+        std::fs::read(&delta).unwrap(),
+        old,
+        "the delta was applied, not rebuilt"
+    );
+    assert_eq!(std::fs::read(&sidecar).unwrap(), checkpoint);
+    let _ = std::fs::remove_dir_all(&dir);
+}

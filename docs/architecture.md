@@ -59,14 +59,21 @@ writes of that kind and `Store::load_with_schema`. `Store::load` still
 returns historical rows that predate the descriptor. Hidden instance
 writes skip validation (tombstones). Hidden schema rows are treated as
 absent. No schema row means today's unvalidated strings.
-A later visible descriptor is compared to the previous visible row for that
-kind ([ADR 0013](decisions/0013-schema-evolution.md)): additive properties,
-shrinking `required` or the closed set, new typed names, incoming links,
-`sums`, and overlay `conflict` fields commit; recasting a previously declared
-type (including default `string`) or retargeting an outgoing link fails closed
-and leaves the previous descriptor intact. Changing `conflict` is not
-retroactive ([ADR 0032](decisions/0032-overlay-conflict-strategy.md)). `Store::load` keeps stored bytes. The next visible write,
-overlay merge, and Action body must satisfy the current descriptor.
+A later visible descriptor is a new schema version compared to the previous
+visible row for that kind ([ADR 0013](decisions/0013-schema-evolution.md),
+[ADR 0035](decisions/0035-versioned-schema-migration.md)): additive properties,
+shrinking `required`, new typed names, incoming links, `sums`, and overlay
+`conflict` fields commit without migrate keys. Recast, rename, outgoing-link
+retarget, and closed-set drop commit only with a matching `migrate_cast`,
+`migrate_rename`, `migrate_retarget`, or `migrate_drop`. Extra or missing
+migrate entries fail closed and leave the previous descriptor intact.
+Changing `conflict` is not retroactive
+([ADR 0032](decisions/0032-overlay-conflict-strategy.md)). `Store::load` is
+the current version (declared drops omitted; rename/cast remapped live).
+`Store::load_at_schema` names an earlier version. Overlay rows of that kind
+migrate in the same commit or the descriptor is refused with a report.
+The next visible write, overlay merge, and Action body must satisfy the
+current descriptor.
 [ADR 0008](decisions/0008-type-link-delete.md).
 [ADR 0006](decisions/0006-action-provenance.md).
 
@@ -84,9 +91,12 @@ overlay merge, and Action body must satisfy the current descriptor.
   count, then properties in sorted key order, then an optional
   length-prefixed Action id. Empty namespace fails closed on encode and
   decode. Writes without an Action id end after the properties (`None`).
-  Writes that store an id emit the field. Bytes after that field fail
+  Writes that store an id emit the field. Schema version follows as a
+  little-endian `u32` only when it is not 1; version-only records write an
+  empty Action string then the `u32`. Bytes after that trailer fail
   closed ([ADR 0006](decisions/0006-action-provenance.md),
-  [ADR 0028](decisions/0028-store-namespace.md)).
+  [ADR 0028](decisions/0028-store-namespace.md),
+  [ADR 0035](decisions/0035-versioned-schema-migration.md)).
 - Rebuild (`read_records`) verifies every page in `1..=committed_pages` and
   ignores bytes after that range.
 - Checksum mismatch or a short committed file returns an error.
@@ -355,7 +365,8 @@ indexes ignore the id. [ADR 0006](decisions/0006-action-provenance.md).
 A repeated Action id is a replay when the body matches and fails closed
 when it does not ([ADR 0011](decisions/0011-action-id-retry-key.md)).
 A matching body that the current descriptor rejects also fails closed
-([ADR 0013](decisions/0013-schema-evolution.md)).
+([ADR 0013](decisions/0013-schema-evolution.md),
+[ADR 0035](decisions/0035-versioned-schema-migration.md)).
 Lookup rebuilds from the log. Host `apply_action` honors the same rule;
 `expected_gen` still applies to a new id. Overlay retries with the same
 Action id and patch are a no-op
