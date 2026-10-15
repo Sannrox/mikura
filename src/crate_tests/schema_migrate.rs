@@ -133,7 +133,7 @@ fn recast_migrates_or_rejects_overlays() {
             .schema_version,
         1
     );
-    // Canonical live bytes, not the pre-cast generation body (#241).
+    // Canonical live bytes; the pre-cast body is read through history (ADR 0036).
     assert_eq!(
         load_props(&store, Some(1))
             .get("priority")

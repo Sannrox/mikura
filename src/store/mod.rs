@@ -10,7 +10,10 @@ use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod checkpoint;
+mod history;
 mod sidecar;
+
+pub use history::{AsOf, ObjectVersion, VersionOrigin};
 
 /// Rewrite `{log}.joins` and delete `{log}.joins.delta` when the dirty-set
 /// file exceeds this many bytes. Compact still also runs when there is no

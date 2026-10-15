@@ -11,7 +11,8 @@ window.
 
 - New object logs write `MIKURAV2` with a required `namespace` on every
   record. `MIKURAV1` logs fail closed on open. Join sidecars are
-  `MKJOIN05` / `MKJOIN5D`; `MKJOIN04` and earlier fail closed. Delete the
+  `MKJOIN05` / `MKJOIN6D`; `MKJOIN5D` delta frames still read, and
+  `MKJOIN04` and earlier fail closed. Delete the
   sidecar on a `MIKURAV2` log to rebuild
   ([#234](https://github.com/Sannrox/mikura/issues/234),
   [ADR 0028](docs/decisions/0028-store-namespace.md)).
@@ -33,6 +34,13 @@ window.
 
 ### Added
 
+- `Store::history` lists every committed generation of an object with its
+  page and origin (source, edit, hide); `Store::load_as_of` reads it as of a
+  generation or a commit point. Restrictions and deny lists apply to every
+  version; older versions read under current property names. No format
+  change
+  ([#241](https://github.com/Sannrox/mikura/issues/241),
+  [ADR 0036](docs/decisions/0036-object-history-reads.md)).
 - Breaking `mikura.schema` replacements commit with a declared
   `migrate_rename` / `migrate_cast` / `migrate_retarget` / `migrate_drop`.
   Descriptors and instance generations carry a schema version (absent is 1).

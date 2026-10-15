@@ -288,6 +288,25 @@ pub fn read_records_after(path: &Path, after_page: u32) -> Result<Vec<ObjectReco
     read_committed_records(path, None, after_page)
 }
 
+/// Committed records that `keep` accepts, with the page that holds each, in
+/// log order (ADR 0036). Every commit ends on a page boundary, so a page that a
+/// commit returned as `committed_pages` is an exact commit point.
+pub(crate) fn read_records_with_pages(
+    path: &Path,
+    mut keep: impl FnMut(&ObjectRecord) -> bool,
+) -> Result<Vec<(u32, ObjectRecord)>, String> {
+    let mut paged = Vec::new();
+    visit_committed_pages(path, None, 0, |index, records| {
+        paged.extend(
+            records
+                .into_iter()
+                .filter(|record| keep(record))
+                .map(|record| (index, record)),
+        );
+    })?;
+    Ok(paged)
+}
+
 /// Committed records of a pre-namespace `MIKURAV1` log, each assigned the
 /// caller's `namespace` (ADR 0030). Any other magic fails closed.
 pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>, String> {
@@ -304,6 +323,21 @@ fn read_committed_records(
     v1_namespace: Option<&str>,
     after_page: u32,
 ) -> Result<Vec<ObjectRecord>, String> {
+    let mut all = Vec::new();
+    visit_committed_pages(path, v1_namespace, after_page, |_, records| {
+        all.extend(records);
+    })?;
+    Ok(all)
+}
+
+/// Verifies and decodes committed pages after `after_page`, handing each
+/// page's records to `visit` with the page index.
+fn visit_committed_pages(
+    path: &Path,
+    v1_namespace: Option<&str>,
+    after_page: u32,
+    mut visit: impl FnMut(u32, Vec<ObjectRecord>),
+) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut superblock = vec![0u8; PAGE];
     file.read_exact(&mut superblock)
@@ -320,7 +354,6 @@ fn read_committed_records(
     if after_page > committed {
         return Err("checkpoint page is past committed_pages".into());
     }
-    let mut records = Vec::new();
     if after_page < committed {
         let start = PAGE as u64 * u64::from(after_page + 1);
         file.seek(SeekFrom::Start(start))
@@ -330,10 +363,12 @@ fn read_committed_records(
             file.read_exact(&mut page)
                 .map_err(|_| format!("committed page {index}: short read"))?;
             verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
+            let mut records = Vec::new();
             decode_data_page(&page, v1_namespace, &mut records)?;
+            visit(index, records);
         }
     }
-    Ok(records)
+    Ok(())
 }
 
 fn read_committed(file: &mut File) -> Result<u32, String> {
