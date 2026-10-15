@@ -7,6 +7,7 @@
 - Amends: [ADR 0015](0015-composable-object-sets.md) — count+sum is no longer waiting on #177. [ADR 0010](0010-last-hop-measures.md) and [#51](https://github.com/Sannrox/mikura/issues/51) still forbid extra aggregates without a named fixture.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0038](0038-breakdown-aggregates.md) (min, max, average, distinct count, and bounded group-by)
 
 ## Context
 

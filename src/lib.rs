@@ -53,7 +53,8 @@ pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
 pub use joins::JoinMaps;
 pub use objectset::{
-    Aggregate, EvaluateRequest, EvaluateResponse, ExactMatch, Hop, ObjectSet, Predicate, Sort,
+    Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, ObjectSet,
+    Predicate, Sort, MAX_GROUPS,
 };
 pub use overlay::{
     ConflictAudit, OverlayPatch, OVERLAY_AT, OVERLAY_CLEARED, OVERLAY_CONFLICT, OVERLAY_KIND,

@@ -71,6 +71,7 @@ pub(crate) fn fixture_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -97,6 +98,7 @@ pub(crate) fn shipment_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 

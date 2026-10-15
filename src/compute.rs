@@ -1,9 +1,12 @@
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::acl::AclError;
 use crate::joins::JoinMaps;
-use crate::objectset::{Aggregate, EvaluateRequest, EvaluateResponse, Hop, Predicate, Sort};
+use crate::objectset::{
+    Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, Group, Hop, Predicate, Sort,
+    MAX_GROUPS,
+};
 use crate::page::{decode_cursor, encode_cursor};
 use crate::store::{ObjectRecord, Store};
 use crate::value::PropertyType;
@@ -307,11 +310,16 @@ fn visible_in_view(
         .collect()
 }
 
-fn walk_hops(
+/// Interned `(root, leaf)` ids of one hop path.
+type PathIds = (u32, u32);
+
+/// Paths that survive every hop, its visibility, and its predicate, with the
+/// kind the last hop reached.
+fn surviving_paths<'r>(
     store: &Store,
-    request: &EvaluateRequest,
+    request: &'r EvaluateRequest,
     roots: &HashSet<u32>,
-) -> Result<(usize, i64, Vec<u32>), ComputeError> {
+) -> Result<(Vec<PathIds>, &'r str), ComputeError> {
     let maps = store
         .joins(&request.namespace)
         .map_err(ComputeError::Load)?;
@@ -358,6 +366,35 @@ fn walk_hops(
         paths = next;
         frontier_kind = hop.far_kind.as_str();
     }
+    Ok((paths, frontier_kind))
+}
+
+/// The measure of one path's leaf, when the path ends on the sum kind and
+/// the leaf contributes (ADR 0018).
+fn path_amount(
+    store: &Store,
+    maps: &JoinMaps,
+    request: &EvaluateRequest,
+    frontier_kind: &str,
+    leaf: u32,
+) -> Option<i64> {
+    if frontier_kind != request.sum_kind
+        || store.omits_current_property(&request.namespace, frontier_kind, &request.sum_property)
+    {
+        return None;
+    }
+    maps.leaf_amount(frontier_kind, leaf, &request.sum_property)
+}
+
+fn walk_hops(
+    store: &Store,
+    request: &EvaluateRequest,
+    roots: &HashSet<u32>,
+) -> Result<(usize, i64, Vec<u32>), ComputeError> {
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
+    let (paths, frontier_kind) = surviving_paths(store, request, roots)?;
     let mut seen_roots = HashSet::new();
     let mut seen_leaves = HashSet::new();
     let mut count = 0usize;
@@ -367,22 +404,114 @@ fn walk_hops(
         if seen_roots.insert(root) {
             count += 1;
         }
-        if frontier_kind == request.sum_kind
-            && !store.omits_current_property(
-                &request.namespace,
-                frontier_kind,
-                &request.sum_property,
-            )
-        {
-            if let Some(amount) = maps.leaf_amount(frontier_kind, leaf, &request.sum_property) {
-                total += amount;
-            }
+        if let Some(amount) = path_amount(store, maps, request, frontier_kind, leaf) {
+            total = total.wrapping_add(amount);
         }
         if seen_leaves.insert(leaf) {
             leaves.push(leaf);
         }
     }
     Ok((count, total, leaves))
+}
+
+/// Running aggregates of one group.
+#[derive(Default)]
+struct GroupFold {
+    roots: HashSet<u32>,
+    sum: i64,
+    /// Exact sum for the average; checked against `i64` once at the end, so
+    /// path order cannot change the answer.
+    exact: i128,
+    n: u64,
+    min: Option<i64>,
+    max: Option<i64>,
+    distinct: HashSet<String>,
+}
+
+/// Fold surviving paths into groups keyed by root properties (ADR 0038).
+fn breakdown_groups(
+    store: &Store,
+    request: &EvaluateRequest,
+    breakdown: &Breakdown,
+) -> Result<Vec<Group>, ComputeError> {
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
+    let max_groups = match breakdown.max_groups {
+        0 => MAX_GROUPS,
+        asked => asked.min(MAX_GROUPS),
+    };
+    let roots = root_ids(store, request)?;
+    let (paths, frontier_kind) = surviving_paths(store, request, &roots)?;
+    let root_value = |root: u32, property: &str| -> Option<String> {
+        let key = maps.intern_get(root)?;
+        query_prop(
+            store,
+            maps,
+            &request.namespace,
+            &request.root_kind,
+            key,
+            property,
+        )
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    };
+    let mut groups: HashMap<Vec<Option<String>>, GroupFold> = HashMap::new();
+    for (root, leaf) in paths {
+        let key: Vec<_> = breakdown
+            .group_by
+            .iter()
+            .map(|property| root_value(root, property))
+            .collect();
+        if !groups.contains_key(&key) && groups.len() == max_groups {
+            return Err(ComputeError::TooManyGroups { max: max_groups });
+        }
+        let fold = groups.entry(key).or_default();
+        if fold.roots.insert(root) {
+            if let Some(value) = breakdown
+                .distinct
+                .as_deref()
+                .and_then(|property| root_value(root, property))
+            {
+                fold.distinct.insert(value);
+            }
+        }
+        if let Some(amount) = path_amount(store, maps, request, frontier_kind, leaf) {
+            fold.sum = fold.sum.wrapping_add(amount);
+            fold.exact += i128::from(amount);
+            fold.n += 1;
+            fold.min = Some(fold.min.map_or(amount, |min| min.min(amount)));
+            fold.max = Some(fold.max.map_or(amount, |max| max.max(amount)));
+        }
+    }
+    let mut out = groups
+        .into_iter()
+        .map(|(key, fold)| {
+            let checked = i64::try_from(fold.exact).map_err(|_| {
+                ComputeError::Overflow(format!("average of {} overflows i64", request.sum_property))
+            })?;
+            Ok(Group {
+                key,
+                count: fold.roots.len(),
+                sum: fold.sum,
+                n: fold.n,
+                min: fold.min,
+                max: fold.max,
+                avg: (checked, fold.n),
+                distinct: breakdown.distinct.as_ref().map(|_| fold.distinct.len()),
+            })
+        })
+        .collect::<Result<Vec<_>, ComputeError>>()?;
+    // Byte order per key part, the absent group last.
+    out.sort_by(|a, b| {
+        let rank = |key: &[Option<String>]| -> Vec<(bool, String)> {
+            key.iter()
+                .map(|part| (part.is_none(), part.clone().unwrap_or_default()))
+                .collect()
+        };
+        rank(&a.key).cmp(&rank(&b.key))
+    });
+    Ok(out)
 }
 
 fn leaf_keys(store: &Store, namespace: &str, ids: Vec<u32>) -> Vec<String> {
@@ -462,11 +591,16 @@ fn evaluate_local(
             (count, sum, keys)
         };
     let (objects, cursor) = page_objects(store, request, keys)?;
+    let groups = match &request.breakdown {
+        Some(breakdown) => breakdown_groups(store, request, breakdown)?,
+        None => Vec::new(),
+    };
     Ok(EvaluateResponse {
         two_hop_count,
         sum_amount,
         objects,
         cursor,
+        groups,
     })
 }
 
@@ -474,6 +608,31 @@ struct RankedKey {
     key: String,
     missing: bool,
     value: String,
+}
+
+/// At most two distinct group properties; every named root property must be
+/// readable.
+fn check_breakdown(request: &EvaluateRequest, breakdown: &Breakdown) -> Result<(), ComputeError> {
+    if breakdown.group_by.len() > 2 {
+        return Err(ComputeError::Predicate(
+            "breakdown groups by at most 2 properties".into(),
+        ));
+    }
+    if breakdown.group_by.len() == 2 && breakdown.group_by[0] == breakdown.group_by[1] {
+        return Err(ComputeError::Predicate(
+            "breakdown group properties must differ".into(),
+        ));
+    }
+    for property in breakdown.group_by.iter().chain(&breakdown.distinct) {
+        if property.is_empty() {
+            return Err(ComputeError::Predicate("empty breakdown property".into()));
+        }
+        request
+            .acl
+            .check(&request.root_kind, property)
+            .map_err(ComputeError::Acl)?;
+    }
+    Ok(())
 }
 
 fn check_page_request(request: &EvaluateRequest) -> Result<(), ComputeError> {
@@ -666,11 +825,22 @@ fn split_page(ranked: Vec<RankedKey>, page_size: usize) -> (Vec<RankedKey>, bool
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComputeError {
     Acl(AclError),
-    UnsupportedBackend { name: &'static str },
-    ObjectBound { bound: usize, count: usize },
+    UnsupportedBackend {
+        name: &'static str,
+    },
+    ObjectBound {
+        bound: usize,
+        count: usize,
+    },
     Load(String),
     Predicate(String),
     Page(String),
+    /// A breakdown produced more groups than its bound (ADR 0038).
+    TooManyGroups {
+        max: usize,
+    },
+    /// A checked breakdown measure overflowed (ADR 0038).
+    Overflow(String),
 }
 
 pub trait ComputeBackend {
@@ -723,6 +893,9 @@ impl ComputeBackend for LocalCompute {
                     check_predicate_types(store, &request.namespace, &request.root_kind, pred)?;
                 }
                 check_page_request(request)?;
+                if let Some(breakdown) = &request.breakdown {
+                    check_breakdown(request, breakdown)?;
+                }
                 if let Some(sort) = &request.sort {
                     let kind = result_kind(request);
                     request

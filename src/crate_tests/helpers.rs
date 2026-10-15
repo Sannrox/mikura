@@ -57,6 +57,7 @@ pub(super) fn fixture_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -118,6 +119,7 @@ pub(super) fn asset_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -217,6 +219,7 @@ pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -240,5 +243,6 @@ pub(super) fn hop_incident_to_component(bound: usize) -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }

@@ -34,6 +34,14 @@ window.
 
 ### Added
 
+- Evaluate breakdowns: optional `Breakdown` groups surviving roots by up to
+  two root properties and returns per group count, sum, contributing
+  values, min, max, an exact `(sum, n)` average, and a distinct count, with
+  a fail-closed `max_groups` bound; host `evaluate` takes `breakdown` and
+  returns `groups`. The count+sum folds now wrap on overflow as ADR 0018
+  states instead of overflowing in debug builds
+  ([#269](https://github.com/Sannrox/mikura/issues/269),
+  [ADR 0038](docs/decisions/0038-breakdown-aggregates.md)).
 - Online backup, verify, and point-in-time restore: `mikura::backup` and
   `mikura-host backup | verify | restore`. Backup copies committed pages
   (and an earlier log checkpoint) while the host serves; restore writes a

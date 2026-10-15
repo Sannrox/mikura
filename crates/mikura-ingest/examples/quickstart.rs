@@ -51,6 +51,7 @@ fn request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 

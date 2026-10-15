@@ -127,6 +127,7 @@ fn fixture_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -150,6 +151,7 @@ fn asset_request() -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -830,6 +832,7 @@ fn incoming_hop_follows_join_property() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -1061,6 +1064,7 @@ fn composed_predicates_select_typed_object_sets() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let listed = oss.evaluate(&store, &open).unwrap();
     assert_eq!(listed_keys(&listed), ["inc-1", "inc-3"]);
@@ -1084,6 +1088,7 @@ fn composed_predicates_select_typed_object_sets() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &filter_then_hop).unwrap()),
@@ -1109,6 +1114,7 @@ fn composed_predicates_select_typed_object_sets() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let hopped = oss.evaluate(&store, &hop_then_filter).unwrap();
     assert_eq!(listed_keys(&hopped), ["svc-api"]);
@@ -1128,6 +1134,7 @@ fn composed_predicates_select_typed_object_sets() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &range).unwrap()),
@@ -1148,6 +1155,7 @@ fn composed_predicates_select_typed_object_sets() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &missing).unwrap()),
@@ -1218,6 +1226,7 @@ fn ordered_pages_are_snapshot_bound() {
         sort: Some(Sort::by("priority")),
         page_size: 1,
         cursor: None,
+        breakdown: None,
     };
     let page1 = oss.evaluate(&store, &first).unwrap();
     assert_eq!(ordered_keys(&page1), ["inc-3"]);
@@ -1429,6 +1438,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -1457,6 +1467,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -1490,6 +1501,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap_err();
@@ -1522,6 +1534,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap()
@@ -1551,6 +1564,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap()
@@ -1761,6 +1775,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -1788,6 +1803,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -2302,6 +2318,7 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -2368,6 +2385,7 @@ fn association_objects_persist_and_traverse() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -2430,6 +2448,7 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let closed = oss.evaluate(&store, &hop).unwrap();
     assert_eq!(closed.two_hop_count, 0);

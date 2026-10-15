@@ -146,6 +146,7 @@ fn restriction_cursor_binds_hide_list() {
                 sort: Some(Sort::by("priority")),
                 page_size: 1,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -168,6 +169,7 @@ fn restriction_cursor_binds_hide_list() {
             sort: Some(Sort::by("priority")),
             page_size: 1,
             cursor: Some(cursor),
+            breakdown: None,
         },
     );
     assert!(

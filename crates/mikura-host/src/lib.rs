@@ -22,8 +22,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use mikura::{
-    Action, Aggregate, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch, Hop,
-    LocalCompute, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
+    Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
+    Hop, LocalCompute, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -139,6 +139,35 @@ pub struct WireEvaluate {
     pub page_size: usize,
     #[serde(default)]
     pub cursor: Option<String>,
+    /// Group-by and extra aggregates (ADR 0038). Omit for count/sum only.
+    #[serde(default)]
+    pub breakdown: Option<WireBreakdown>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireBreakdown {
+    #[serde(default)]
+    pub group_by: Vec<String>,
+    #[serde(default)]
+    pub max_groups: usize,
+    #[serde(default)]
+    pub distinct: Option<String>,
+}
+
+/// One breakdown group. `key` parts are `null` for the absent group; `avg`
+/// is the exact `[sum, n]` pair.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireGroup {
+    pub key: Vec<Option<String>>,
+    pub count: usize,
+    pub sum: i64,
+    pub n: u64,
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    pub avg: (i64, u64),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distinct: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -278,6 +307,8 @@ pub struct EvaluateWire {
     pub objects: Vec<ObjectRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<WireGroup>,
 }
 
 pub struct Host {
@@ -481,6 +512,20 @@ impl Host {
                         sum_amount: response.sum_amount,
                         objects: response.objects,
                         cursor: response.cursor,
+                        groups: response
+                            .groups
+                            .into_iter()
+                            .map(|group| WireGroup {
+                                key: group.key,
+                                count: group.count,
+                                sum: group.sum,
+                                n: group.n,
+                                min: group.min,
+                                max: group.max,
+                                avg: group.avg,
+                                distinct: group.distinct,
+                            })
+                            .collect(),
                     }),
                     load: None,
                     health: None,
@@ -892,6 +937,11 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         }),
         page_size: request.page_size,
         cursor: request.cursor,
+        breakdown: request.breakdown.map(|breakdown| Breakdown {
+            group_by: breakdown.group_by,
+            max_groups: breakdown.max_groups,
+            distinct: breakdown.distinct,
+        }),
     };
     ObjectSet::new(LocalCompute)
         .evaluate(store, &request)
