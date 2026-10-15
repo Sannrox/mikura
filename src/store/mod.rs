@@ -11,6 +11,8 @@ use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod checkpoint;
 mod history;
+
+pub(crate) use checkpoint::checkpoint_stamp;
 mod sidecar;
 
 pub use history::{AsOf, ObjectVersion, VersionOrigin};

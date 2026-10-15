@@ -39,7 +39,7 @@ The page format does not change.**
 | Dual-read | Load, evaluate, and Action retry answers match a full replay of the same log. |
 | Default history | The log keeps every generation. Compaction is opt-in (`Store::compact_to`). |
 | Compact | `Store::compact_to(dst)` writes live generations (including hidden rows) to a new log and a checkpoint that keeps the Action-id catalog. History reads ([ADR 0036](0036-object-history-reads.md)) on the new file start at the compact; the source log keeps full history. Compact runs only when the caller asks. After compact, deleting the checkpoint drops superseded Action ids. |
-| Backup | Copy the log, or copy `{log}.ckpt` (and `.prev` if present) plus the log tail after the stamp. Restore is `Store::open` / `Host::open` on those files. The join sidecar remains optional and rebuildable. |
+| Backup | Copy the log, or copy `{log}.ckpt` (and `.prev` if present) plus the log tail after the stamp. Restore is `Store::open` / `Host::open` on those files. The join sidecar remains optional and rebuildable. Online backup and point-in-time restore are [ADR 0037](0037-online-backup-and-restore.md). |
 
 `Store::checkpoint()` writes `{log}.ckpt` at the current commit point.
 Join-checkpoint rewrite also writes a log checkpoint when the Action-id

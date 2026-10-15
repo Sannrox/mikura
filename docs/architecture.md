@@ -471,10 +471,15 @@ uses the product-loop as the named workload; synthetic scale envelopes
 are not SLOs ([ADR 0016](decisions/0016-production-workload.md),
 [m9-workload-acceptance.md](plans/m9-workload-acceptance.md)).
 
-Backup is a file copy of the object log plus the optional `{log}.joins`
-sidecar and optional `{log}.ckpt` log checkpoint. Copy those files next to
-a fresh `Host::open`. There is no backup RPC. The sidecar is a rebuildable
-projection, never recovery material. A valid log checkpoint lets open
+Backup is `mikura-host backup` (or `mikura::backup::backup_log`): it
+copies the committed pages up to the superblock's commit point, plus the
+log checkpoint when taken at or before it, while the host keeps serving.
+`verify` checks every committed page and record. `restore` writes a new
+log truncated to a restore point (`mkrp1:<commit point>:<page crc>`) and
+never touches its source
+([ADR 0037](decisions/0037-online-backup-and-restore.md)). There is no
+backup RPC. The sidecar is a rebuildable projection, never recovery
+material and never copied. A valid log checkpoint lets open
 replay only the tail. Deleting the copied sidecar still answers load, list,
 hop, and overlay from the log (and checkpoint, if present). A corrupt
 committed page or sidecar checksum mismatch fails closed. A torn log

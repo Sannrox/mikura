@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::acl::PropertyAcl;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
-use crate::joins::{crc32, read_checksummed, Checkpoint, LiveMeta};
+use crate::joins::{check_join_crc, crc32, read_checksummed, Checkpoint, LiveMeta};
 use crate::log::{read_records_after, LogWriter, SyncPolicy};
 
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
@@ -23,6 +23,22 @@ type LoadedLogCheckpoint = (
 );
 
 pub(super) const CHECKPOINT_MAGIC: &[u8; 8] = b"MKCKPT01";
+
+/// The commit point a log checkpoint was taken at, from the file's bytes
+/// (body then CRC32). Takes bytes so a caller copies exactly what it checked.
+pub(crate) fn checkpoint_stamp(bytes: &[u8]) -> Result<u32, String> {
+    if bytes.len() < 16 {
+        return Err("log checkpoint: too short".into());
+    }
+    let (body, crc) = bytes.split_at(bytes.len() - 4);
+    check_join_crc(body, u32::from_le_bytes(crc.try_into().unwrap()))
+        .map_err(|err| format!("log checkpoint: {err}"))?;
+    if &body[..8] != CHECKPOINT_MAGIC {
+        return Err("bad checkpoint magic".into());
+    }
+    let mut cur = &body[8..];
+    read_u32(&mut cur)
+}
 
 impl Store {
     /// Snapshot live identity, join maps, and the Action-id catalog at the

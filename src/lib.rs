@@ -36,6 +36,7 @@
 
 mod acl;
 mod actions;
+pub mod backup;
 mod codec;
 mod compute;
 mod joins;
