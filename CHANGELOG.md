@@ -34,6 +34,13 @@ window.
 
 ### Added
 
+- Online backup, verify, and point-in-time restore: `mikura::backup` and
+  `mikura-host backup | verify | restore`. Backup copies committed pages
+  (and an earlier log checkpoint) while the host serves; restore writes a
+  new log up to a restore point `mkrp1:<commit point>:<page crc>` and never
+  touches its source
+  ([#245](https://github.com/Sannrox/mikura/issues/245),
+  [ADR 0037](docs/decisions/0037-online-backup-and-restore.md)).
 - `Store::history` lists every committed generation of an object with its
   page and origin (source, edit, hide); `Store::load_as_of` reads it as of a
   generation or a commit point. Restrictions and deny lists apply to every

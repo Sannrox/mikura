@@ -41,6 +41,7 @@ a new ADR. Allocate the next number and list it here.
 | [0034](0034-log-checkpoints.md) | Log checkpoints for bounded open and restore | accepted |
 | [0035](0035-versioned-schema-migration.md) | Versioned descriptors and declared breaking migrations | accepted |
 | [0036](0036-object-history-reads.md) | Object history reads by generation and commit point | accepted |
+| [0037](0037-online-backup-and-restore.md) | Online backup, verify, and point-in-time restore | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

@@ -1,6 +1,7 @@
 //! Single-process host: ingest, evaluate, load, apply_action, apply_overlay,
 //! and hide. `--bearer` arms the RPC envelope on any bind; non-loopback bind
-//! still requires a clerk bearer.
+//! still requires a clerk bearer. The `backup`, `verify`, and `restore`
+//! subcommands run beside a serving host (ADR 0037).
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -10,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use mikura::backup::{backup_log, backup_log_incremental, restore_log, verify_log, RestorePoint};
 use mikura_host::{Host, DEFAULT_REQUEST_BOUND, DEFAULT_REQUEST_TIMEOUT_MS};
 
 struct Args {
@@ -32,11 +34,18 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
+    let mut argv = std::env::args().skip(1).peekable();
+    if let Some(command) = argv.peek().cloned() {
+        if matches!(command.as_str(), "backup" | "verify" | "restore") {
+            argv.next();
+            return run_backup_command(&command, argv);
+        }
+    }
     let args = match parse_args()? {
         Some(args) => args,
         None => {
             println!(
-                "mikura-host {} {}\nusage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\nclose stdin to stop; uncommitted stream pushes are not flushed",
+                "mikura-host {} {}\nusage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\n       mikura-host backup --log SRC --to DST [--incremental]\n       mikura-host verify --log PATH\n       mikura-host restore --from BACKUP --to DST [--point ID]\nclose stdin to stop; uncommitted stream pushes are not flushed",
                 env!("MIKURA_GIT_VERSION"),
                 env!("MIKURA_GIT_COMMIT")
             );
@@ -140,6 +149,56 @@ fn parse_args() -> Result<Option<Args>, String> {
         request_timeout_ms,
         bearer,
     }))
+}
+
+/// `backup --log SRC --to DST [--incremental]`, `verify --log PATH`, and
+/// `restore --from BACKUP --to DST [--point ID]`. Each prints the restore
+/// point it reached.
+fn run_backup_command(command: &str, args: impl Iterator<Item = String>) -> Result<(), String> {
+    let mut log = None;
+    let mut from = None;
+    let mut to = None;
+    let mut point = None;
+    let mut incremental = false;
+    let mut args = args;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--log" => log = Some(PathBuf::from(required_value("--log", args.next())?)),
+            "--from" => from = Some(PathBuf::from(required_value("--from", args.next())?)),
+            "--to" => to = Some(PathBuf::from(required_value("--to", args.next())?)),
+            "--point" => {
+                point = Some(required_value("--point", args.next())?.parse::<RestorePoint>()?)
+            }
+            "--incremental" => incremental = true,
+            other => return Err(format!("unknown argument for {command}: {other}")),
+        }
+    }
+    let missing = |flag: &str| format!("{command}: missing {flag}");
+    let reached = match command {
+        "backup" => {
+            let (src, dst) = (
+                log.ok_or_else(|| missing("--log"))?,
+                to.ok_or_else(|| missing("--to"))?,
+            );
+            if incremental {
+                backup_log_incremental(&src, &dst)?
+            } else {
+                backup_log(&src, &dst)?
+            }
+        }
+        "verify" => {
+            let report = verify_log(&log.ok_or_else(|| missing("--log"))?)?;
+            println!("records {}", report.records);
+            report.restore_point
+        }
+        _ => restore_log(
+            &from.ok_or_else(|| missing("--from"))?,
+            &to.ok_or_else(|| missing("--to"))?,
+            point,
+        )?,
+    };
+    println!("restore point {reached}");
+    Ok(())
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, String> {

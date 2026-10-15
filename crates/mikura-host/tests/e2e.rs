@@ -1277,6 +1277,69 @@ fn process_backup_restore_product_loop() {
     assert_eq!(product_loop_overlay_view(&rebuilt), live);
 }
 
+/// Run a `mikura-host` backup subcommand and return its restore point line.
+fn backup_cli(args: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
+        .args(args)
+        .output()
+        .expect("run mikura-host subcommand");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(
+        output.status.success(),
+        "{args:?}: {stdout} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("restore point "))
+        .expect("restore point line")
+        .to_string()
+}
+
+#[test]
+fn process_online_backup_verify_and_restore() {
+    let src = TempLog::new("online-backup-src");
+    let host = HostProcess::spawn(src.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let overlay = host.rpc(&serde_json::json!({
+        "op": "apply_overlay",
+        "namespace": "ns",
+        "id": "act-inc-1-note",
+        "kind": "incident",
+        "key": "inc-1",
+        "props": {"note": "acked"},
+        "expected_gen": 1
+    }));
+    assert!(overlay.ok, "{overlay:?}");
+    let live = product_loop_overlay_view(&host);
+
+    // The host keeps serving while the backup runs.
+    let backup = TempLog::new("online-backup-copy");
+    let path = |log: &TempLog| log.path().to_str().expect("utf-8 path").to_string();
+    let taken = backup_cli(&["backup", "--log", &path(&src), "--to", &path(&backup)]);
+    assert_eq!(backup_cli(&["verify", "--log", &path(&backup)]), taken);
+    assert_eq!(product_loop_overlay_view(&host), live);
+    drop(host);
+
+    let restored = TempLog::new("online-backup-restored");
+    let reached = backup_cli(&[
+        "restore",
+        "--from",
+        &path(&backup),
+        "--to",
+        &path(&restored),
+        "--point",
+        &taken,
+    ]);
+    assert_eq!(reached, taken);
+    let served = HostProcess::spawn(restored.path(), "127.0.0.1:0", 8);
+    assert_eq!(product_loop_overlay_view(&served), live);
+}
+
 #[test]
 fn process_product_loop_survives_shutdown_and_reopen() {
     let tmp = TempLog::new("shutdown-reopen");

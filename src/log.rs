@@ -249,12 +249,7 @@ impl LogWriter {
     }
 
     fn write_superblock_body(&mut self) -> Result<(), String> {
-        let mut superblock = vec![0u8; PAGE];
-        superblock[CRC_LEN..CRC_LEN + 8].copy_from_slice(MAGIC);
-        superblock[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
-        superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4]
-            .copy_from_slice(&self.committed.to_le_bytes());
-        seal_page(&mut superblock);
+        let superblock = superblock_page(self.committed);
         let pos = self.file.stream_position().map_err(|e| e.to_string())?;
         self.file
             .seek(SeekFrom::Start(0))
@@ -378,7 +373,22 @@ fn read_committed(file: &mut File) -> Result<u32, String> {
     parse_superblock(&superblock)
 }
 
-fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
+/// A sealed `MIKURAV2` superblock that commits pages `1..=committed`.
+pub(crate) fn superblock_page(committed: u32) -> Vec<u8> {
+    let mut superblock = vec![0u8; PAGE];
+    superblock[CRC_LEN..CRC_LEN + 8].copy_from_slice(MAGIC);
+    superblock[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
+    superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4].copy_from_slice(&committed.to_le_bytes());
+    seal_page(&mut superblock);
+    superblock
+}
+
+/// The stored CRC of a sealed page.
+pub(crate) fn page_crc(page: &[u8]) -> u32 {
+    u32::from_le_bytes(page[..CRC_LEN].try_into().unwrap())
+}
+
+pub(crate) fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
     verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
     let magic = &superblock[CRC_LEN..CRC_LEN + 8];
     if magic == V1_MAGIC {
@@ -414,7 +424,7 @@ fn seal_page(page: &mut [u8]) {
     page[..CRC_LEN].copy_from_slice(&hasher.finalize().to_le_bytes());
 }
 
-fn verify_page(page: &[u8]) -> Result<(), String> {
+pub(crate) fn verify_page(page: &[u8]) -> Result<(), String> {
     if page.len() != PAGE {
         return Err("short page".into());
     }
@@ -479,6 +489,13 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn take_pages_decoded() -> u32 {
     PAGES_DECODED.with(|c| c.replace(0))
+}
+
+/// Records of one verified `MIKURAV2` data page.
+pub(crate) fn decode_page(page: &[u8]) -> Result<Vec<ObjectRecord>, String> {
+    let mut records = Vec::new();
+    decode_data_page(page, None, &mut records)?;
+    Ok(records)
 }
 
 fn decode_data_page(
