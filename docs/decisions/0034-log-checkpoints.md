@@ -38,7 +38,7 @@ The page format does not change.**
 | Torn write | A truncated or checksum-mismatched `{log}.ckpt` falls back to `{log}.ckpt.prev`, then to a stale sidecar plus tail, then to full log replay. A corrupt `{log}.joins` still fails closed (ADR 0002). |
 | Dual-read | Load, evaluate, and Action retry answers match a full replay of the same log. |
 | Default history | The log keeps every generation. Compaction is opt-in (`Store::compact_to`). |
-| Compact | `Store::compact_to(dst)` writes live generations (including hidden rows) to a new log and a checkpoint that keeps the Action-id catalog. History reads ([#241](https://github.com/Sannrox/mikura/issues/241)) are not implemented; compact is refused only when the caller does not ask. After compact, deleting the checkpoint drops superseded Action ids. |
+| Compact | `Store::compact_to(dst)` writes live generations (including hidden rows) to a new log and a checkpoint that keeps the Action-id catalog. History reads ([ADR 0036](0036-object-history-reads.md)) on the new file start at the compact; the source log keeps full history. Compact runs only when the caller asks. After compact, deleting the checkpoint drops superseded Action ids. |
 | Backup | Copy the log, or copy `{log}.ckpt` (and `.prev` if present) plus the log tail after the stamp. Restore is `Store::open` / `Host::open` on those files. The join sidecar remains optional and rebuildable. |
 
 `Store::checkpoint()` writes `{log}.ckpt` at the current commit point.

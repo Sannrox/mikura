@@ -31,7 +31,7 @@ log rewrite.**
 | Version | Optional descriptor property `version`. Absent on a first row is 1. Absent on a replacement is previous+1. An explicit value must be previous+1. Old logs without `version` read as 1. |
 | Breaking | Recast, rename, outgoing-link retarget, and property drop. Each must be named on the new row (`migrate_cast`, `migrate_rename`, `migrate_retarget`, `migrate_drop`). Extra or missing migrate entries fail closed. A rename target must not be declared on the previous version, so a named older read can reverse it. |
 | Additive | Unchanged from ADR 0013: optional/required add, shrink `required`, new typed names, incoming links, `sums`, `conflict`. No migrate keys. Dropping a closed-set name is no longer silent; it needs `migrate_drop`. |
-| Instances | The log keeps original generations. Open remaps live identity to the current version (rename/cast) so load and evaluate share one projection. Dropped keys stay stored and are omitted from current reads. Recast bytes in that projection are the canonical current form; superseded generation bodies stay [#241](https://github.com/Sannrox/mikura/issues/241). `ObjectRecord.schema_version` is 1 when omitted. |
+| Instances | The log keeps original generations. Open remaps live identity to the current version (rename/cast) so load and evaluate share one projection. Dropped keys stay stored and are omitted from current reads. Recast bytes in that projection are the canonical current form; superseded generation bodies are read through history ([ADR 0036](0036-object-history-reads.md)). `ObjectRecord.schema_version` is 1 when omitted. |
 | Overlays | Visible overlays of that kind migrate in the same commit or the descriptor is refused. The report lists every overlay property that cannot be carried. Declared drops are not silent. |
 | Reads | `Store::load` is the current version. `Store::load_at_schema` names a version for diff and rollback preview. Missing versions fail closed. |
 | History | The log is authority. Open rebuilds version history from committed schema rows. Log checkpoints persist that history so named reads survive a tail-only open. Join delta frames that carry per-row versions use the `MKJOIN6D` magic; `MKJOIN5D` frames still read as version 1. No dual-write and no `MIKURAV2` bump. |
@@ -50,7 +50,7 @@ log rewrite.**
 Breaking replacement becomes an ordinary committed schema row plus overlay
 rewrite. Additive replacement still needs no migrate keys. Current load
 omits declared drops; a named older version still shows them. History
-reads of superseded instance generations stay [#241](https://github.com/Sannrox/mikura/issues/241).
+reads of superseded instance generations are [ADR 0036](0036-object-history-reads.md).
 
 ## Validation
 

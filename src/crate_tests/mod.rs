@@ -6,6 +6,7 @@ mod delta;
 mod evolution;
 mod helpers;
 mod hide;
+mod history;
 mod hops;
 mod load;
 mod log_checkpoint;

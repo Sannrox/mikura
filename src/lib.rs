@@ -65,7 +65,8 @@ pub use schema::{
     SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION,
 };
 pub use store::{
-    tenant_namespace, ObjectRecord, Store, JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
+    tenant_namespace, AsOf, ObjectRecord, ObjectVersion, Store, VersionOrigin,
+    JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
 };
 pub use value::{PropertyType, PropertyValue};
 

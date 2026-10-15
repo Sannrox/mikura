@@ -174,6 +174,15 @@ point. `Store::compact_to(dst)` writes live generations (including
 hidden rows) to a new log plus a checkpoint that keeps the Action-id
 catalog; the source log is unchanged. Default open keeps full history.
 
+`Store::history(namespace, kind, key, acl)` lists every committed
+generation of one identity with the page that holds it and its origin
+(`Source`, `Edit` for a new Action id, `Hide`). `Store::load_as_of` answers
+as of a generation or a commit point (a `committed_pages` value). Both scan
+the committed log, present each version under current property names with
+its written bytes, decide the restriction per version, and omit denied
+properties. The log stores no time
+([ADR 0036](decisions/0036-object-history-reads.md)).
+
 `JoinMaps` is generic over kind and property name. Strings are interned.
 Join children are packed identity lists. Hidden records are absent from
 hop/sum. `LocalCompute` answers from these maps, not from a hot object map.

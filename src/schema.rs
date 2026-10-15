@@ -224,7 +224,8 @@ impl SchemaMigration {
 
     /// Inverse of [`Self::apply`] for rollback preview. Dropped keys that are
     /// still stored reappear. Recast stays in canonical live form so load and
-    /// evaluate share one projection; original generation bytes are #241.
+    /// evaluate share one projection; `Store::history` reads the original
+    /// generation bytes (ADR 0036).
     pub fn reverse(&self, props: &mut HashMap<String, String>) {
         for (old, new) in self.rename.iter().rev() {
             if old == new {
