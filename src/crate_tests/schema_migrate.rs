@@ -641,6 +641,7 @@ fn incident_eval(predicate: Option<Predicate>, hops: Vec<Hop>) -> EvaluateReques
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -722,6 +723,7 @@ fn drop_omits_current_evaluate() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let reverse = oss.evaluate(&store, &reverse).unwrap();
     assert_eq!(reverse.two_hop_count, 0);

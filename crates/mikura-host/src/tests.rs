@@ -64,6 +64,7 @@ fn eval_req() -> WireEvaluate {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -395,6 +396,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();
@@ -945,6 +947,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             sort: None,
             page_size: 0,
             cursor: None,
+            breakdown: None,
         },
     });
     assert!(listed.ok, "{listed:?}");
@@ -971,6 +974,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             sort: None,
             page_size: 0,
             cursor: None,
+            breakdown: None,
         },
     });
     assert!(hopped.ok, "{hopped:?}");
@@ -1152,5 +1156,41 @@ fn apply_change_set_commits_all_members_or_none_across_restart() {
     let s1 = load(&mut host, "s1").load.expect("load payload");
     assert!(s1.hidden);
     assert_eq!(s1.gen, 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn evaluate_breakdown_round_trips_on_the_wire() {
+    let (dir, log) = temp_log("breakdown-wire");
+    let mut host = Host::open(&log, 4).unwrap();
+    host.handle(HostRequest::IngestBatch { records: fixture() });
+    let request = |breakdown: serde_json::Value| {
+        serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "Customer",
+                "hops": [
+                    {"far_kind": "Order", "join_property": "customer_id"},
+                    {"far_kind": "Shipment", "join_property": "order_id"}
+                ],
+                "sum_kind": "Shipment",
+                "sum_property": "amount",
+                "breakdown": breakdown
+            }
+        })
+        .to_string()
+    };
+    let response = host.handle_line(&request(serde_json::json!({"group_by": ["region"]})));
+    assert!(response.ok, "{response:?}");
+    let wire = serde_json::to_value(response.evaluate.unwrap()).unwrap();
+    assert_eq!(
+        wire["groups"],
+        serde_json::json!([
+            {"key": ["us"], "count": 1, "sum": 10, "n": 1, "min": 10, "max": 10, "avg": [10, 1]}
+        ])
+    );
+    let unknown = host.handle_line(&request(serde_json::json!({"order_by": ["region"]})));
+    assert!(!unknown.ok, "{unknown:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

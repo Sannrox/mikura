@@ -142,7 +142,7 @@ impl CountScratch {
             if Self::mark_root(&mut self.reachable, root) {
                 reachable += 1;
             }
-            total += sum;
+            total = total.wrapping_add(sum);
         }
         (reachable, total)
     }
@@ -174,7 +174,7 @@ impl CountScratch {
                 if sum_leaves {
                     for child in children {
                         if let Some(amount) = amounts.and_then(|map| map.get(child)) {
-                            total += *amount;
+                            total = total.wrapping_add(*amount);
                         }
                     }
                 }
@@ -222,7 +222,7 @@ impl CountScratch {
             }
             if sum_leaves {
                 if let Some(amount) = amounts.and_then(|map| map.get(value_id)) {
-                    total += *amount;
+                    total = total.wrapping_add(*amount);
                 }
             }
         }
@@ -246,7 +246,7 @@ impl CountScratch {
             if root_kind == sum_kind {
                 for &(_, leaf) in &self.paths {
                     if let Some(amount) = amounts.and_then(|map| map.get(&leaf)) {
-                        total += *amount;
+                        total = total.wrapping_add(*amount);
                     }
                 }
             }
@@ -823,7 +823,7 @@ impl JoinMaps {
             return;
         }
         entry.0 = next as u32;
-        entry.1 += dsum;
+        entry.1 = entry.1.wrapping_add(dsum);
     }
 
     fn add_leaf_contribution(&mut self, kind_id: u32, key_id: u32) {
@@ -856,7 +856,12 @@ impl JoinMaps {
                 if prop_id == sum_prop {
                     continue;
                 }
-                self.bump_rollup((kind_id, prop_id, sum_prop), parent_id, -1, -amount);
+                self.bump_rollup(
+                    (kind_id, prop_id, sum_prop),
+                    parent_id,
+                    -1,
+                    amount.wrapping_neg(),
+                );
             }
         }
     }
@@ -901,7 +906,7 @@ impl JoinMaps {
                 for child in children {
                     count += 1;
                     if let Some(amount) = amounts.and_then(|map| map.get(&child)) {
-                        total += *amount;
+                        total = total.wrapping_add(*amount);
                     }
                 }
                 self.rollups
@@ -937,7 +942,7 @@ impl JoinMaps {
                     let mut total = 0i64;
                     for child in children {
                         if let Some(amount) = amounts.as_ref().and_then(|map| map.get(child)) {
-                            total += *amount;
+                            total = total.wrapping_add(*amount);
                         }
                     }
                     self.rollups

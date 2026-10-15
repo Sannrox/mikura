@@ -119,6 +119,7 @@ fn page_incidents(sort: Sort, page_size: usize, cursor: Option<String>) -> Evalu
         sort: Some(sort),
         page_size,
         cursor,
+        breakdown: None,
     }
 }
 

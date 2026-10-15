@@ -144,6 +144,45 @@ impl Sort {
     }
 }
 
+/// Most groups a breakdown may return; a request may ask for fewer
+/// (ADR 0038).
+pub const MAX_GROUPS: usize = 1000;
+
+/// Group-by and extra aggregates over the evaluate measure (ADR 0038). The
+/// measure is the request's `(sum_kind, sum_property)`, taken once per
+/// surviving path under the ADR 0018 contribution rules.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Breakdown {
+    /// Root properties to group by, at most two. Empty is one group over the
+    /// whole set.
+    pub group_by: Vec<String>,
+    /// More groups than this fails closed. Zero, or more than
+    /// [`MAX_GROUPS`], means [`MAX_GROUPS`].
+    pub max_groups: usize,
+    /// Root property whose distinct values each group counts.
+    pub distinct: Option<String>,
+}
+
+/// One group of a [`Breakdown`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Group {
+    /// One part per `group_by` property; `None` is the absent group (absent
+    /// or `""`).
+    pub key: Vec<Option<String>>,
+    /// Distinct visible roots with a surviving path.
+    pub count: usize,
+    /// ADR 0018 sum: wraps on overflow.
+    pub sum: i64,
+    /// Contributing measure values, once per path.
+    pub n: u64,
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    /// Exact average as `(sum, n)` with a checked sum; the caller divides.
+    pub avg: (i64, u64),
+    /// Distinct canonical values of [`Breakdown::distinct`], when asked.
+    pub distinct: Option<usize>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct EvaluateRequest {
     pub namespace: String,
@@ -172,6 +211,8 @@ pub struct EvaluateRequest {
     /// Opaque snapshot cursor. Binds restriction, query, and the live
     /// writer stamp. A write or a different view fails closed.
     pub cursor: Option<String>,
+    /// Groups and extra aggregates; `None` keeps count/sum only.
+    pub breakdown: Option<Breakdown>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,6 +229,8 @@ pub struct EvaluateResponse {
     /// Continuation for the next snapshot page. Absent on the final page
     /// and when paging is not requested.
     pub cursor: Option<String>,
+    /// Groups in key order (`None` parts last) when a breakdown was asked.
+    pub groups: Vec<Group>,
 }
 
 pub struct ObjectSet<B> {

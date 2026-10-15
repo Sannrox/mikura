@@ -94,6 +94,7 @@ fn batch_ingest_group_commits_fewer_fsyncs_than_one_per_record() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let live = oss.evaluate(&one, &req).unwrap();
     assert_eq!(live.two_hop_count, 400);

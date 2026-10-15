@@ -256,6 +256,7 @@ fn in_process_evaluate(log: &Path) -> (usize, i64) {
                 sort: None,
                 page_size: 0,
                 cursor: None,
+                breakdown: None,
             },
         )
         .unwrap();

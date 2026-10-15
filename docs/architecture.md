@@ -300,7 +300,7 @@ brokers stay out.
    append, a different restriction, or a different query fails closed. Reopen
    on the same committed head with an empty uncommitted page keeps a cursor
    valid. Set union / intersection /
-   difference, prefix, regex, and extra aggregates fail closed
+   difference, prefix, and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
    ([#122](https://github.com/Sannrox/mikura/issues/122)).
@@ -310,11 +310,12 @@ a filter or predicate is present, on every predicate property of that kind,
 and on a sort property of the result kind. Denied predicate or sort
 properties fail closed. Denied properties on returned objects are omitted.
 
-`Aggregate` is only `CountAndSum`. Numeric columns already live in the
-interned `amounts` map (values that parse as `i64`). Min/max could walk that
-map without a sidecar layout change; they stay out until a consumer names
-one with a fixture. Group-by would be a new evaluate response (buckets, not
-two scalars) and stays out with query languages. Last-hop count and sum for
+`Aggregate` is `CountAndSum`. An optional `Breakdown` groups surviving
+roots by up to two root properties and reports per group count, sum,
+contributing values, min, max, an exact `(sum, n)` average, and a distinct
+count, under the ADR 0018 contribution rules and a `max_groups` bound that
+fails closed ([ADR 0038](decisions/0038-breakdown-aggregates.md)). It reads
+the interned `amounts` map per path and needs no sidecar change. Last-hop count and sum for
 a schema-named leaf property persist as parent rollups on `MKJOIN05`
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151),

@@ -120,6 +120,7 @@ fn list_incidents(predicate: Predicate, bound: usize) -> EvaluateRequest {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     }
 }
 
@@ -196,6 +197,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let hopped = oss.evaluate(&store, &filter_then_hop).unwrap();
     assert_eq!(keys(&hopped), ["svc-api", "svc-batch"]);
@@ -219,6 +221,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     let filtered = oss.evaluate(&store, &hop_then_filter).unwrap();
     assert_eq!(keys(&filtered), ["svc-api"]);
@@ -245,6 +248,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     assert!(matches!(
         oss.evaluate(&store, &denied),
@@ -277,6 +281,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
     };
     assert!(matches!(
         oss.evaluate(&store, &both),
