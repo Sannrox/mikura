@@ -9,6 +9,7 @@ the job.
 | [../ROADMAP.md](../ROADMAP.md) | Explanation | What to build next |
 | [plans/application-roadmap.md](plans/application-roadmap.md) | Proposal | Application-led object database milestones and open decisions |
 | [plans/m0-application-contract.md](plans/m0-application-contract.md) | Reference | Accepted first-application fixture, queries, and host baseline |
+| [plans/evaluate-aggregate-sort-fixture.md](plans/evaluate-aggregate-sort-fixture.md) | Reference | Consumer fixture with exact answers for aggregates, group-by, and multi-key sort (#239) |
 | [plans/m4-hosted-pilot-contract.md](plans/m4-hosted-pilot-contract.md) | Reference | Accepted one-process pilot: overload, restore, shutdown, upgrade |
 | [plans/m9-workload-acceptance.md](plans/m9-workload-acceptance.md) | Reference | Named production workload, synthetic evidence, unresolved SLOs |
 | [plans/m9-readiness.md](plans/m9-readiness.md) | Reference | Revision-specific M9 report: qualitative pass, numeric SLOs unresolved, no production claim |
