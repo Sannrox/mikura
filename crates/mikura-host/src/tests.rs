@@ -1361,6 +1361,40 @@ fn availability_decision_retains_one_process() {
 }
 
 #[test]
+fn replication_research_keeps_one_process() {
+    let page = include_str!("../../../docs/plans/m10-replication-availability.md");
+    let collapsed: String = page.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed.contains("Keep one process. Restore from the object log. Do not replicate."),
+        "replication investigation must not start a replica"
+    );
+    assert!(
+        collapsed.contains("Prototype replica lag") && collapsed.contains("unmeasured"),
+        "replica lag stays unmeasured while no replica exists"
+    );
+    assert!(
+        collapsed.contains("Target RPO/RTO from the workload issue")
+            && collapsed.contains("unresolved"),
+        "unpublished RPO/RTO must not become a replica pick"
+    );
+    assert!(
+        page.contains(
+            "| 2. Log shipping to warm read replicas with manual promotion | **Rejected.**"
+        ),
+        "log-shipping replicas stay rejected without a published miss"
+    );
+    assert!(
+        page.contains("| 3. Synchronous replication with automatic failover | **Rejected.**"),
+        "sync replication stays rejected without a published miss"
+    );
+    let adr = include_str!("../../../docs/decisions/0023-single-process-availability.md");
+    assert!(
+        adr.contains("#244") && adr.contains("still publishes no"),
+        "ADR 0023 amendment must name the revisit without filling RPO/RTO"
+    );
+}
+
+#[test]
 fn apply_change_set_commits_all_members_or_none_across_restart() {
     let (dir, log) = temp_log("change-set");
     let host = Host::open(&log, 8).unwrap();

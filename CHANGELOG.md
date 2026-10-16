@@ -119,6 +119,12 @@ window.
 
 ### Changed
 
+- Availability revisit after Explorer naming and log checkpoints stays
+  one process plus restore-from-log. Unpublished RPO/RTO is not a miss.
+  Online backup is not a replica. No follow-up failover writer
+  ([#244](https://github.com/Sannrox/mikura/issues/244),
+  [ADR 0023](docs/decisions/0023-single-process-availability.md),
+  [m10-replication-availability.md](docs/plans/m10-replication-availability.md)).
 - Production-workload ADR names sekai-chisei Explorer as the consumer
   and keeps numeric SLO cells unresolved. The 500 ms hop figure is the
   declared last-hop rollup budget; undeclared two-hop sums stay the
