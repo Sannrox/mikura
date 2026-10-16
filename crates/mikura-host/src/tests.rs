@@ -1295,6 +1295,40 @@ fn readiness_report_keeps_slo_cells_unresolved() {
 }
 
 #[test]
+fn chisei_explorer_workload_keeps_slo_cells_unresolved() {
+    let page = include_str!("../../../docs/plans/m9-chisei-explorer-workload.md");
+    let collapsed: String = page.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed.contains("Keep numeric production cells unresolved"),
+        "Explorer investigation must not invent production SLOs"
+    );
+    assert!(
+        collapsed.contains("Undeclared two-hop sums stay the leaf walk"),
+        "undeclared sums must remain the ADR 0010 leaf walk"
+    );
+    assert!(
+        collapsed.contains("Do not infer measures on first use"),
+        "lazy undeclared rollups stay rejected"
+    );
+    assert!(
+        page.contains(
+            "| p50/p95/p99 hosted evaluate under Chisei counts | unpublished | unpublished |"
+        ),
+        "Chisei p95 stays unpublished"
+    );
+    let workload = include_str!("../../../docs/plans/m9-workload-acceptance.md");
+    assert!(
+        workload.contains("| p95/p99 load / evaluate / ingest | unresolved |"),
+        "workload page p95 cells must stay unresolved"
+    );
+    let adr = include_str!("../../../docs/decisions/0016-production-workload.md");
+    assert!(
+        adr.contains("#237") && adr.contains("still do not publish"),
+        "ADR 0016 amendment must name Chisei without filling numbers"
+    );
+}
+
+#[test]
 fn capacity_decision_keeps_one_store() {
     let adr = include_str!("../../../docs/decisions/0024-unpartitioned-store.md");
     let collapsed: String = adr.split_whitespace().collect::<Vec<_>>().join(" ");

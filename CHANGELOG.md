@@ -119,6 +119,13 @@ window.
 
 ### Changed
 
+- Production-workload ADR names sekai-chisei Explorer as the consumer
+  and keeps numeric SLO cells unresolved. The 500 ms hop figure is the
+  declared last-hop rollup budget; undeclared two-hop sums stay the
+  leaf walk. No invented counts, p95, or mixed-load gates
+  ([#237](https://github.com/Sannrox/mikura/issues/237),
+  [ADR 0016](docs/decisions/0016-production-workload.md),
+  [m9-chisei-explorer-workload.md](docs/plans/m9-chisei-explorer-workload.md)).
 - Host execution serves concurrent snapshot readers with one exclusive
   writer and per-namespace fair share. Line-assembly bounds and
   fail-closed overload stay. Mixed-load p95 under one second is

@@ -3,8 +3,9 @@
 - Status: accepted
 - Date: 2026-09-20
 - Owners: mikura maintainers
-- Related: [#185](https://github.com/Sannrox/mikura/issues/185), [#107](https://github.com/Sannrox/mikura/issues/107), [#121](https://github.com/Sannrox/mikura/issues/121), [#137](https://github.com/Sannrox/mikura/issues/137), [#152](https://github.com/Sannrox/mikura/issues/152), [m0-application-contract.md](../plans/m0-application-contract.md), [m4-hosted-pilot-contract.md](../plans/m4-hosted-pilot-contract.md), [m9-workload-acceptance.md](../plans/m9-workload-acceptance.md)
+- Related: [#185](https://github.com/Sannrox/mikura/issues/185), [#237](https://github.com/Sannrox/mikura/issues/237), [#107](https://github.com/Sannrox/mikura/issues/107), [#121](https://github.com/Sannrox/mikura/issues/121), [#137](https://github.com/Sannrox/mikura/issues/137), [#152](https://github.com/Sannrox/mikura/issues/152), [m0-application-contract.md](../plans/m0-application-contract.md), [m4-hosted-pilot-contract.md](../plans/m4-hosted-pilot-contract.md), [m9-workload-acceptance.md](../plans/m9-workload-acceptance.md), [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md)
 - Amends: none. M0 two-object budgets stay unset. Spike 011 envelopes stay scale research.
+- Amended by: this file's 2026-10-16 amendment ([#237](https://github.com/Sannrox/mikura/issues/237))
 - Supersedes: none
 - Superseded by: none
 
@@ -103,3 +104,18 @@ The workload page must keep three columns distinct: **accepted** (product
 loop), **measured synthetic** (spike 011), and **unresolved/proposed**.
 Revisit when the consumer publishes counts, rates, or SLOs, or rejects
 the product-loop as the representative workload.
+
+## Amendments
+
+- 2026-10-16, [#237](https://github.com/Sannrox/mikura/issues/237):
+  sekai-chisei Explorer is the named consumer. Its ADRs 0081 and 0091
+  still do not publish object counts, fan-out, query mix, simultaneous
+  clients, or p95/p99. Numeric production cells stay unresolved.
+  The Explorer query shape without real rows is the `shop` fixture
+  ([evaluate-aggregate-sort-fixture.md](../plans/evaluate-aggregate-sort-fixture.md))
+  plus the product-loop seed. VISION's 500 ms hop figure is the
+  **declared** last-hop rollup budget only ([#152](https://github.com/Sannrox/mikura/issues/152)).
+  Undeclared two-hop sums keep the leaf walk
+  ([ADR 0010](0010-last-hop-measures.md)). Do not infer measures on
+  first use. Do not invent an undeclared size cutoff. Details:
+  [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md).
