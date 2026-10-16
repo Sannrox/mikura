@@ -1,8 +1,10 @@
 # M9 workload and service acceptance
 
-Status: accepted investigation, 2026-09-20. Source:
-[#185](https://github.com/Sannrox/mikura/issues/185),
-[ADR 0016](../decisions/0016-production-workload.md).
+Status: accepted investigation, 2026-09-20, amended 2026-10-16.
+Source: [#185](https://github.com/Sannrox/mikura/issues/185),
+[#237](https://github.com/Sannrox/mikura/issues/237),
+[ADR 0016](../decisions/0016-production-workload.md),
+[m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md).
 This page records the named workload, measured synthetic evidence, and
 unresolved consumer targets. It does not change the on-disk log and does
 not accept a new public API.
@@ -21,7 +23,10 @@ until the consumer publishes them. Unresolved values block a
 production-readiness claim
 ([#189](https://github.com/Sannrox/mikura/issues/189)), not this page.
 
-New scenarios stay **proposed** until the consumer accepts them.
+sekai-chisei Explorer is the named consumer ([#237](https://github.com/Sannrox/mikura/issues/237)).
+Its evaluate ADRs still omit counts, rates, and p95/p99. New scenarios
+stay **proposed** until that consumer accepts them. The 500 ms hop
+figure is the declared last-hop rollup budget only.
 
 ## Accepted workload (regression)
 
@@ -85,6 +90,16 @@ A later consumer document may fill this table. Mark every new row
 **proposed** until that consumer accepts it. Public artifacts name
 machine class only.
 
+## Proposed Explorer profile (not an SLO)
+
+Query shape without real data: product-loop `component`/`incident` plus
+the `shop` Explorer fixture
+([evaluate-aggregate-sort-fixture.md](evaluate-aggregate-sort-fixture.md)).
+Scale hop evidence stays spike 011. Declared `amount` rollups hold 500 ms
+at 10⁷; undeclared leaf walks miss that figure and are **not** a
+production fail. Details:
+[m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md).
+
 ## Measurement method
 
 1. Name the fixture (product-loop, or a consumer-accepted expansion).
@@ -108,6 +123,7 @@ machine class only.
 | [#187](https://github.com/Sannrox/mikura/issues/187) bounded execution / concurrent clients | Unblocked as research of fail-closed admission using the existing request-line bounds. Must not invent a client mix or mixed-load p95. |
 | [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved, then amended by [#243](https://github.com/Sannrox/mikura/issues/243) / [ADR 0040](../decisions/0040-concurrent-host-readers.md). Unpublished simultaneous-client SLOs stay unresolved. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. Availability closed retain-one-process ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](../decisions/0023-single-process-availability.md)). Capacity closed unpartitioned ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](../decisions/0024-unpartitioned-store.md)). |
+| [#237](https://github.com/Sannrox/mikura/issues/237) Explorer workload | Closed: Chisei named, numbers unpublished, undeclared leaf-walk kept. See [m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md). |
 
 ## Out of this investigation
 
