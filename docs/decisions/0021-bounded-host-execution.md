@@ -7,6 +7,7 @@
 - Amends: none. [ADR 0003](0003-hosted-service.md) one-process host stays. [ADR 0016](0016-production-workload.md) mixed-load and simultaneous-client numbers stay unresolved.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0040](0040-concurrent-host-readers.md) (concurrent snapshot readers, exclusive writer, namespace fair share)
 
 ## Context
 

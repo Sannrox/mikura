@@ -111,6 +111,15 @@ window.
   additive ([#235](https://github.com/Sannrox/mikura/issues/235),
   [ADR 0029](docs/decisions/0029-restriction-row-filters.md)).
 
+### Changed
+
+- Host execution serves concurrent snapshot readers with one exclusive
+  writer and per-namespace fair share. Line-assembly bounds and
+  fail-closed overload stay. Mixed-load p95 under one second is
+  host-process fixture evidence, not a published SLO
+  ([#243](https://github.com/Sannrox/mikura/issues/243),
+  [ADR 0040](docs/decisions/0040-concurrent-host-readers.md)).
+
 ## [0.2.0] - 2026-09-24
 
 ### Upgrade

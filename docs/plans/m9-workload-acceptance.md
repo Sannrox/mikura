@@ -55,7 +55,7 @@ correctness check.
 | 10⁸ query / open / dual-read | **unmeasured** | A hold or miss |
 | 10⁷ `Store::open` | ~12 s after last-hop measures | A published production reopen SLO |
 | 10⁹ ingest | not required; hop count+sum already misses 500 ms at 10⁷ without declared rollups ([#54](https://github.com/Sannrox/mikura/issues/54)) | A reason to start 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) |
-| Mixed ingest vs evaluate | **unmeasured** | Concurrent-client behavior. Serial RPC is the contract ([ADR 0021](../decisions/0021-bounded-host-execution.md)) |
+| Mixed ingest vs evaluate | host-process fixture evidence, not a published SLO | Concurrent snapshot readers with one exclusive writer ([ADR 0040](../decisions/0040-concurrent-host-readers.md)). Consumer mixed-load p95 stays unpublished ([ADR 0016](../decisions/0016-production-workload.md)). |
 | Simultaneous clients | **unmeasured** | An admission SLO beyond the request-line bound. [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked |
 
 Host admission already fail-closed: `--request-bound` (default 1 MiB)
@@ -106,7 +106,7 @@ machine class only.
 | --- | --- |
 | [#186](https://github.com/Sannrox/mikura/issues/186) operational signals | Unblocked for signals of the accepted operations. Must not encode unresolved SLOs as pass/fail gates. |
 | [#187](https://github.com/Sannrox/mikura/issues/187) bounded execution / concurrent clients | Unblocked as research of fail-closed admission using the existing request-line bounds. Must not invent a client mix or mixed-load p95. |
-| [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved. Unpublished simultaneous-client numbers stay unresolved. |
+| [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved, then amended by [#243](https://github.com/Sannrox/mikura/issues/243) / [ADR 0040](../decisions/0040-concurrent-host-readers.md). Unpublished simultaneous-client SLOs stay unresolved. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. Availability closed retain-one-process ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](../decisions/0023-single-process-availability.md)). Capacity closed unpartitioned ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](../decisions/0024-unpartitioned-store.md)). |
 
 ## Out of this investigation
