@@ -1,7 +1,8 @@
 # Security policy
 
-mikura is pre-1.0 (`0.1.x`, `publish = false`). Security work targets current
-`main`. Older snapshots do not receive separate support.
+mikura is pre-1.0 (`0.2.x`, `publish = false`). Security work targets current
+`main`. Older snapshots do not receive separate support. The listed 1.0
+surface is [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md).
 
 ## Reporting a vulnerability
 

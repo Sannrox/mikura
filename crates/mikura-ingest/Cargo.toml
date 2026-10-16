@@ -9,4 +9,4 @@ repository = "https://github.com/Sannrox/mikura"
 readme = "../../README.md"
 
 [dependencies]
-mikura = { path = "../.." }
+mikura = { version = "0.2.0", path = "../.." }

@@ -112,6 +112,9 @@ Compute backend only after a published in-process miss.
 [ADR 0023](docs/decisions/0023-single-process-availability.md)).
 A git tag is enough for a consumer to depend on this crate
 ([#57](https://github.com/Sannrox/mikura/issues/57)). Cut it with prepare-release.
+The listed 1.0 surface and bump rules are
+[docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
+([#242](https://github.com/Sannrox/mikura/issues/242), [ADR 0042](docs/decisions/0042-api-stability.md)).
 crates.io stays ask-first (`publish = false`).
 
 See [ROADMAP.md](ROADMAP.md) for the ordered work list.

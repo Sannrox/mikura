@@ -11,8 +11,11 @@ is unauthenticated unless `--bearer` is set. Multi-process hosting is later.
 
 ## Status
 
-Pre-1.0 (`0.2.0`, not published to crates.io). Suitable for local experiments
-and for contributing to the kernel. Not a production hosted store.
+Pre-1.0 (`0.2.0`, not published to crates.io). The listed 1.0 surface,
+deprecation rule, and log-compat promise are in
+[docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
+([ADR 0042](docs/decisions/0042-api-stability.md)). Suitable for local
+experiments and for contributing to the kernel. Not a production hosted store.
 
 | Implemented | Not implemented |
 | --- | --- |

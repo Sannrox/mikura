@@ -2,8 +2,9 @@
 
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-This project is pre-1.0; the public Rust API may change without a deprecation
-window.
+This project is pre-1.0. Breaking changes on the listed 1.0 surface
+([docs/plans/1.0-surface.md](docs/plans/1.0-surface.md), [ADR 0042](docs/decisions/0042-api-stability.md))
+require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
@@ -34,6 +35,13 @@ window.
 
 ### Added
 
+- Listed 1.0 surface, deprecation and log-compat policy, pull-request
+  semver check, and tag-driven GitHub Release. crates.io stays
+  `publish = false` until a human authorizes it. Public format ids
+  `LOG_FORMAT`, `JOIN_FORMAT`, `JOIN_DELTA_FORMAT`,
+  `JOIN_DELTA_FORMAT_V5`, and `CHECKPOINT_FORMAT`
+  ([#242](https://github.com/Sannrox/mikura/issues/242),
+  [ADR 0042](docs/decisions/0042-api-stability.md)).
 - Host `op: metrics` returns Prometheus text: per-op latency, bounded
   namespace request counts, queue depth, log size and growth, committed
   pages, sidecar lag, and open/replay time. Payloads, keys, and property

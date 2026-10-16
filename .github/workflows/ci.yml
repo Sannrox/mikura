@@ -44,3 +44,25 @@ jobs:
       - run: cargo run -p mikura-ingest --example quickstart
       - run: bash ./build/release-images.sh
       - run: docker run --rm "$(cat _output/image-tag)" --help
+
+  semver:
+    name: Semver
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: mikura
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: mikura-ingest
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: mikura-host
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+

@@ -2,6 +2,8 @@
 
 Thanks for helping improve mikura. This crate is pre-1.0: focused changes with
 tests and an honest impact note are easier to review than broad rewrites.
+Breaking changes on the listed [1.0 surface](docs/plans/1.0-surface.md)
+need a minor bump and a CHANGELOG Upgrade note.
 
 All participation is governed by the [code of conduct](CODE_OF_CONDUCT.md).
 Report exploitable vulnerabilities through [SECURITY.md](SECURITY.md), not in
