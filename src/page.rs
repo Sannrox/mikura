@@ -10,29 +10,34 @@ use crate::objectset::{EvaluateRequest, Hop, Predicate, Sort};
 
 const CURSOR_PREFIX: &str = "mkc1:";
 
+/// The last row of a page: its key and, per sort key, whether the value is
+/// missing and the stored value.
 pub(crate) struct PageCursor {
     pub after_key: String,
-    pub after_missing: bool,
-    pub after_value: String,
+    pub after: Vec<(bool, String)>,
 }
 
+/// Version 2 stores one position per sort key (ADR 0039); version 1 tokens
+/// still decode as one key.
 pub(crate) fn encode_cursor(
     request: &EvaluateRequest,
     stamp: (u32, u32, u32),
     after_key: &str,
-    after_missing: bool,
-    after_value: &str,
+    after: &[(bool, String)],
 ) -> String {
     let mut body = Vec::new();
-    body.push(1);
+    body.push(2);
     body.extend_from_slice(&stamp.0.to_le_bytes());
     body.extend_from_slice(&stamp.1.to_le_bytes());
     body.extend_from_slice(&stamp.2.to_le_bytes());
     let fingerprint = query_fingerprint(request);
     write_bytes(&mut body, &fingerprint);
     write_str(&mut body, after_key);
-    body.push(u8::from(after_missing));
-    write_str(&mut body, after_value);
+    body.push(after.len() as u8);
+    for (missing, value) in after {
+        body.push(u8::from(*missing));
+        write_str(&mut body, value);
+    }
     format!("{CURSOR_PREFIX}{}", hex_encode(&body))
 }
 
@@ -47,7 +52,7 @@ pub(crate) fn decode_cursor(
     let body = hex_decode(hex)?;
     let mut cur = body.as_slice();
     let version = read_u8(&mut cur)?;
-    if version != 1 {
+    if version != 1 && version != 2 {
         return Err(page_err("cursor version is not supported"));
     }
     let committed = read_u32(&mut cur)?;
@@ -55,12 +60,16 @@ pub(crate) fn decode_cursor(
     let used = read_u32(&mut cur)?;
     let fingerprint = read_bytes(&mut cur)?;
     let after_key = read_str(&mut cur)?;
-    let after_missing = match read_u8(&mut cur)? {
-        0 => false,
-        1 => true,
-        _ => return Err(page_err("cursor is malformed")),
-    };
-    let after_value = read_str(&mut cur)?;
+    let parts = if version == 1 { 1 } else { read_u8(&mut cur)? };
+    let mut after = Vec::with_capacity(usize::from(parts));
+    for _ in 0..parts {
+        let missing = match read_u8(&mut cur)? {
+            0 => false,
+            1 => true,
+            _ => return Err(page_err("cursor is malformed")),
+        };
+        after.push((missing, read_str(&mut cur)?));
+    }
     if !cur.is_empty() {
         return Err(page_err("cursor is malformed"));
     }
@@ -70,11 +79,7 @@ pub(crate) fn decode_cursor(
     if fingerprint != query_fingerprint(request) {
         return Err(page_err("cursor does not match this query or restriction"));
     }
-    Ok(PageCursor {
-        after_key,
-        after_missing,
-        after_value,
-    })
+    Ok(PageCursor { after_key, after })
 }
 
 fn query_fingerprint(request: &EvaluateRequest) -> Vec<u8> {
@@ -107,6 +112,13 @@ fn query_fingerprint(request: &EvaluateRequest) -> Vec<u8> {
         None => out.push(0),
         Some(sort) => {
             out.push(1);
+            write_sort(&mut out, sort);
+        }
+    }
+    // A version 1 cursor came from a request without further keys.
+    if !request.then_by.is_empty() {
+        out.push(u8::try_from(request.then_by.len()).unwrap_or(u8::MAX));
+        for sort in &request.then_by {
             write_sort(&mut out, sort);
         }
     }
@@ -290,4 +302,39 @@ fn hex_nibble(byte: u8) -> Result<u8, String> {
 
 fn page_err(message: &str) -> String {
     message.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A version 1 token (one sort key, no part count) still decodes.
+    #[test]
+    fn version_one_cursors_decode_as_one_key() {
+        let request = EvaluateRequest {
+            sort: Some(Sort {
+                property: "status".into(),
+                descending: false,
+            }),
+            ..Default::default()
+        };
+        let stamp: (u32, u32, u32) = (3, 3, 0);
+        let mut body = vec![1];
+        for part in [stamp.0, stamp.1, stamp.2] {
+            body.extend_from_slice(&part.to_le_bytes());
+        }
+        write_bytes(&mut body, &query_fingerprint(&request));
+        write_str(&mut body, "o2");
+        body.push(0);
+        write_str(&mut body, "closed");
+        let token = format!("{CURSOR_PREFIX}{}", hex_encode(&body));
+        let cursor = decode_cursor(&token, &request, stamp).unwrap();
+        assert_eq!(cursor.after_key, "o2");
+        assert_eq!(cursor.after, [(false, "closed".to_string())]);
+        let current = encode_cursor(&request, stamp, "o2", &cursor.after);
+        assert_eq!(
+            decode_cursor(&current, &request, stamp).unwrap().after,
+            cursor.after
+        );
+    }
 }

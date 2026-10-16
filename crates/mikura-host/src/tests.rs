@@ -65,6 +65,7 @@ fn eval_req() -> WireEvaluate {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -397,6 +398,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -948,6 +950,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             page_size: 0,
             cursor: None,
             breakdown: None,
+            then_by: Vec::new(),
         },
     });
     assert!(listed.ok, "{listed:?}");
@@ -975,6 +978,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             page_size: 0,
             cursor: None,
             breakdown: None,
+            then_by: Vec::new(),
         },
     });
     assert!(hopped.ok, "{hopped:?}");
@@ -1192,5 +1196,44 @@ fn evaluate_breakdown_round_trips_on_the_wire() {
     );
     let unknown = host.handle_line(&request(serde_json::json!({"order_by": ["region"]})));
     assert!(!unknown.ok, "{unknown:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn evaluate_then_by_sorts_on_the_wire() {
+    let (dir, log) = temp_log("then-by-wire");
+    let mut host = Host::open(&log, 4).unwrap();
+    host.handle(HostRequest::IngestBatch {
+        records: vec![
+            rec("Item", "a", false, &[("tier", "1"), ("name", "b")]),
+            rec("Item", "b", false, &[("tier", "1"), ("name", "a")]),
+            rec("Item", "c", false, &[("tier", "0"), ("name", "z")]),
+        ],
+    });
+    let response = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "Item",
+                "hops": [],
+                "sum_kind": "Item",
+                "sum_property": "tier",
+                "object_bound": 8,
+                "sort": {"property": "tier"},
+                "then_by": [{"property": "name", "descending": true}]
+            }
+        })
+        .to_string(),
+    );
+    assert!(response.ok, "{response:?}");
+    let keys: Vec<_> = response
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|object| object.key)
+        .collect();
+    assert_eq!(keys, ["c", "a", "b"]);
     let _ = std::fs::remove_dir_all(&dir);
 }

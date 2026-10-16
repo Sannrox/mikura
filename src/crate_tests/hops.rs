@@ -30,6 +30,7 @@ fn incoming_hop_follows_join_property() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     assert_eq!(
         oss.evaluate(&store, &from_customer).unwrap().two_hop_count,
@@ -55,6 +56,7 @@ fn incoming_hop_follows_join_property() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -80,6 +82,7 @@ fn incoming_hop_follows_join_property() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     assert!(matches!(
         oss.evaluate(&store, &denied),

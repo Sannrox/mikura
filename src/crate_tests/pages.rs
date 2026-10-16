@@ -120,6 +120,7 @@ fn page_incidents(sort: Sort, page_size: usize, cursor: Option<String>) -> Evalu
         page_size,
         cursor,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 

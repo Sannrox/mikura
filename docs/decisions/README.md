@@ -43,6 +43,7 @@ a new ADR. Allocate the next number and list it here.
 | [0036](0036-object-history-reads.md) | Object history reads by generation and commit point | accepted |
 | [0037](0037-online-backup-and-restore.md) | Online backup, verify, and point-in-time restore | accepted |
 | [0038](0038-breakdown-aggregates.md) | Breakdown aggregates and bounded group-by | accepted |
+| [0039](0039-multi-key-sort.md) | Multi-key sort with versioned cursors | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

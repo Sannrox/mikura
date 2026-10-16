@@ -7,6 +7,7 @@
 - Amends: none. [#122](https://github.com/Sannrox/mikura/issues/122) stays no-action for the two-object seed.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0039](0039-multi-key-sort.md) (up to three sort keys)
 
 ## Context
 

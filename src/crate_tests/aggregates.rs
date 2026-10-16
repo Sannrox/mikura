@@ -339,3 +339,95 @@ fn group_by_cost() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn sorted(sort: &[(&str, bool)], page_size: usize, cursor: Option<String>) -> EvaluateRequest {
+    let mut keys = sort.iter().map(|(property, descending)| Sort {
+        property: (*property).into(),
+        descending: *descending,
+    });
+    EvaluateRequest {
+        namespace: SHOP.into(),
+        root_kind: "order".into(),
+        sum_kind: "order".into(),
+        sum_property: "amount".into(),
+        acl: view(),
+        object_bound: 100,
+        sort: keys.next(),
+        then_by: keys.collect(),
+        page_size,
+        cursor,
+        ..Default::default()
+    }
+}
+
+fn page(store: &Store, request: &EvaluateRequest) -> (Vec<String>, Option<String>) {
+    let response = ObjectSet::new(LocalCompute)
+        .evaluate(store, request)
+        .unwrap();
+    (
+        response.objects.into_iter().map(|o| o.key).collect(),
+        response.cursor,
+    )
+}
+
+#[test]
+fn multi_key_sort_pages_in_fixture_order() {
+    let (dir, store) = seed("sort-multi-key");
+    // S1
+    let keys = [("status", false), ("priority", true)];
+    let (first, cursor) = page(&store, &sorted(&keys, 3, None));
+    assert_eq!(first, ["o5", "o2", "o3"]);
+    let (second, cursor) = page(&store, &sorted(&keys, 3, cursor));
+    assert_eq!(second, ["o1", "o7", "o6"]);
+    let (third, cursor) = page(&store, &sorted(&keys, 3, cursor));
+    assert_eq!((third, cursor), (vec!["o4".to_string()], None));
+    // S2
+    let (all, _) = page(
+        &store,
+        &sorted(&[("owner", false), ("priority", false)], 0, None),
+    );
+    assert_eq!(all, ["o2", "o6", "o1", "o3", "o4", "o5", "o7"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn multi_key_sort_fails_closed() {
+    let (dir, store) = seed("sort-fail-closed");
+    let run = |request: &EvaluateRequest| ObjectSet::new(LocalCompute).evaluate(&store, request);
+    // S3: a cursor binds the whole key list.
+    let (_, cursor) = page(
+        &store,
+        &sorted(&[("status", false), ("priority", true)], 3, None),
+    );
+    assert!(matches!(
+        run(&sorted(
+            &[("status", false), ("priority", false)],
+            3,
+            cursor
+        )),
+        Err(ComputeError::Page(_))
+    ));
+    // S4, and repeated or orphaned keys.
+    for keys in [
+        &[
+            ("status", false),
+            ("priority", true),
+            ("owner", false),
+            ("amount", false),
+        ][..],
+        &[("status", false), ("status", true)][..],
+    ] {
+        assert!(matches!(
+            run(&sorted(keys, 0, None)),
+            Err(ComputeError::Page(_))
+        ));
+    }
+    let mut orphan = sorted(&[("status", false)], 0, None);
+    orphan.then_by = orphan.sort.take().into_iter().collect();
+    assert!(matches!(run(&orphan), Err(ComputeError::Page(_))));
+    // D1 (sort case): a denied second key fails closed.
+    let mut denied = sorted(&[("status", false), ("owner", false)], 0, None);
+    denied.acl = PropertyAcl::deny_property("order", "owner");
+    assert!(matches!(run(&denied), Err(ComputeError::Acl(_))));
+    let _ = std::fs::remove_dir_all(&dir);
+}

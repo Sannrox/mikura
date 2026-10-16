@@ -291,9 +291,10 @@ brokers stay out.
    More identities than the bound fails closed; a page is not a partial
    answer to an over-bound set. `object_bound == 0` leaves `objects` empty.
    Without `sort`, result-key order is intern-string sorted and is not a
-   product sort. `EvaluateRequest.sort` orders by one typed property, then
-   `(kind, key)`. Missing sort values sort after present values in both
-   directions. `page_size`
+   product sort. `EvaluateRequest.sort` orders by one typed property and
+   `then_by` by up to two more, then `(kind, key)`. Missing sort values sort
+   after present values in both directions on every key
+   ([ADR 0039](decisions/0039-multi-key-sort.md)). `page_size`
    slices that order; the opaque cursor binds the deny list, query (including
    sort and page size), and the live writer stamp (`committed_pages`, written
    pages, current page used). A later write, including an uncommitted stream

@@ -128,6 +128,7 @@ fn fixture_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -152,6 +153,7 @@ fn asset_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -833,6 +835,7 @@ fn incoming_hop_follows_join_property() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let response = oss.evaluate(&store, &incoming).unwrap();
     assert_eq!(response.two_hop_count, 1);
@@ -1065,6 +1068,7 @@ fn composed_predicates_select_typed_object_sets() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let listed = oss.evaluate(&store, &open).unwrap();
     assert_eq!(listed_keys(&listed), ["inc-1", "inc-3"]);
@@ -1089,6 +1093,7 @@ fn composed_predicates_select_typed_object_sets() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &filter_then_hop).unwrap()),
@@ -1115,6 +1120,7 @@ fn composed_predicates_select_typed_object_sets() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let hopped = oss.evaluate(&store, &hop_then_filter).unwrap();
     assert_eq!(listed_keys(&hopped), ["svc-api"]);
@@ -1135,6 +1141,7 @@ fn composed_predicates_select_typed_object_sets() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &range).unwrap()),
@@ -1156,6 +1163,7 @@ fn composed_predicates_select_typed_object_sets() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     assert_eq!(
         listed_keys(&oss.evaluate(&store, &missing).unwrap()),
@@ -1227,6 +1235,7 @@ fn ordered_pages_are_snapshot_bound() {
         page_size: 1,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let page1 = oss.evaluate(&store, &first).unwrap();
     assert_eq!(ordered_keys(&page1), ["inc-3"]);
@@ -1439,6 +1448,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -1468,6 +1478,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -1502,6 +1513,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap_err();
@@ -1535,6 +1547,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap()
@@ -1565,6 +1578,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap()
@@ -1776,6 +1790,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -1804,6 +1819,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -2319,6 +2335,7 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -2386,6 +2403,7 @@ fn association_objects_persist_and_traverse() {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -2449,6 +2467,7 @@ fn restriction_hides_identities_across_load_evaluate_and_rebuild() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let closed = oss.evaluate(&store, &hop).unwrap();
     assert_eq!(closed.two_hop_count, 0);
