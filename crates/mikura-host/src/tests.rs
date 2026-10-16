@@ -589,6 +589,16 @@ fn oversize_line_fails_closed() {
         .unwrap();
     let accepted = host.handle_line(r#"{"op":"ingest_batch","records":[]}"#);
     assert!(accepted.ok, "{accepted:?}");
+    let scraped = host.handle(HostRequest::Metrics);
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(
+        text.contains("mikura_rpc_overloaded_total 1"),
+        "bound reject must count as overload: {text}"
+    );
+    assert!(
+        text.contains("mikura_rpc_rejected_total 1"),
+        "bound reject must count as rejected: {text}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1166,7 +1176,89 @@ fn health_reports_ready_and_counts_without_slo_gates() {
     assert_eq!(health.rejected, 1);
     let again = host.handle(HostRequest::Health);
     assert_eq!(again.health.unwrap().accepted, 1);
+    let scraped = host.handle(HostRequest::Metrics);
+    assert!(scraped.ok, "{scraped:?}");
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(text.contains("mikura_rpc_accepted_total 1"), "{text}");
+    assert!(text.contains("mikura_rpc_rejected_total 1"), "{text}");
+    assert!(text.contains("namespace=\"ns\""), "{text}");
+    assert!(!text.contains("inc-1"), "payload key leaked: {text}");
+    assert!(!text.contains("note"), "property leaked: {text}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn metrics_omit_object_keys_and_property_values() {
+    let (dir, log) = temp_log("metrics-labels");
+    let host = Host::open(&log, 8).unwrap();
+    host.handle(HostRequest::IngestBatch {
+        records: vec![rec(
+            "incident",
+            "secret-key",
+            false,
+            &[("secret_prop", "secret-value")],
+        )],
+    });
+    let scraped = host.handle(HostRequest::Metrics);
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(text.contains("mikura_committed_pages"));
+    assert!(text.contains("mikura_queue_depth"));
+    assert!(text.contains("mikura_log_bytes"));
+    assert!(text.contains("mikura_sidecar_lag_pages"));
+    assert!(text.contains("mikura_open_replay_seconds"));
+    assert!(text.contains("op=\"ingest_batch\""), "{text}");
+    assert!(!text.contains("secret-key"), "{text}");
+    assert!(!text.contains("secret_prop"), "{text}");
+    assert!(!text.contains("secret-value"), "{text}");
+    assert!(
+        text.contains("mikura_sidecar_lag_pages 0"),
+        "current sidecar stamp should match committed pages: {text}"
+    );
+    let committed = gauge_value(&text, "mikura_committed_pages");
+    let sidecar = mikura::Store::join_map_path(&log);
+    let delta = mikura::Store::join_delta_path(&log);
+    let _ = std::fs::remove_file(&sidecar);
+    let _ = std::fs::remove_file(&delta);
+    let after_delete = host.handle(HostRequest::Metrics);
+    let lag_text = after_delete.metrics.expect("metrics payload");
+    assert!(
+        lag_text.contains(&format!("mikura_sidecar_lag_pages {committed}")),
+        "missing sidecar stamp is 0, lag is committed pages: {lag_text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn metrics_escape_namespace_newlines() {
+    let (dir, log) = temp_log("metrics-newline-ns");
+    let host = Host::open(&log, 8).unwrap();
+    let mut row = rec(
+        "incident",
+        "secret-key",
+        false,
+        &[("secret_prop", "secret-value")],
+    );
+    row.namespace = "ns\nleak".into();
+    host.handle(HostRequest::IngestBatch { records: vec![row] });
+    let scraped = host.handle(HostRequest::Metrics);
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(
+        text.contains(r#"namespace="ns\nleak""#),
+        "newline in namespace must be escaped: {text}"
+    );
+    assert!(
+        !text.contains("namespace=\"ns\n"),
+        "raw newline must not break Prometheus text: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn gauge_value(text: &str, name: &str) -> u64 {
+    text.lines()
+        .find(|line| line.starts_with(name) && !line.contains('{'))
+        .and_then(|line| line.split_whitespace().last())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("missing gauge {name} in {text}"))
 }
 
 #[test]

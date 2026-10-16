@@ -76,6 +76,36 @@ fn persist_reopen_hop_count_and_sum_match_live_evaluate() {
 }
 
 #[test]
+fn sidecar_stamp_pages_tracks_checkpoint_and_delta() {
+    let (dir, log) = temp_log("sidecar-stamp");
+    let mut store = Store::create(&log).unwrap();
+    for record in generic_records() {
+        store.append_uncommitted(record).unwrap();
+    }
+    store.commit().unwrap();
+    let checkpoint_pages = store.committed_pages();
+    assert!(!Store::join_delta_path(&log).exists());
+    assert_eq!(store.sidecar_stamp_pages(), checkpoint_pages);
+    store
+        .append(rec(
+            "Shipment",
+            "s2",
+            false,
+            &[("order_id", "o1"), ("amount", "5")],
+        ))
+        .unwrap();
+    let with_delta = store.committed_pages();
+    assert!(with_delta > checkpoint_pages);
+    assert!(Store::join_delta_path(&log).is_file());
+    assert_eq!(store.sidecar_stamp_pages(), with_delta);
+    std::fs::remove_file(Store::join_delta_path(&log)).unwrap();
+    assert_eq!(store.sidecar_stamp_pages(), checkpoint_pages);
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    assert_eq!(store.sidecar_stamp_pages(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn dual_read_projection_equals_log_replay() {
     let (dir, log) = temp_log("join-dual-read");
     let sidecar = Store::join_map_path(&log);

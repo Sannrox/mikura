@@ -45,6 +45,7 @@ a new ADR. Allocate the next number and list it here.
 | [0038](0038-breakdown-aggregates.md) | Breakdown aggregates and bounded group-by | accepted |
 | [0039](0039-multi-key-sort.md) | Multi-key sort with versioned cursors | accepted |
 | [0040](0040-concurrent-host-readers.md) | Concurrent snapshot readers; exclusive writer; namespace fair share | accepted |
+| [0041](0041-host-operational-metrics.md) | Prometheus metrics scrape; health stays the process-serving signal | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

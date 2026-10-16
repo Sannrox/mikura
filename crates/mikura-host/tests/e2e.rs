@@ -1593,6 +1593,12 @@ fn process_oversize_request_fails_closed() {
         "records": [],
     }));
     assert!(ingest.ok, "{ingest:?}");
+    let scraped = host.rpc(&serde_json::json!({"op": "metrics"}));
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(
+        text.contains("mikura_rpc_overloaded_total 1"),
+        "RequestBound must increment overload: {text}"
+    );
 }
 
 #[test]
@@ -2843,6 +2849,52 @@ fn process_health_reports_ready_after_ingest() {
     assert!(health.committed_pages >= 1);
     assert!(health.accepted >= 1);
     assert!(health.rejected >= 1);
+    drop(host);
+}
+
+#[test]
+fn process_metrics_scrapes_under_load() {
+    let tmp = TempLog::new("metrics-load");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [{
+            "gen": 1,
+            "namespace": "ns",
+            "kind": "incident",
+            "key": "secret-key",
+            "hidden": false,
+            "schema_version": 1,
+            "props": {"secret_prop": "secret-value"}
+        }]
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    for _ in 0..8 {
+        let eval = host.rpc(&serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "incident",
+                "hops": [],
+                "sum_kind": "incident",
+                "sum_property": "secret_prop"
+            }
+        }));
+        assert!(eval.ok, "{eval:?}");
+    }
+    let scraped = host.rpc(&serde_json::json!({"op": "metrics"}));
+    assert!(scraped.ok, "{scraped:?}");
+    let text = scraped.metrics.expect("metrics payload");
+    assert!(text.contains("mikura_rpc_latency_seconds_count{op=\"evaluate\"}"));
+    assert!(text.contains("mikura_rpc_accepted_total"));
+    assert!(text.contains("namespace=\"ns\""));
+    assert!(
+        text.contains("mikura_sidecar_lag_pages 0"),
+        "sidecar stamp should match committed pages: {text}"
+    );
+    assert!(!text.contains("secret-key"), "{text}");
+    assert!(!text.contains("secret_prop"), "{text}");
+    assert!(!text.contains("secret-value"), "{text}");
     drop(host);
 }
 

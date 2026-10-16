@@ -2,7 +2,7 @@
 //!
 //! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
 //! `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`,
-//! `evaluate`, `load`, `health`. JSON lines are envelope `{ v, token?, op, … }`
+//! `evaluate`, `load`, `health`, `metrics`. JSON lines are envelope `{ v, token?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
 //! returns snapshot pages; `cursor` binds restriction, query, and live writer stamp.
@@ -27,7 +27,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod execution;
-use execution::{FairScheduler, DEFAULT_MAX_IN_FLIGHT};
+mod metrics;
+use execution::{FairScheduler, SchedulerSnapshot, DEFAULT_MAX_IN_FLIGHT};
+use metrics::{Metrics, ProcessSnapshot};
 
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
@@ -264,6 +266,7 @@ pub enum HostRequest {
         restriction: Option<WireRestriction>,
     },
     Health,
+    Metrics,
 }
 
 pub const WIRE_V: u32 = 1;
@@ -292,6 +295,8 @@ pub struct HostResponse {
     pub load: Option<ObjectRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<String>,
 }
 
 /// Process-local operational signal ([ADR 0022](../../docs/decisions/0022-operational-signals.md)).
@@ -331,6 +336,10 @@ struct HostInner {
     accepted: AtomicU64,
     rejected: AtomicU64,
     scheduler: FairScheduler,
+    metrics: Metrics,
+    log: std::path::PathBuf,
+    log_bytes_at_open: u64,
+    open_replay: Duration,
 }
 
 #[derive(Clone)]
@@ -340,11 +349,14 @@ pub struct Host {
 
 impl Host {
     pub fn open(log: &Path, stream_bound: usize) -> Result<Self, String> {
+        let started = Instant::now();
         let store = if log.exists() {
             Store::open(log)?
         } else {
             Store::create(log)?
         };
+        let open_replay = started.elapsed();
+        let log_bytes_at_open = std::fs::metadata(log).map(|meta| meta.len()).unwrap_or(0);
         Ok(Self {
             inner: Arc::new(HostInner {
                 store: RwLock::new(store),
@@ -355,6 +367,10 @@ impl Host {
                 accepted: AtomicU64::new(0),
                 rejected: AtomicU64::new(0),
                 scheduler: FairScheduler::new(DEFAULT_MAX_IN_FLIGHT),
+                metrics: Metrics::new(),
+                log: log.to_path_buf(),
+                log_bytes_at_open,
+                open_replay,
             }),
         })
     }
@@ -429,16 +445,27 @@ impl Host {
     }
 
     pub fn handle(&self, request: HostRequest) -> HostResponse {
-        let count = !matches!(request, HostRequest::Health);
+        let scrape = matches!(request, HostRequest::Health | HostRequest::Metrics);
+        let op = request_op(&request);
+        let namespace = request_namespace(&request);
+        let started = Instant::now();
         let response = self.dispatch(request);
-        if count {
+        if !scrape {
             if response.ok {
                 self.inner.accepted.fetch_add(1, Ordering::Relaxed);
             } else {
                 self.inner.rejected.fetch_add(1, Ordering::Relaxed);
             }
+            self.inner
+                .metrics
+                .observe_rpc(op, namespace.as_deref(), started.elapsed());
         }
         response
+    }
+
+    fn note_overload(&self) {
+        self.inner.rejected.fetch_add(1, Ordering::Relaxed);
+        self.inner.metrics.observe_overload();
     }
 
     fn with_read(&self, ns: String, f: impl FnOnce(&Store) -> HostResponse) -> HostResponse {
@@ -602,6 +629,7 @@ impl Host {
                         }),
                         load: None,
                         health: None,
+                        metrics: None,
                     },
                     Err(error) => fail(error),
                 })
@@ -621,6 +649,7 @@ impl Host {
                         evaluate: None,
                         load: Some(record),
                         health: None,
+                        metrics: None,
                     },
                     Err(error) => fail(error),
                 }
@@ -637,13 +666,49 @@ impl Host {
                     accepted: self.inner.accepted.load(Ordering::Relaxed),
                     rejected: self.inner.rejected.load(Ordering::Relaxed),
                 }),
+                metrics: None,
             }),
+            HostRequest::Metrics => {
+                // Snapshot before read admission so an active writer is visible.
+                let snap = self.inner.scheduler.snapshot();
+                self.with_read(String::new(), |store| HostResponse {
+                    v: WIRE_V,
+                    ok: true,
+                    error: None,
+                    evaluate: None,
+                    load: None,
+                    health: None,
+                    metrics: Some(self.render_metrics(store, snap)),
+                })
+            }
         }
+    }
+
+    fn render_metrics(&self, store: &Store, snap: SchedulerSnapshot) -> String {
+        let log_bytes = std::fs::metadata(&self.inner.log)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        let committed = store.committed_pages();
+        let stamp = store.sidecar_stamp_pages();
+        let lag_pages = u64::from(committed.saturating_sub(stamp));
+        let queue_depth =
+            (snap.inflight_reads + snap.writer_waiters + usize::from(snap.writer_active)) as u64;
+        self.inner.metrics.render(ProcessSnapshot {
+            accepted: self.inner.accepted.load(Ordering::Relaxed),
+            rejected: self.inner.rejected.load(Ordering::Relaxed),
+            queue_depth,
+            log_bytes,
+            log_growth_bytes: log_bytes.saturating_sub(self.inner.log_bytes_at_open),
+            committed_pages: u64::from(committed),
+            sidecar_lag_pages: lag_pages,
+            open_replay_seconds: self.inner.open_replay.as_secs_f64(),
+        })
     }
 
     pub fn handle_line(&self, line: &str) -> HostResponse {
         let bound = self.request_bound();
         if line.len() > bound {
+            self.note_overload();
             return request_bound_fail(bound, line.len());
         }
         let value: serde_json::Value = match serde_json::from_str(line) {
@@ -674,9 +739,11 @@ impl Host {
         let line = match read_request_line(&mut stream, bound, deadline) {
             Ok(line) => line,
             Err(ServeRead::Bound { bound, bytes }) => {
+                self.note_overload();
                 return write_fail_closed(&mut stream, request_bound_fail(bound, bytes), deadline);
             }
             Err(ServeRead::Timeout) => {
+                self.note_overload();
                 return write_fail_closed(&mut stream, fail("RequestTimeout"), deadline);
             }
             Err(ServeRead::Disconnect) => return Err("client disconnect".into()),
@@ -858,6 +925,7 @@ fn ok() -> HostResponse {
         evaluate: None,
         load: None,
         health: None,
+        metrics: None,
     }
 }
 
@@ -869,6 +937,39 @@ fn fail(error: impl ToString) -> HostResponse {
         evaluate: None,
         load: None,
         health: None,
+        metrics: None,
+    }
+}
+
+fn request_op(request: &HostRequest) -> &'static str {
+    match request {
+        HostRequest::IngestBatch { .. } => "ingest_batch",
+        HostRequest::IngestStreamPush { .. } => "ingest_stream_push",
+        HostRequest::IngestStreamFlush => "ingest_stream_flush",
+        HostRequest::ApplyAction { .. } => "apply_action",
+        HostRequest::ApplyChangeSet { .. } => "apply_change_set",
+        HostRequest::ApplyOverlay { .. } => "apply_overlay",
+        HostRequest::Hide { .. } => "hide",
+        HostRequest::Evaluate { .. } => "evaluate",
+        HostRequest::Load { .. } => "load",
+        HostRequest::Health => "health",
+        HostRequest::Metrics => "metrics",
+    }
+}
+
+fn request_namespace(request: &HostRequest) -> Option<String> {
+    match request {
+        HostRequest::IngestBatch { records } => {
+            records.first().map(|record| record.namespace.clone())
+        }
+        HostRequest::IngestStreamPush { record } => Some(record.namespace.clone()),
+        HostRequest::ApplyAction { namespace, .. }
+        | HostRequest::ApplyChangeSet { namespace, .. }
+        | HostRequest::ApplyOverlay { namespace, .. }
+        | HostRequest::Hide { namespace, .. }
+        | HostRequest::Load { namespace, .. } => Some(namespace.clone()),
+        HostRequest::Evaluate { request } => Some(request.namespace.clone()),
+        HostRequest::IngestStreamFlush | HostRequest::Health | HostRequest::Metrics => None,
     }
 }
 

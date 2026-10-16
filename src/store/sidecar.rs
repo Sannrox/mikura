@@ -17,6 +17,20 @@ pub(super) type ProjectionBody = (
 );
 
 impl Store {
+    /// Last join-sidecar page stamp written or loaded by this process.
+    /// Missing sidecar files count as stamp 0 without reading the projection.
+    pub fn sidecar_stamp_pages(&self) -> u32 {
+        let checkpoint = Self::join_map_path(&self.log).exists();
+        let delta = Self::join_delta_path(&self.log).exists();
+        match (checkpoint, delta) {
+            (false, _) => 0,
+            (true, false) => self.sidecar_checkpoint_stamp,
+            (true, true) => self
+                .sidecar_delta_stamp
+                .unwrap_or(self.sidecar_checkpoint_stamp),
+        }
+    }
+
     pub(super) fn persist_projection(&mut self) -> Result<(), String> {
         let pages = self.writer.committed_pages();
         let compact =
@@ -34,6 +48,8 @@ impl Store {
 
     fn rewrite_checkpoint(&mut self, pages: u32) -> Result<(), String> {
         self.persist_checkpoint(pages)?;
+        self.sidecar_checkpoint_stamp = pages;
+        self.sidecar_delta_stamp = None;
         let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
         self.dirty.clear();
         self.has_checkpoint = true;
@@ -190,6 +206,7 @@ impl Store {
         }
         append_checksummed(&path, &body)?;
         self.delta_bytes = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+        self.sidecar_delta_stamp = Some(pages);
         Ok(())
     }
 
@@ -315,7 +332,9 @@ impl Store {
             }
         }
         self.delta_bytes = good as u64;
-        pages.ok_or_else(|| "join sidecar too short".into())
+        let pages = pages.ok_or_else(|| "join sidecar too short".to_string())?;
+        self.sidecar_delta_stamp = Some(pages);
+        Ok(pages)
     }
 
     fn apply_delta_body(&mut self, body: &[u8]) -> Result<u32, String> {
@@ -407,6 +426,8 @@ impl Store {
         self.identity = loaded.identity;
         self.hidden_props = loaded.hidden_props;
         self.has_checkpoint = true;
+        self.sidecar_checkpoint_stamp = loaded.pages;
+        self.sidecar_delta_stamp = None;
         self.action_commits.clear();
         self.action_commits_from_log = false;
         self.adopt_declared_measures()
