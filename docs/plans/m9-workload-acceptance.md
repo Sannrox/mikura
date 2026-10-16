@@ -124,6 +124,7 @@ production fail. Details:
 | [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved, then amended by [#243](https://github.com/Sannrox/mikura/issues/243) / [ADR 0040](../decisions/0040-concurrent-host-readers.md). Unpublished simultaneous-client SLOs stay unresolved. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. Availability closed retain-one-process ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](../decisions/0023-single-process-availability.md)). Capacity closed unpartitioned ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](../decisions/0024-unpartitioned-store.md)). |
 | [#237](https://github.com/Sannrox/mikura/issues/237) Explorer workload | Closed: Chisei named, numbers unpublished, undeclared leaf-walk kept. See [m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md). |
+| [#244](https://github.com/Sannrox/mikura/issues/244) replication | Closed no-action: keep one process; restore from the log; unpublished RPO/RTO is not a miss. See [m10-replication-availability.md](m10-replication-availability.md). |
 
 ## Out of this investigation
 

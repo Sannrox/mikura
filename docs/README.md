@@ -13,6 +13,7 @@ the job.
 | [plans/m4-hosted-pilot-contract.md](plans/m4-hosted-pilot-contract.md) | Reference | Accepted one-process pilot: overload, restore, shutdown, upgrade |
 | [plans/m9-workload-acceptance.md](plans/m9-workload-acceptance.md) | Reference | Named production workload, synthetic evidence, unresolved SLOs |
 | [plans/m9-chisei-explorer-workload.md](plans/m9-chisei-explorer-workload.md) | Reference | Chisei Explorer named as consumer; numbers unpublished; undeclared hop is leaf walk (#237) |
+| [plans/m10-replication-availability.md](plans/m10-replication-availability.md) | Reference | Replication revisit closed no-action; one process plus restore; unpublished RPO/RTO (#244) |
 | [plans/m9-readiness.md](plans/m9-readiness.md) | Reference | Revision-specific M9 report: qualitative pass, numeric SLOs unresolved, no production claim |
 | [architecture.md](architecture.md) | Reference | How the v1 crate works, sourced from `src/` |
 | [glossary.md](glossary.md) | Reference | Project terms |

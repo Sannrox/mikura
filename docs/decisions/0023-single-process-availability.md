@@ -3,8 +3,9 @@
 - Status: accepted
 - Date: 2026-09-20
 - Owners: mikura maintainers
-- Related: [#190](https://github.com/Sannrox/mikura/issues/190), [#191](https://github.com/Sannrox/mikura/issues/191), [#189](https://github.com/Sannrox/mikura/issues/189), [#56](https://github.com/Sannrox/mikura/issues/56), [#126](https://github.com/Sannrox/mikura/issues/126), [#127](https://github.com/Sannrox/mikura/issues/127), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md), [m9-readiness.md](../plans/m9-readiness.md)
+- Related: [#190](https://github.com/Sannrox/mikura/issues/190), [#191](https://github.com/Sannrox/mikura/issues/191), [#244](https://github.com/Sannrox/mikura/issues/244), [#237](https://github.com/Sannrox/mikura/issues/237), [#238](https://github.com/Sannrox/mikura/issues/238), [#189](https://github.com/Sannrox/mikura/issues/189), [#56](https://github.com/Sannrox/mikura/issues/56), [#126](https://github.com/Sannrox/mikura/issues/126), [#127](https://github.com/Sannrox/mikura/issues/127), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [m9-readiness.md](../plans/m9-readiness.md), [m10-replication-availability.md](../plans/m10-replication-availability.md)
 - Amends: [ADR 0003](0003-hosted-service.md) — M9 unresolved-evidence is not a reason to split the process or add a replica. Restore from the object log remains the failure path.
+- Amended by: this file's 2026-10-16 amendment ([#244](https://github.com/Sannrox/mikura/issues/244)); [ADR 0037](0037-online-backup-and-restore.md) (backup copies committed pages while the host serves)
 - Supersedes: none
 - Superseded by: none
 
@@ -104,3 +105,22 @@ No `MIKURAV1` change. No second store of record. No cluster compute.
    [m9-readiness.md](../plans/m9-readiness.md) stay unresolved.
 4. Revisit only against a consumer-published availability target, not
    against a synthetic envelope hold.
+
+## Amendments
+
+- 2026-10-16, [#244](https://github.com/Sannrox/mikura/issues/244):
+  sekai-chisei Explorer is the named consumer and still publishes no
+  RPO/RTO ([#237](https://github.com/Sannrox/mikura/issues/237),
+  [ADR 0016](0016-production-workload.md)). The clerk already rejected a
+  replica set until a published downtime miss
+  ([sekai-chisei ADR 0088](https://github.com/Sannrox/sekai-chisei/blob/main/docs/decisions/0088-one-object-log-host-many-clerk-clients.md)).
+  One host for every namespace is that same boundary, not a miss.
+  Log checkpoints ([#238](https://github.com/Sannrox/mikura/issues/238),
+  [ADR 0034](0034-log-checkpoints.md)) and online backup
+  ([ADR 0037](0037-online-backup-and-restore.md)) strengthen restore;
+  they are not a replica, lag SLO, or automatic failover. Concurrent
+  snapshot readers still share one exclusive writer
+  ([ADR 0040](0040-concurrent-host-readers.md)). Warm standbys and
+  synchronous replication stay out. [#191](https://github.com/Sannrox/mikura/issues/191)
+  remains closed no-action. Details:
+  [m10-replication-availability.md](../plans/m10-replication-availability.md).

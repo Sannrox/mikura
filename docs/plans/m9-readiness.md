@@ -97,6 +97,7 @@ a named envelope misses on disk or `Store::open`.
 | --- | --- |
 | [#190](https://github.com/Sannrox/mikura/issues/190) replication | **Closed retain-one-process.** Unresolved evidence is not an availability miss. |
 | [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | **Closed no-action.** Replication was not selected. |
+| [#244](https://github.com/Sannrox/mikura/issues/244) replication revisit | **Closed no-action.** Named consumer still unpublished RPO/RTO. Checkpoints and online backup are restore, not a replica. |
 | [#192](https://github.com/Sannrox/mikura/issues/192) partitioning | **Closed no-action.** No named capacity miss. One identity space. |
 | [#193](https://github.com/Sannrox/mikura/issues/193) partition semantics | **Closed no-action.** Partitioning was not selected. |
 | [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Blocked.** Until a consumer names that envelope. |
