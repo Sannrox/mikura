@@ -55,6 +55,7 @@ fn assert_isolated(store: &Store, namespace: &str, amount: i64, region: &str) {
                 page_size: 0,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();

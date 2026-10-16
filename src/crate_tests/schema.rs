@@ -120,6 +120,7 @@ fn committed_schema_validates_writes_and_rebuilds() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let hopped = ObjectSet::new(LocalCompute)
         .evaluate(&store, &incoming)
@@ -220,6 +221,7 @@ fn evaluate_returns_bounded_product_loop_objects() {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     };
     let redacted = oss.evaluate(&store, &denied).unwrap();
     assert_eq!(redacted.objects.len(), 2);

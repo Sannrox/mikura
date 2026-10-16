@@ -135,6 +135,9 @@ pub struct WireEvaluate {
     pub object_bound: usize,
     #[serde(default)]
     pub sort: Option<WireSort>,
+    /// Further sort keys after `sort`, at most two (ADR 0039).
+    #[serde(default)]
+    pub then_by: Vec<WireSort>,
     #[serde(default)]
     pub page_size: usize,
     #[serde(default)]
@@ -935,6 +938,14 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             property: sort.property,
             descending: sort.descending,
         }),
+        then_by: request
+            .then_by
+            .into_iter()
+            .map(|sort| Sort {
+                property: sort.property,
+                descending: sort.descending,
+            })
+            .collect(),
         page_size: request.page_size,
         cursor: request.cursor,
         breakdown: request.breakdown.map(|breakdown| Breakdown {

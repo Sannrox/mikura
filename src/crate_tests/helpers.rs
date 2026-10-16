@@ -58,6 +58,7 @@ pub(super) fn fixture_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -120,6 +121,7 @@ pub(super) fn asset_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -220,6 +222,7 @@ pub(super) fn list_prod_components(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -244,5 +247,6 @@ pub(super) fn hop_incident_to_component(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }

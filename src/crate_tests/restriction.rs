@@ -147,6 +147,7 @@ fn restriction_cursor_binds_hide_list() {
                 page_size: 1,
                 cursor: None,
                 breakdown: None,
+                then_by: Vec::new(),
             },
         )
         .unwrap();
@@ -170,6 +171,7 @@ fn restriction_cursor_binds_hide_list() {
             page_size: 1,
             cursor: Some(cursor),
             breakdown: None,
+            then_by: Vec::new(),
         },
     );
     assert!(

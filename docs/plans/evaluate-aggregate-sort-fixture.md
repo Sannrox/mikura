@@ -7,8 +7,8 @@ answers. [ADR 0018](../decisions/0018-aggregation-semantics.md) keeps every
 aggregate except count+sum proposed until such a fixture exists, and
 [ADR 0015](../decisions/0015-composable-object-sets.md) keeps sort to one
 property. This document is that fixture. Its aggregate and group-by rules
-are accepted by [ADR 0038](../decisions/0038-breakdown-aggregates.md); its
-sort rules stay proposals until the multi-key sort slice amends ADR 0015.
+are accepted by [ADR 0038](../decisions/0038-breakdown-aggregates.md) and
+its sort rules by [ADR 0039](../decisions/0039-multi-key-sort.md).
 The answers are the acceptance bar.
 
 ## Seed

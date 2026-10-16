@@ -72,6 +72,7 @@ pub(crate) fn fixture_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -99,6 +100,7 @@ pub(crate) fn shipment_request() -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 

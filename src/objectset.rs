@@ -126,7 +126,8 @@ impl std::ops::Not for Predicate {
     }
 }
 
-/// One sort property on the result kind (ADR 0015). Tie-break is `(kind, key)`.
+/// One sort key on the result kind (ADR 0015). Tie-break is `(kind, key)`;
+/// [`EvaluateRequest::then_by`] adds more keys (ADR 0039).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sort {
     pub property: String,
@@ -205,6 +206,10 @@ pub struct EvaluateRequest {
     /// Typed order on the result kind. Absent keeps intern-string key order,
     /// which is not a product sort.
     pub sort: Option<Sort>,
+    /// Further sort keys after [`Self::sort`], at most two, each with its own
+    /// direction; ties on every key break on `(kind, key)` (ADR 0039).
+    /// Requires `sort`.
+    pub then_by: Vec<Sort>,
     /// Page length when [`Self::sort`] is set. Zero returns the full bounded
     /// set. Exceeding [`Self::object_bound`] still fails closed.
     pub page_size: usize,

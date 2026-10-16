@@ -34,6 +34,11 @@ window.
 
 ### Added
 
+- Multi-key sort: `EvaluateRequest.then_by` adds up to two sort keys after
+  `sort`, each with its own direction; cursors (version 2) bind the whole key
+  list, and version 1 cursors still decode. Host `evaluate` takes `then_by`
+  ([#270](https://github.com/Sannrox/mikura/issues/270),
+  [ADR 0039](docs/decisions/0039-multi-key-sort.md)).
 - Evaluate breakdowns: optional `Breakdown` groups surviving roots by up to
   two root properties and returns per group count, sum, contributing
   values, min, max, an exact `(sum, n)` average, and a distinct count, with

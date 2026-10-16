@@ -91,6 +91,7 @@ fn hop_incident_to_labels(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -123,6 +124,7 @@ fn hop_label_to_incidents(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
@@ -142,6 +144,7 @@ fn list_associations(bound: usize) -> EvaluateRequest {
         page_size: 0,
         cursor: None,
         breakdown: None,
+        then_by: Vec::new(),
     }
 }
 
