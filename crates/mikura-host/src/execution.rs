@@ -29,6 +29,13 @@ pub struct WritePermit<'a> {
     sched: &'a FairScheduler,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SchedulerSnapshot {
+    pub inflight_reads: usize,
+    pub writer_waiters: usize,
+    pub writer_active: bool,
+}
+
 impl FairScheduler {
     pub fn new(max_reads: usize) -> Self {
         Self {
@@ -41,6 +48,21 @@ impl FairScheduler {
             }),
             cv: Condvar::new(),
         }
+    }
+
+    pub fn snapshot(&self) -> SchedulerSnapshot {
+        self.state
+            .lock()
+            .map(|guard| SchedulerSnapshot {
+                inflight_reads: guard.inflight_reads,
+                writer_waiters: guard.writer_waiters,
+                writer_active: guard.writer_active,
+            })
+            .unwrap_or(SchedulerSnapshot {
+                inflight_reads: 0,
+                writer_waiters: 0,
+                writer_active: false,
+            })
     }
 
     pub fn acquire_read(&self, ns: String) -> Result<ReadPermit<'_>, String> {

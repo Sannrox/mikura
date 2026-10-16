@@ -34,6 +34,12 @@ window.
 
 ### Added
 
+- Host `op: metrics` returns Prometheus text: per-op latency, bounded
+  namespace request counts, queue depth, log size and growth, committed
+  pages, sidecar lag, and open/replay time. Payloads, keys, and property
+  values are omitted. Not an SLO gate
+  ([#250](https://github.com/Sannrox/mikura/issues/250),
+  [ADR 0041](docs/decisions/0041-host-operational-metrics.md)).
 - Multi-key sort: `EvaluateRequest.then_by` adds up to two sort keys after
   `sort`, each with its own direction; cursors (version 2) bind the whole key
   list, and version 1 cursors still decode. Host `evaluate` takes `then_by`

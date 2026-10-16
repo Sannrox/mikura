@@ -7,6 +7,7 @@
 - Amends: none. Unresolved SLOs in [ADR 0016](0016-production-workload.md) stay unresolved.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0041](0041-host-operational-metrics.md) (Prometheus `metrics` scrape; health stays the process-serving signal)
 
 ## Context
 

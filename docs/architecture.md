@@ -428,11 +428,11 @@ include `v`. Required and unused fields by bind:
 one extra accepted connection may wait on the worker rendezvous; further
 connections remain in the OS listen backlog
 ([ADR 0040](decisions/0040-concurrent-host-readers.md)). Line-assembly `--request-bound` and
-`--request-timeout-ms` are not evaluate or ingest deadlines.
+`--request-timeout-ms` are not evaluate or ingest deadlines. `op: metrics` returns Prometheus text (latency, queue depth, log growth, sidecar lag) behind the same bearer; it is not an SLO gate ([ADR 0041](decisions/0041-host-operational-metrics.md)).
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`, `metrics`. Evaluate accepts an
 optional exact-match `filter` or a structured `predicate` tree (`op` =
 `eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
 fails closed. Omit or `null` filter and predicate means all visible roots.

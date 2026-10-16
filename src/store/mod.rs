@@ -110,6 +110,8 @@ pub struct Store {
     has_checkpoint: bool,
     delta_bytes: u64,
     delta_compact_bytes: u64,
+    sidecar_checkpoint_stamp: u32,
+    sidecar_delta_stamp: Option<u32>,
     action_commits: HashMap<(String, String), ActionCommit>,
     action_commits_from_log: bool,
     /// Visible schema rows by (namespace, kind), oldest version first.
@@ -236,6 +238,8 @@ impl Store {
             has_checkpoint: false,
             delta_bytes: 0,
             delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
+            sidecar_checkpoint_stamp: 0,
+            sidecar_delta_stamp: None,
             action_commits: HashMap::new(),
             action_commits_from_log: true,
             schema_history: HashMap::new(),
