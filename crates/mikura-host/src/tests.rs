@@ -116,6 +116,11 @@ fn listen_loopback_without_bearer_keeps_handle_open() {
 }
 
 #[test]
+fn listed_1_0_wire_version_is_one() {
+    assert_eq!(crate::WIRE_V, 1);
+}
+
+#[test]
 fn handle_line_wire_v1_omitted_or_one_unknown_fails_closed() {
     let (dir, log) = temp_log("wire-v");
     let host = Host::open(&log, 8).unwrap();

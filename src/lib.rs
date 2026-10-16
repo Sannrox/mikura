@@ -33,6 +33,8 @@
 //! id, all or nothing ([`Store::apply_change_set`]).
 //!
 //! See `docs/architecture.md` in the repository for the v1 contract.
+//! Format ids on the 1.0 surface: [`LOG_FORMAT`], [`JOIN_FORMAT`],
+//! [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
 
 mod acl;
 mod actions;
@@ -47,6 +49,17 @@ mod page;
 mod schema;
 mod store;
 mod value;
+
+/// Superblock magic this crate writes and opens (`MIKURAV2`).
+pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
+/// Join sidecar magic (`MKJOIN05`). Rebuildable; unknown magic fails closed.
+pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN05";
+/// Join dirty-set magic this crate writes (`MKJOIN6D`).
+pub const JOIN_DELTA_FORMAT: &[u8; 8] = b"MKJOIN6D";
+/// Earlier dirty-set magic this crate still reads (`MKJOIN5D`).
+pub const JOIN_DELTA_FORMAT_V5: &[u8; 8] = b"MKJOIN5D";
+/// Log checkpoint magic (`MKCKPT01`). Unknown magic falls back.
+pub const CHECKPOINT_FORMAT: &[u8; 8] = b"MKCKPT01";
 
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};

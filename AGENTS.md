@@ -85,7 +85,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
 | `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
 | `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `scripts/gh-verified-push.sh`. Land with squash. Next work is [ROADMAP.md](ROADMAP.md). |
-| `prepare-release` | GitHub tags are allowed. `publish = false` in `Cargo.toml` until crates.io is explicitly authorized. |
+| `prepare-release` | GitHub tags are allowed. `publish = false` until crates.io is explicitly authorized. 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md). |
 
 ## Ontology
 

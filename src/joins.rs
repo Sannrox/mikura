@@ -297,11 +297,11 @@ impl CountScratch {
     }
 }
 
-pub(crate) const JOIN_MAGIC: &[u8; 8] = b"MKJOIN05";
+pub(crate) const JOIN_MAGIC: &[u8; 8] = crate::JOIN_FORMAT;
 /// Delta frames without per-row schema versions; still read, never written.
-pub(crate) const JOIN_DELTA_MAGIC_V5: &[u8; 8] = b"MKJOIN5D";
+pub(crate) const JOIN_DELTA_MAGIC_V5: &[u8; 8] = crate::JOIN_DELTA_FORMAT_V5;
 /// Delta frames that end with one schema version per row (ADR 0035).
-pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = b"MKJOIN6D";
+pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = crate::JOIN_DELTA_FORMAT;
 pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 type MeasureKey = (u32, u32, u32);

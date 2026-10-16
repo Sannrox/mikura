@@ -22,7 +22,7 @@ type LoadedLogCheckpoint = (
     Option<InstanceSchemaVersions>,
 );
 
-pub(super) const CHECKPOINT_MAGIC: &[u8; 8] = b"MKCKPT01";
+pub(super) const CHECKPOINT_MAGIC: &[u8; 8] = crate::CHECKPOINT_FORMAT;
 
 /// The commit point a log checkpoint was taken at, from the file's bytes
 /// (body then CRC32). Takes bytes so a caller copies exactly what it checked.

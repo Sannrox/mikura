@@ -13,7 +13,7 @@ use crate::codec::{read_str, take, write_str};
 use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
-const MAGIC: &[u8; 8] = b"MIKURAV2";
+const MAGIC: &[u8; 8] = crate::LOG_FORMAT;
 /// Pre-namespace magic. Read only by [`read_v1_records`].
 const V1_MAGIC: &[u8; 8] = b"MIKURAV1";
 const CRC_LEN: usize = 4;
