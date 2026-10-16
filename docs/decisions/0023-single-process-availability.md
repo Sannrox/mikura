@@ -46,9 +46,11 @@ committed state.
 [#191](https://github.com/Sannrox/mikura/issues/191) is not
 implemented.**
 
-1. **Writer.** One `mikura-host` process owns one log. Serial RPC stays
-   the execution contract ([ADR 0021](0021-bounded-host-execution.md)).
-   A second process on the same files is not a supported failover path.
+1. **Writer.** One `mikura-host` process owns one log. Concurrent
+   snapshot readers with one exclusive writer are the execution
+   contract ([ADR 0021](0021-bounded-host-execution.md),
+   [ADR 0040](0040-concurrent-host-readers.md)). A second process on
+   the same files is not a supported failover path.
 
 2. **Failure.** Process or machine loss is recovered by copying or
    reopening the object log on a replacement process. Uncommitted

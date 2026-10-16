@@ -410,8 +410,9 @@ rule or a hard-delete.
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
-JSON line per connection. Accept is serial: the next RPC starts after the
-current complete line has been handled. `--request-bound` and
+JSON line per connection. Concurrent snapshot readers share the store; one
+writer runs exclusively, with per-namespace fair share
+([ADR 0040](decisions/0040-concurrent-host-readers.md)). `--request-bound` and
 `--request-timeout-ms` bound line assembly only; after a complete line,
 evaluate and ingest run to completion
 ([ADR 0021](decisions/0021-bounded-host-execution.md)). Line-delimited JSON envelope `{ v, token?, op, … }`. Responses always
@@ -423,10 +424,10 @@ include `v`. Required and unused fields by bind:
 | loopback | yes (`--bearer`) | omit or `1` | required, must match | only under evaluate `request` |
 | non-loopback | required | omit or `1` | required, must match | only under evaluate `request` |
 
-`Host::serve_while` accepts one TCP connection, handles one JSON line
-to completion, then accepts the next
-([ADR 0021](decisions/0021-bounded-host-execution.md)). The OS listen
-backlog is the only queue. Line-assembly `--request-bound` and
+`Host::serve_while` runs a fixed worker pool. At most eight RPCs execute;
+one extra accepted connection may wait on the worker rendezvous; further
+connections remain in the OS listen backlog
+([ADR 0040](decisions/0040-concurrent-host-readers.md)). Line-assembly `--request-bound` and
 `--request-timeout-ms` are not evaluate or ingest deadlines.
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,

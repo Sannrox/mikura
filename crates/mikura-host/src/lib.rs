@@ -13,13 +13,21 @@
 //! `require_bearer` is called. Non-loopback bind requires a clerk-owned
 //! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
 //! loopback.
-//! This crate does not know tenants, policy, receipts, or principals.
+//! Concurrent snapshot readers share the store; one writer runs exclusively
+//! with per-namespace fair share (ADR 0040). This crate does not know
+//! tenants, policy, receipts, or principals.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::thread;
 use std::time::{Duration, Instant};
+
+mod execution;
+use execution::{FairScheduler, DEFAULT_MAX_IN_FLIGHT};
 
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
@@ -314,14 +322,20 @@ pub struct EvaluateWire {
     pub groups: Vec<WireGroup>,
 }
 
+struct HostInner {
+    store: RwLock<Store>,
+    stream: Mutex<StreamIngest>,
+    bearer: Mutex<Option<String>>,
+    request_bound: AtomicUsize,
+    request_timeout_ms: AtomicU64,
+    accepted: AtomicU64,
+    rejected: AtomicU64,
+    scheduler: FairScheduler,
+}
+
+#[derive(Clone)]
 pub struct Host {
-    store: Store,
-    stream: StreamIngest,
-    bearer: Option<String>,
-    request_bound: usize,
-    request_timeout: Duration,
-    accepted: u64,
-    rejected: u64,
+    inner: Arc<HostInner>,
 }
 
 impl Host {
@@ -332,13 +346,16 @@ impl Host {
             Store::create(log)?
         };
         Ok(Self {
-            store,
-            stream: StreamIngest::new(stream_bound)?,
-            bearer: None,
-            request_bound: DEFAULT_REQUEST_BOUND,
-            request_timeout: Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
-            accepted: 0,
-            rejected: 0,
+            inner: Arc::new(HostInner {
+                store: RwLock::new(store),
+                stream: Mutex::new(StreamIngest::new(stream_bound)?),
+                bearer: Mutex::new(None),
+                request_bound: AtomicUsize::new(DEFAULT_REQUEST_BOUND),
+                request_timeout_ms: AtomicU64::new(DEFAULT_REQUEST_TIMEOUT_MS),
+                accepted: AtomicU64::new(0),
+                rejected: AtomicU64::new(0),
+                scheduler: FairScheduler::new(DEFAULT_MAX_IN_FLIGHT),
+            }),
         })
     }
 
@@ -346,25 +363,39 @@ impl Host {
     /// that line exceeds `timeout`. Bound must be greater than zero.
     /// After a complete line is accepted, evaluate and ingest run to
     /// completion.
-    pub fn set_request_limits(&mut self, bound: usize, timeout: Duration) -> Result<(), String> {
+    pub fn set_request_limits(&self, bound: usize, timeout: Duration) -> Result<(), String> {
         if bound == 0 {
             return Err("request bound must be greater than zero".into());
         }
         if timeout.is_zero() {
             return Err("request timeout must be greater than zero".into());
         }
-        self.request_bound = bound;
-        self.request_timeout = timeout;
+        self.inner.request_bound.store(bound, Ordering::Relaxed);
+        self.inner
+            .request_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::Relaxed);
         Ok(())
     }
 
+    fn request_bound(&self) -> usize {
+        self.inner.request_bound.load(Ordering::Relaxed)
+    }
+
+    fn request_timeout(&self) -> Duration {
+        Duration::from_millis(self.inner.request_timeout_ms.load(Ordering::Relaxed).max(1))
+    }
+
     /// Require a matching token on every JSON-line RPC.
-    pub fn require_bearer(&mut self, bearer: impl Into<String>) -> Result<(), String> {
+    pub fn require_bearer(&self, bearer: impl Into<String>) -> Result<(), String> {
         let bearer = bearer.into();
         if bearer.is_empty() {
             return Err("clerk bearer must be non-empty".into());
         }
-        self.bearer = Some(bearer);
+        *self
+            .inner
+            .bearer
+            .lock()
+            .map_err(|_| "bearer lock poisoned".to_string())? = Some(bearer);
         Ok(())
     }
 
@@ -380,7 +411,7 @@ impl Host {
         bearer: Option<&str>,
     ) -> Result<(Self, TcpListener), String> {
         let listener = Self::bind(addr, bearer)?;
-        let mut host = Self::open(log, stream_bound)?;
+        let host = Self::open(log, stream_bound)?;
         if let Some(secret) = bearer {
             host.require_bearer(secret)?;
         }
@@ -397,26 +428,61 @@ impl Host {
         TcpListener::bind(addr).map_err(|err| err.to_string())
     }
 
-    pub fn handle(&mut self, request: HostRequest) -> HostResponse {
+    pub fn handle(&self, request: HostRequest) -> HostResponse {
         let count = !matches!(request, HostRequest::Health);
         let response = self.dispatch(request);
         if count {
             if response.ok {
-                self.accepted += 1;
+                self.inner.accepted.fetch_add(1, Ordering::Relaxed);
             } else {
-                self.rejected += 1;
+                self.inner.rejected.fetch_add(1, Ordering::Relaxed);
             }
         }
         response
     }
 
-    fn dispatch(&mut self, request: HostRequest) -> HostResponse {
+    fn with_read(&self, ns: String, f: impl FnOnce(&Store) -> HostResponse) -> HostResponse {
+        let _permit = match self.inner.scheduler.acquire_read(ns) {
+            Ok(permit) => permit,
+            Err(error) => return fail(error),
+        };
+        let store = match self.inner.store.read() {
+            Ok(guard) => guard,
+            Err(_) => return fail("store lock poisoned"),
+        };
+        f(&store)
+    }
+
+    fn with_write(
+        &self,
+        f: impl FnOnce(&mut Store, &mut StreamIngest) -> HostResponse,
+    ) -> HostResponse {
+        let _permit = match self.inner.scheduler.acquire_write() {
+            Ok(permit) => permit,
+            Err(error) => return fail(error),
+        };
+        let mut store = match self.inner.store.write() {
+            Ok(guard) => guard,
+            Err(_) => return fail("store lock poisoned"),
+        };
+        let mut stream = match self.inner.stream.lock() {
+            Ok(guard) => guard,
+            Err(_) => return fail("stream lock poisoned"),
+        };
+        f(&mut store, &mut stream)
+    }
+
+    fn dispatch(&self, request: HostRequest) -> HostResponse {
         match request {
-            HostRequest::IngestBatch { records } => ack(BatchIngest::run(&mut self.store, records)),
-            HostRequest::IngestStreamPush { record } => {
-                ack(self.stream.push(&mut self.store, record))
+            HostRequest::IngestBatch { records } => {
+                self.with_write(|store, _stream| ack(BatchIngest::run(store, records)))
             }
-            HostRequest::IngestStreamFlush => ack(self.stream.flush(&mut self.store)),
+            HostRequest::IngestStreamPush { record } => {
+                self.with_write(|store, stream| ack(stream.push(store, record)))
+            }
+            HostRequest::IngestStreamFlush => {
+                self.with_write(|store, stream| ack(stream.flush(store)))
+            }
             HostRequest::ApplyAction {
                 id,
                 namespace,
@@ -426,10 +492,10 @@ impl Host {
                 expected_gen,
                 deny,
                 restriction,
-            } => {
+            } => self.with_write(|store, _stream| {
                 let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_action");
                 ack(acl.and_then(|acl| {
-                    self.store.apply_action_in_view(
+                    store.apply_action_in_view(
                         Action {
                             id,
                             namespace,
@@ -441,17 +507,17 @@ impl Host {
                         &acl,
                     )
                 }))
-            }
+            }),
             HostRequest::ApplyChangeSet {
                 id,
                 namespace,
                 edits,
                 deny,
                 restriction,
-            } => {
+            } => self.with_write(|store, _stream| {
                 let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_change_set");
                 ack(acl.and_then(|acl| {
-                    self.store.apply_change_set_in_view(
+                    store.apply_change_set_in_view(
                         ChangeSet {
                             id,
                             namespace,
@@ -460,7 +526,7 @@ impl Host {
                         &acl,
                     )
                 }))
-            }
+            }),
             HostRequest::ApplyOverlay {
                 id,
                 namespace,
@@ -472,10 +538,10 @@ impl Host {
                 expected_gen,
                 deny,
                 restriction,
-            } => {
+            } => self.with_write(|store, _stream| {
                 let acl = restriction_from_wire(&deny, restriction.as_ref(), "apply_overlay");
                 ack(acl.and_then(|acl| {
-                    self.store.apply_overlay_in_view(
+                    store.apply_overlay_in_view(
                         OverlayPatch {
                             namespace,
                             kind,
@@ -490,69 +556,76 @@ impl Host {
                         &acl,
                     )
                 }))
-            }
+            }),
             HostRequest::Hide {
                 namespace,
                 kind,
                 key,
                 deny,
                 restriction,
-            } => ack(hide_identity(
-                &mut self.store,
-                namespace,
-                kind,
-                key,
-                deny,
-                restriction,
-            )),
-            HostRequest::Evaluate { request } => match evaluate(&self.store, request) {
-                Ok(response) => HostResponse {
-                    v: WIRE_V,
-                    ok: true,
-                    error: None,
-                    evaluate: Some(EvaluateWire {
-                        two_hop_count: response.two_hop_count,
-                        sum_amount: response.sum_amount,
-                        objects: response.objects,
-                        cursor: response.cursor,
-                        groups: response
-                            .groups
-                            .into_iter()
-                            .map(|group| WireGroup {
-                                key: group.key,
-                                count: group.count,
-                                sum: group.sum,
-                                n: group.n,
-                                min: group.min,
-                                max: group.max,
-                                avg: group.avg,
-                                distinct: group.distinct,
-                            })
-                            .collect(),
-                    }),
-                    load: None,
-                    health: None,
-                },
-                Err(error) => fail(error),
-            },
+            } => self.with_write(|store, _stream| {
+                ack(hide_identity(
+                    store,
+                    namespace,
+                    kind,
+                    key,
+                    deny,
+                    restriction,
+                ))
+            }),
+            HostRequest::Evaluate { request } => {
+                let ns = request.namespace.clone();
+                self.with_read(ns, |store| match evaluate(store, request) {
+                    Ok(response) => HostResponse {
+                        v: WIRE_V,
+                        ok: true,
+                        error: None,
+                        evaluate: Some(EvaluateWire {
+                            two_hop_count: response.two_hop_count,
+                            sum_amount: response.sum_amount,
+                            objects: response.objects,
+                            cursor: response.cursor,
+                            groups: response
+                                .groups
+                                .into_iter()
+                                .map(|group| WireGroup {
+                                    key: group.key,
+                                    count: group.count,
+                                    sum: group.sum,
+                                    n: group.n,
+                                    min: group.min,
+                                    max: group.max,
+                                    avg: group.avg,
+                                    distinct: group.distinct,
+                                })
+                                .collect(),
+                        }),
+                        load: None,
+                        health: None,
+                    },
+                    Err(error) => fail(error),
+                })
+            }
             HostRequest::Load {
                 namespace,
                 kind,
                 key,
                 deny,
                 restriction,
-            } => match load_record(&self.store, namespace, kind, key, deny, restriction) {
-                Ok(record) => HostResponse {
-                    v: WIRE_V,
-                    ok: true,
-                    error: None,
-                    evaluate: None,
-                    load: Some(record),
-                    health: None,
-                },
-                Err(error) => fail(error),
-            },
-            HostRequest::Health => HostResponse {
+            } => self.with_read(namespace.clone(), |store| {
+                match load_record(store, namespace, kind, key, deny, restriction) {
+                    Ok(record) => HostResponse {
+                        v: WIRE_V,
+                        ok: true,
+                        error: None,
+                        evaluate: None,
+                        load: Some(record),
+                        health: None,
+                    },
+                    Err(error) => fail(error),
+                }
+            }),
+            HostRequest::Health => self.with_read(String::new(), |store| HostResponse {
                 v: WIRE_V,
                 ok: true,
                 error: None,
@@ -560,17 +633,18 @@ impl Host {
                 load: None,
                 health: Some(HealthWire {
                     ready: true,
-                    committed_pages: self.store.committed_pages(),
-                    accepted: self.accepted,
-                    rejected: self.rejected,
+                    committed_pages: store.committed_pages(),
+                    accepted: self.inner.accepted.load(Ordering::Relaxed),
+                    rejected: self.inner.rejected.load(Ordering::Relaxed),
                 }),
-            },
+            }),
         }
     }
 
-    pub fn handle_line(&mut self, line: &str) -> HostResponse {
-        if line.len() > self.request_bound {
-            return request_bound_fail(self.request_bound, line.len());
+    pub fn handle_line(&self, line: &str) -> HostResponse {
+        let bound = self.request_bound();
+        if line.len() > bound {
+            return request_bound_fail(bound, line.len());
         }
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
@@ -589,13 +663,15 @@ impl Host {
         self.handle(envelope.request)
     }
 
-    pub fn serve_one(&mut self, mut stream: TcpStream) -> Result<(), String> {
+    pub fn serve_one(&self, mut stream: TcpStream) -> Result<(), String> {
         self.refuse_unauthenticated_routable(stream.local_addr().map_err(|err| err.to_string())?)?;
+        let timeout = self.request_timeout();
         stream
-            .set_write_timeout(Some(self.request_timeout))
+            .set_write_timeout(Some(timeout))
             .map_err(|err| err.to_string())?;
-        let deadline = Instant::now() + self.request_timeout;
-        let line = match read_request_line(&mut stream, self.request_bound, deadline) {
+        let deadline = Instant::now() + timeout;
+        let bound = self.request_bound();
+        let line = match read_request_line(&mut stream, bound, deadline) {
             Ok(line) => line,
             Err(ServeRead::Bound { bound, bytes }) => {
                 return write_fail_closed(&mut stream, request_bound_fail(bound, bytes), deadline);
@@ -615,7 +691,7 @@ impl Host {
     /// the host. Listener accept errors still fail closed. The process binary
     /// stops by closing stdin; that path uses [`Self::serve_while`] and does
     /// not flush the stream buffer.
-    pub fn serve(&mut self, listener: TcpListener) -> Result<(), String> {
+    pub fn serve(&self, listener: TcpListener) -> Result<(), String> {
         self.serve_while(listener, || true)
     }
 
@@ -623,33 +699,91 @@ impl Host {
     ///
     /// Returning because `keep_going` is false does not flush uncommitted
     /// stream pushes. A blocked accept still needs one wakeup connect after
-    /// the flag flips.
-    pub fn serve_while<F>(&mut self, listener: TcpListener, keep_going: F) -> Result<(), String>
+    /// the flag flips. Workers run concurrent readers; a writer waits for
+    /// in-flight reads, then runs alone. Extra connections stay in the OS
+    /// listen backlog.
+    pub fn serve_while<F>(&self, listener: TcpListener, keep_going: F) -> Result<(), String>
     where
         F: Fn() -> bool,
     {
         self.refuse_unauthenticated_routable(
             listener.local_addr().map_err(|err| err.to_string())?,
         )?;
-        while keep_going() {
-            let stream = match listener.accept() {
-                Ok((stream, _)) => stream,
-                Err(err) => return Err(err.to_string()),
-            };
-            if !keep_going() {
-                return Ok(());
+        let (tx, rx) = mpsc::sync_channel::<Option<TcpStream>>(0);
+        let rx = Mutex::new(rx);
+        thread::scope(|scope| {
+            for _ in 0..DEFAULT_MAX_IN_FLIGHT {
+                let host = self.clone();
+                let rx = &rx;
+                scope.spawn(move || loop {
+                    let job = {
+                        let locked = match rx.lock() {
+                            Ok(guard) => guard,
+                            Err(_) => break,
+                        };
+                        locked.recv()
+                    };
+                    match job {
+                        Ok(Some(stream)) => {
+                            let _ = host.serve_one(stream);
+                        }
+                        _ => break,
+                    }
+                });
             }
-            let _ = self.serve_one(stream);
-        }
-        Ok(())
+            let mut accept_error = None;
+            while keep_going() {
+                let stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(err) => {
+                        accept_error = Some(err.to_string());
+                        break;
+                    }
+                };
+                if !keep_going() {
+                    break;
+                }
+                if tx.send(Some(stream)).is_err() {
+                    break;
+                }
+            }
+            for _ in 0..DEFAULT_MAX_IN_FLIGHT {
+                let _ = tx.send(None);
+            }
+            match accept_error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        })
     }
 
     fn refuse_unauthenticated_routable(&self, addr: SocketAddr) -> Result<(), String> {
+        let present = self
+            .inner
+            .bearer
+            .lock()
+            .map_err(|_| "bearer lock poisoned".to_string())?
+            .is_some();
         require_bearer_if_routable(
             addr,
-            self.bearer.is_some(),
+            present,
             "non-loopback serve refused without a clerk bearer",
         )
+    }
+
+    fn check_token(&self, presented: Option<&str>) -> Result<(), String> {
+        let guard = self
+            .inner
+            .bearer
+            .lock()
+            .map_err(|_| "bearer lock poisoned".to_string())?;
+        let Some(expected) = guard.as_deref() else {
+            return Ok(());
+        };
+        match presented {
+            Some(got) if tokens_equal(expected, got) => Ok(()),
+            _ => Err("bearer required".into()),
+        }
     }
 }
 
@@ -864,18 +998,6 @@ fn tokens_equal(expected: &str, presented: &str) -> bool {
         diff |= left ^ right;
     }
     diff == 0
-}
-
-impl Host {
-    fn check_token(&self, presented: Option<&str>) -> Result<(), String> {
-        let Some(expected) = self.bearer.as_deref() else {
-            return Ok(());
-        };
-        match presented {
-            Some(got) if tokens_equal(expected, got) => Ok(()),
-            _ => Err("bearer required".into()),
-        }
-    }
 }
 
 fn predicate_from_wire(pred: WirePredicate) -> Result<Predicate, String> {

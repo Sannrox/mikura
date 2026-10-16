@@ -32,7 +32,7 @@ consumer names a 10¹⁰ envelope.
 | Git SHA | `339d918a9335392cadf1dab67bfb2a04cff0dbd0` (`feat: prove one host RPC at a time`, PR #216) |
 | Package | `mikura-host` binary via `./build/release-images.sh` git-describe wrap ([#165](https://github.com/Sannrox/mikura/issues/165) / PR #166). Dirty trees are refused. |
 | Workload | Accepted product-loop ([m0-application-contract.md](m0-application-contract.md)) on the one-process JSON `v=1` host ([m4-hosted-pilot-contract.md](m4-hosted-pilot-contract.md)) |
-| Execution | One process, one RPC at a time ([ADR 0021](../decisions/0021-bounded-host-execution.md), [#188](https://github.com/Sannrox/mikura/issues/188)) |
+| Execution | One process, concurrent snapshot readers, exclusive writer ([ADR 0040](../decisions/0040-concurrent-host-readers.md), [ADR 0021](../decisions/0021-bounded-host-execution.md), [#243](https://github.com/Sannrox/mikura/issues/243)) |
 | Multi-object atomic edit | Closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182), [ADR 0019](../decisions/0019-overlay-retry-and-mutation-boundaries.md)). One identity per mutation. |
 
 Install: build `mikura-host`, point `--log` at an object log, bind
@@ -55,7 +55,7 @@ These are fail-closed process drills, not SLOs. Evidence:
 | Deny-closed evaluate | `process_acl_deny_returns_error_not_guess` | pass |
 | Backup/restore, dual-read | `process_backup_restore_product_loop` | pass |
 | Shutdown, uncommitted tail | `process_product_loop_survives_shutdown_and_reopen`, `process_uncommitted_stream_push_invisible_after_reopen` | pass |
-| Serial RPC | `process_serial_second_rpc_waits_for_first_line` | pass |
+| Concurrent reads | `process_concurrent_read_completes_while_other_line_assembles` | pass |
 | Health | `process_health_reports_ready_after_ingest` | pass |
 | Source resume | `process_source_resume_replays_without_an_offset_file` | pass |
 | Schema evolution | `process_schema_evolution_preserves_meaning` | pass |
@@ -71,7 +71,7 @@ Still blank. A soak against invented numbers would be a false pass.
 | --- | --- | --- |
 | Object counts, value sizes, link fanout/skew | unresolved | no production claim |
 | Update rate and query mix | unresolved | no production claim |
-| Simultaneous clients | unresolved | serial host is the contract, not a mix SLO |
+| Simultaneous clients | unresolved | concurrent readers are the contract, not a mix SLO |
 | p95/p99 load / evaluate / ingest | unresolved | no production claim |
 | Throughput | unresolved | no production claim |
 | Memory / disk | unresolved | no production claim |

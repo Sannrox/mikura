@@ -52,7 +52,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
     };
-    let (mut host, listener) = Host::listen(
+    let (host, listener) = Host::listen(
         &args.log,
         args.stream_bound,
         args.bind,

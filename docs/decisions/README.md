@@ -25,7 +25,7 @@ a new ADR. Allocate the next number and list it here.
 | [0018](0018-aggregation-semantics.md) | Count+sum only; no extra aggregate without a fixture | accepted |
 | [0019](0019-overlay-retry-and-mutation-boundaries.md) | Overlay Action-id replay; no multi-object atomic edit | accepted |
 | [0020](0020-resumable-source-reconciliation.md) | Clerk-owned source offsets; changelog/stream replay | accepted |
-| [0021](0021-bounded-host-execution.md) | One RPC at a time; no invented mixed-load SLO | accepted |
+| [0021](0021-bounded-host-execution.md) | One RPC at a time; no invented mixed-load SLO (amended by 0040) | accepted |
 | [0022](0022-operational-signals.md) | Host JSON health; process-local RPC counts | accepted |
 | [0023](0023-single-process-availability.md) | Retain one-process availability; no replication without a published miss | accepted |
 | [0024](0024-unpartitioned-store.md) | Retain one unpartitioned store; no split without a published capacity miss | accepted |
@@ -44,6 +44,7 @@ a new ADR. Allocate the next number and list it here.
 | [0037](0037-online-backup-and-restore.md) | Online backup, verify, and point-in-time restore | accepted |
 | [0038](0038-breakdown-aggregates.md) | Breakdown aggregates and bounded group-by | accepted |
 | [0039](0039-multi-key-sort.md) | Multi-key sort with versioned cursors | accepted |
+| [0040](0040-concurrent-host-readers.md) | Concurrent snapshot readers; exclusive writer; namespace fair share | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

@@ -61,8 +61,8 @@ a failed push leaves earlier pushes pending until `flush`
   can fix the batch and resend it.
 - A failed batch costs a projection reload (sidecar load, or a log replay
   when no sidecar matches). Repeated failing batches on a very large store
-  are therefore not free; the host already runs one RPC at a time
-  ([ADR 0021](0021-bounded-host-execution.md)).
+  are therefore not free; a write still runs exclusively
+  ([ADR 0021](0021-bounded-host-execution.md), [ADR 0040](0040-concurrent-host-readers.md)).
 - `Store::append_uncommitted` stays for stream ingest and composition. A
   caller that stacks its own appends owns their abort behavior.
 - Multi-write store operations that append more than one record before a
