@@ -23,6 +23,8 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
   default namespace
   ([#251](https://github.com/Sannrox/mikura/issues/251),
   [ADR 0030](docs/decisions/0030-unnamespaced-log-migration.md)).
+  `Store::migrate_unnamespaced_with` assigns each `(kind, key)` its own
+  namespace when a caller can name them.
 - Public identity is `(namespace, kind, key)`. Load, evaluate, hide,
   overlay, and Action name a namespace. Missing or unknown fails closed.
   Host JSON requires `namespace` on those ops and on ingested records.

@@ -136,3 +136,51 @@ fn full_page_legacy_record_fails_closed_naming_it() {
     assert!(!dst.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn mapped_v1_migration_assigns_each_identity_its_namespace() {
+    let (dir, dst) = temp_log("migrate-mapped");
+    let (src, _) = v1_log(&dir);
+    let count = Store::migrate_unnamespaced_with(&src, &dst, |kind, _key| {
+        Ok(if kind == "Customer" {
+            "sales".into()
+        } else {
+            "ops".into()
+        })
+    })
+    .unwrap();
+    assert!(count > 0);
+    let store = Store::open(&dst).unwrap();
+    let open = PropertyAcl::allow_all();
+    assert_eq!(
+        store
+            .load("sales", "Customer", "c1", &open)
+            .unwrap()
+            .namespace,
+        "sales"
+    );
+    assert_eq!(
+        store.load("ops", "Order", "o1", &open).unwrap().namespace,
+        "ops"
+    );
+    assert!(store.load("ops", "Customer", "c1", &open).is_err());
+    assert!(store.load("sales", "Order", "o1", &open).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mapped_v1_migration_writes_nothing_when_a_record_cannot_choose() {
+    let (dir, dst) = temp_log("migrate-mapped-refuse");
+    let (src, _) = v1_log(&dir);
+    let error = Store::migrate_unnamespaced_with(&src, &dst, |kind, key| {
+        if kind == "Order" {
+            Err(format!("{kind}/{key} is in more than one namespace"))
+        } else {
+            Ok("sales".into())
+        }
+    })
+    .unwrap_err();
+    assert!(error.contains("Order/"), "{error}");
+    assert!(!dst.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
