@@ -10,6 +10,11 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Upgrade
 
+- Crate version is 0.3.0. `PropertyType`, `PropertyValue`, and
+  `Predicate` gain variants; `Sort.nearest` is new; host
+  `HostRequest::Evaluate` is `Box<WireEvaluate>`. JSON wire is unchanged
+  ([#247](https://github.com/Sannrox/mikura/issues/247),
+  [ADR 0043](docs/decisions/0043-typed-ref-values.md)).
 - New object logs write `MIKURAV2` with a required `namespace` on every
   record. `MIKURAV1` logs fail closed on open. Join sidecars are
   `MKJOIN05` / `MKJOIN6D`; `MKJOIN5D` delta frames still read, and
