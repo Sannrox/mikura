@@ -171,7 +171,21 @@ impl Store {
     /// caller names the namespace: there is no shared default. Neither `dst`
     /// nor its sidecars may exist, and a crash leaves no partial `dst`.
     pub fn migrate_unnamespaced(src: &Path, dst: &Path, namespace: &str) -> Result<usize, String> {
-        let namespace = require_namespace(namespace)?;
+        let namespace = require_namespace(namespace)?.to_string();
+        Self::migrate_unnamespaced_with(src, dst, |_, _| Ok(namespace.clone()))
+    }
+
+    /// Like [`Self::migrate_unnamespaced`], but each `(kind, key)` chooses its
+    /// namespace. Mapping must succeed for every committed record or nothing
+    /// is written. Empty mapped namespaces fail closed.
+    pub fn migrate_unnamespaced_with<F>(
+        src: &Path,
+        dst: &Path,
+        mut namespace_for: F,
+    ) -> Result<usize, String>
+    where
+        F: FnMut(&str, &str) -> Result<String, String>,
+    {
         // Refuse rather than delete: a leftover sidecar would be trusted on
         // open, and deleting one could hit a caller's file.
         for path in [
@@ -188,7 +202,17 @@ impl Store {
                 ));
             }
         }
-        let records = read_v1_records(src, namespace)?;
+        // The placeholder is overwritten before any V2 page is written.
+        let pending = read_v1_records(src, "pending")?;
+        let mut records = Vec::with_capacity(pending.len());
+        for record in pending {
+            let namespace =
+                require_namespace(&namespace_for(&record.kind, &record.key)?)?.to_string();
+            records.push(ObjectRecord {
+                namespace,
+                ..record
+            });
+        }
         // A per-call staging file, published with a no-clobber link, so
         // concurrent migrations to one `dst` cannot interleave or overwrite.
         let nonce = std::time::SystemTime::now()
@@ -203,8 +227,8 @@ impl Store {
                 // A V1 record near the page limit may not fit the namespace.
                 writer.append_record(record).map_err(|error| {
                     format!(
-                        "cannot migrate {}/{} into namespace {namespace}: {error}",
-                        record.kind, record.key
+                        "cannot migrate {}/{} into namespace {}: {error}",
+                        record.kind, record.key, record.namespace
                     )
                 })?;
             }
