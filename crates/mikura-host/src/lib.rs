@@ -5,7 +5,8 @@
 //! `evaluate`, `load`, `health`, `metrics`. JSON lines are envelope `{ v, token?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
-//! returns snapshot pages; `cursor` binds restriction, query, and live writer stamp.
+//! returns snapshot pages; `sort.nearest` ranks a vector property by
+//! squared L2; `predicate` `bbox` filters geo; `cursor` binds restriction, query, and live writer stamp.
 //! Host `restriction` is the ADR 0014 document (`deny_properties`,
 //! `hide_kinds`, `hide_identities`); `deny` remains the property-only
 //! shorthand. Unknown restriction keys fail closed.
@@ -122,6 +123,13 @@ pub enum WirePredicate {
     Not {
         arg: Box<WirePredicate>,
     },
+    Bbox {
+        property: String,
+        min_lat: String,
+        min_lon: String,
+        max_lat: String,
+        max_lon: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -189,6 +197,8 @@ pub struct WireSort {
     pub property: String,
     #[serde(default)]
     pub descending: bool,
+    #[serde(default)]
+    pub nearest: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -254,7 +264,7 @@ pub enum HostRequest {
         restriction: Option<WireRestriction>,
     },
     Evaluate {
-        request: WireEvaluate,
+        request: Box<WireEvaluate>,
     },
     Load {
         namespace: String,
@@ -602,7 +612,7 @@ impl Host {
             }),
             HostRequest::Evaluate { request } => {
                 let ns = request.namespace.clone();
-                self.with_read(ns, |store| match evaluate(store, request) {
+                self.with_read(ns, |store| match evaluate(store, *request) {
                     Ok(response) => HostResponse {
                         v: WIRE_V,
                         ok: true,
@@ -1118,6 +1128,13 @@ fn predicate_from_wire(pred: WirePredicate) -> Result<Predicate, String> {
                 .collect::<Result<_, _>>()?,
         ),
         WirePredicate::Not { arg } => !predicate_from_wire(*arg)?,
+        WirePredicate::Bbox {
+            property,
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        } => Predicate::bbox(property, min_lat, min_lon, max_lat, max_lon),
     })
 }
 
@@ -1160,6 +1177,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
         sort: request.sort.map(|sort| Sort {
             property: sort.property,
             descending: sort.descending,
+            nearest: sort.nearest,
         }),
         then_by: request
             .then_by
@@ -1167,6 +1185,7 @@ fn evaluate(store: &Store, request: WireEvaluate) -> Result<EvaluateResponse, St
             .map(|sort| Sort {
                 property: sort.property,
                 descending: sort.descending,
+                nearest: sort.nearest,
             })
             .collect(),
         page_size: request.page_size,

@@ -479,7 +479,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
     let ingest = host.handle(HostRequest::IngestBatch { records: fixture() });
     assert!(ingest.ok, "{ingest:?}");
     let hosted = host.handle(HostRequest::Evaluate {
-        request: eval_req(),
+        request: Box::new(eval_req()),
     });
     assert!(hosted.ok, "{hosted:?}");
     let hosted = hosted.evaluate.unwrap();
@@ -565,7 +565,9 @@ fn evaluate_acl_fails_closed() {
         kind: "Shipment".into(),
         property: "amount".into(),
     });
-    let denied = host.handle(HostRequest::Evaluate { request });
+    let denied = host.handle(HostRequest::Evaluate {
+        request: Box::new(request),
+    });
     assert!(!denied.ok);
     assert!(
         denied.error.as_deref().unwrap_or("").contains("Denied"),
@@ -796,7 +798,9 @@ fn evaluate_filter_matches_in_process() {
         property: "region".into(),
         value: "us".into(),
     });
-    let hosted = host.handle(HostRequest::Evaluate { request });
+    let hosted = host.handle(HostRequest::Evaluate {
+        request: Box::new(request),
+    });
     assert!(hosted.ok, "{hosted:?}");
     let hosted = hosted.evaluate.unwrap();
     assert_eq!(hosted.two_hop_count, 1);
@@ -806,7 +810,9 @@ fn evaluate_filter_matches_in_process() {
         property: String::new(),
         value: String::new(),
     });
-    let rejected = host.handle(HostRequest::Evaluate { request: empty });
+    let rejected = host.handle(HostRequest::Evaluate {
+        request: Box::new(empty),
+    });
     assert!(!rejected.ok, "{rejected:?}");
     assert!(
         rejected.error.as_deref().unwrap_or("").contains("filter"),
@@ -814,7 +820,7 @@ fn evaluate_filter_matches_in_process() {
     );
     assert!(rejected.evaluate.is_none());
     let omitted = host.handle(HostRequest::Evaluate {
-        request: eval_req(),
+        request: Box::new(eval_req()),
     });
     assert!(omitted.ok, "{omitted:?}");
     let omitted = omitted.evaluate.unwrap();
@@ -994,7 +1000,7 @@ fn load_matches_in_process_and_omits_denied() {
         property: "amount".into(),
     });
     let denied_eval = host.handle(HostRequest::Evaluate {
-        request: denied_eval,
+        request: Box::new(denied_eval),
     });
     assert!(!denied_eval.ok, "{denied_eval:?}");
     assert!(
@@ -1060,7 +1066,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
         Some("elevated latency")
     );
     let listed = host.handle(HostRequest::Evaluate {
-        request: WireEvaluate {
+        request: Box::new(WireEvaluate {
             namespace: "ns".into(),
             root_kind: "component".into(),
             hops: Vec::new(),
@@ -1079,14 +1085,14 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             cursor: None,
             breakdown: None,
             then_by: Vec::new(),
-        },
+        }),
     });
     assert!(listed.ok, "{listed:?}");
     let listed = listed.evaluate.unwrap();
     assert_eq!(listed.objects.len(), 1);
     assert_eq!(listed.objects[0].key, "svc-api");
     let hopped = host.handle(HostRequest::Evaluate {
-        request: WireEvaluate {
+        request: Box::new(WireEvaluate {
             namespace: "ns".into(),
             root_kind: "incident".into(),
             hops: vec![WireHop {
@@ -1107,7 +1113,7 @@ fn hide_omits_from_evaluate_and_keeps_load() {
             cursor: None,
             breakdown: None,
             then_by: Vec::new(),
-        },
+        }),
     });
     assert!(hopped.ok, "{hopped:?}");
     let hopped = hopped.evaluate.unwrap();
@@ -1513,5 +1519,124 @@ fn evaluate_then_by_sorts_on_the_wire() {
         .map(|object| object.key)
         .collect();
     assert_eq!(keys, ["c", "a", "b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn evaluate_nearest_and_bbox_on_the_wire() {
+    let (dir, log) = temp_log("typed-ref-wire");
+    let host = Host::open(&log, 4).unwrap();
+    host.handle(HostRequest::IngestBatch {
+        records: vec![
+            rec(
+                "mikura.schema",
+                "sample",
+                false,
+                &[
+                    ("properties", "embedding,location,name"),
+                    ("required", "name"),
+                    ("types", "embedding:vector:2,location:geo:point"),
+                ],
+            ),
+            rec(
+                "sample",
+                "s1",
+                false,
+                &[
+                    ("name", "origin"),
+                    ("embedding", "0,0"),
+                    ("location", "51.5,-0.1"),
+                ],
+            ),
+            rec(
+                "sample",
+                "s2",
+                false,
+                &[("name", "far"), ("embedding", "3,4"), ("location", "0,0")],
+            ),
+            rec(
+                "sample",
+                "s3",
+                false,
+                &[
+                    ("name", "near"),
+                    ("embedding", "1,0"),
+                    ("location", "51.45,-0.08"),
+                ],
+            ),
+        ],
+    });
+    let nearest = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "sample",
+                "hops": [],
+                "sum_kind": "sample",
+                "sum_property": "name",
+                "object_bound": 8,
+                "page_size": 2,
+                "sort": {"property": "embedding", "nearest": "0,0"}
+            }
+        })
+        .to_string(),
+    );
+    assert!(nearest.ok, "{nearest:?}");
+    let keys: Vec<_> = nearest
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|object| object.key)
+        .collect();
+    assert_eq!(keys, ["s1", "s3"]);
+    let bbox = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "sample",
+                "hops": [],
+                "sum_kind": "sample",
+                "sum_property": "name",
+                "object_bound": 8,
+                "predicate": {
+                    "op": "bbox",
+                    "property": "location",
+                    "min_lat": "51",
+                    "min_lon": "-1",
+                    "max_lat": "52",
+                    "max_lon": "0"
+                }
+            }
+        })
+        .to_string(),
+    );
+    assert!(bbox.ok, "{bbox:?}");
+    let mut keys: Vec<_> = bbox
+        .evaluate
+        .unwrap()
+        .objects
+        .into_iter()
+        .map(|object| object.key)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["s1", "s3"]);
+    let unknown = host.handle_line(
+        &serde_json::json!({
+            "op": "evaluate",
+            "request": {
+                "namespace": "ns",
+                "root_kind": "sample",
+                "hops": [],
+                "sum_kind": "sample",
+                "sum_property": "name",
+                "predicate": {"op": "knn", "property": "embedding", "value": "0,0"}
+            }
+        })
+        .to_string(),
+    );
+    assert!(!unknown.ok, "{unknown:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

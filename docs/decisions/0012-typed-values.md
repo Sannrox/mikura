@@ -7,6 +7,7 @@
 - Amends: [ADR 0008](0008-type-link-delete.md) value types (links, hide, and schema-as-object stay)
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0043](0043-typed-ref-values.md) (vector, time-series, geo, media)
 
 ## Context
 
@@ -57,7 +58,10 @@ explicit conversion rule exists.
 Undeclared properties, and declared properties with no type, stay `string`.
 `float` / `double`, date-without-time, arrays, structs, geo, binary, and
 enumerations stay out until a consumer fixture names one and a later ADR
-says how to encode it.
+says how to encode it. [ADR 0043](0043-typed-ref-values.md) admits
+`vector:<dim>`, `tsref`, `geo:point`, `geo:shape`, and `media` as
+canonical UTF-8 references (vectors stay in `props`; large payloads do
+not).
 
 ### Proposed fixture extension
 

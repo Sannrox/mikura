@@ -95,7 +95,8 @@ fn check_predicate_shape(pred: &Predicate) -> Result<(), ComputeError> {
         Predicate::Eq { property, .. }
         | Predicate::Neq { property, .. }
         | Predicate::Range { property, .. }
-        | Predicate::Missing { property } => {
+        | Predicate::Missing { property }
+        | Predicate::Bbox { property, .. } => {
             if property.is_empty() {
                 return Err(ComputeError::Predicate(
                     "predicate property must be non-empty".into(),
@@ -143,10 +144,31 @@ fn check_predicate_types(
         }
         Predicate::Range { property, min, max } => {
             let ty = property_type(store, namespace, kind, property)?;
-            if matches!(ty, PropertyType::Boolean) {
-                return Err(ComputeError::Predicate(format!(
-                    "range is not defined for boolean {kind}.{property}"
-                )));
+            match ty {
+                PropertyType::Boolean
+                | PropertyType::Vector { .. }
+                | PropertyType::GeoPoint
+                | PropertyType::GeoShape
+                | PropertyType::Media => {
+                    return Err(ComputeError::Predicate(format!(
+                        "range is not defined for {} {kind}.{property}",
+                        ty.token()
+                    )));
+                }
+                PropertyType::TimeSeries => {
+                    let ts = PropertyType::Timestamp;
+                    if let Some(bound) = min {
+                        ts.parse_canonical(bound).map_err(ComputeError::Predicate)?;
+                    }
+                    if let Some(bound) = max {
+                        ts.parse_canonical(bound).map_err(ComputeError::Predicate)?;
+                    }
+                    return Ok(());
+                }
+                PropertyType::String
+                | PropertyType::Integer
+                | PropertyType::Timestamp
+                | PropertyType::Decimal { .. } => {}
             }
             if let Some(bound) = min {
                 ty.parse_canonical(bound).map_err(ComputeError::Predicate)?;
@@ -155,6 +177,18 @@ fn check_predicate_types(
                 ty.parse_canonical(bound).map_err(ComputeError::Predicate)?;
             }
             Ok(())
+        }
+        Predicate::Bbox {
+            property,
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        } => {
+            let ty = property_type(store, namespace, kind, property)?;
+            ty.in_bbox("", min_lat, min_lon, max_lat, max_lon)
+                .map(|_| ())
+                .map_err(ComputeError::Predicate)
         }
         Predicate::Missing { .. } => Ok(()),
         Predicate::And(args) | Predicate::Or(args) => {
@@ -224,6 +258,20 @@ fn matches_predicate(
         }
         Predicate::Missing { property } => {
             Ok(query_prop(store, maps, namespace, kind, key, property).is_none())
+        }
+        Predicate::Bbox {
+            property,
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        } => {
+            let Some(stored) = query_prop(store, maps, namespace, kind, key, property) else {
+                return Ok(false);
+            };
+            let ty = property_type(store, namespace, kind, property)?;
+            ty.in_bbox(stored, min_lat, min_lon, max_lat, max_lon)
+                .map_err(ComputeError::Predicate)
         }
         Predicate::And(args) => {
             for arg in args {
@@ -644,7 +692,7 @@ fn check_breakdown(request: &EvaluateRequest, breakdown: &Breakdown) -> Result<(
     Ok(())
 }
 
-fn check_page_request(request: &EvaluateRequest) -> Result<(), ComputeError> {
+fn check_page_request(store: &Store, request: &EvaluateRequest) -> Result<(), ComputeError> {
     if request.sort.is_none()
         && request.then_by.is_empty()
         && request.page_size == 0
@@ -668,6 +716,7 @@ fn check_page_request(request: &EvaluateRequest) -> Result<(), ComputeError> {
             "at most {MAX_SORT_KEYS} sort keys"
         )));
     }
+    let kind = result_kind(request);
     for (index, sort) in keys.iter().enumerate() {
         if sort.property.is_empty() {
             return Err(ComputeError::Page("sort property must be non-empty".into()));
@@ -677,6 +726,34 @@ fn check_page_request(request: &EvaluateRequest) -> Result<(), ComputeError> {
             .any(|seen| seen.property == sort.property)
         {
             return Err(ComputeError::Page("sort keys must differ".into()));
+        }
+        if sort.nearest.is_some() {
+            if index != 0 {
+                return Err(ComputeError::Page("nearest is only valid on sort".into()));
+            }
+            if !request.then_by.is_empty() || request.cursor.is_some() {
+                return Err(ComputeError::Page(
+                    "nearest does not combine with then_by or a cursor".into(),
+                ));
+            }
+            if request.page_size == 0 {
+                return Err(ComputeError::Page("nearest requires page_size".into()));
+            }
+        }
+        let ty = property_type(store, &request.namespace, kind, &sort.property)?;
+        match (ty, sort.nearest.as_deref()) {
+            (PropertyType::Vector { .. }, Some(query)) => {
+                ty.parse_canonical(query).map_err(ComputeError::Page)?;
+            }
+            (PropertyType::Vector { .. }, None) => {
+                return Err(ComputeError::Page("vector sort requires nearest".into()));
+            }
+            (_, Some(_)) => {
+                return Err(ComputeError::Page(
+                    "nearest requires a vector property".into(),
+                ));
+            }
+            _ => {}
         }
     }
     if request.cursor.is_some() && request.page_size == 0 {
@@ -712,7 +789,11 @@ fn page_objects(
     };
     let ranked = apply_cursor(store, request, ranked)?;
     let (page, has_more) = split_page(ranked, request.page_size);
-    let cursor = if has_more {
+    let nearest = request
+        .sort
+        .as_ref()
+        .is_some_and(|sort| sort.nearest.is_some());
+    let cursor = if has_more && !nearest {
         let last = page
             .last()
             .expect("a continuation requires a non-empty page");
@@ -762,6 +843,27 @@ fn rank_keys(
         }
         ranked.push(RankedKey { key, parts });
     }
+    if let (Some(sort), Some(ty)) = (sorts.first(), types.first()) {
+        if let Some(query) = sort.nearest.as_deref() {
+            ranked.retain(|row| row.parts.first().is_some_and(|(missing, _)| !missing));
+            let mut scored = Vec::with_capacity(ranked.len());
+            for row in ranked {
+                let stored = &row.parts[0].1;
+                let distance = ty
+                    .vector_distance(stored, query)
+                    .map_err(ComputeError::Page)?;
+                scored.push((distance, row));
+            }
+            scored.sort_by(|left, right| {
+                let mut order = left.0.partial_cmp(&right.0).unwrap_or(Ordering::Equal);
+                if sort.descending {
+                    order = order.reverse();
+                }
+                order.then_with(|| left.1.key.cmp(&right.1.key))
+            });
+            return Ok(scored.into_iter().map(|(_, row)| row).collect());
+        }
+    }
     ranked.sort_by(|left, right| {
         cmp_ranked(&types, sorts, left, right).expect("ranked values were parsed")
     });
@@ -786,7 +888,13 @@ fn cmp_ranked(
             (true, false) => Ordering::Greater,
             (false, true) => Ordering::Less,
             (false, false) => {
-                let order = ty.cmp_canonical(&l.1, &r.1)?;
+                let order = if let Some(query) = sort.nearest.as_deref() {
+                    let left = ty.vector_distance(&l.1, query)?;
+                    let right = ty.vector_distance(&r.1, query)?;
+                    left.partial_cmp(&right).unwrap_or(Ordering::Equal)
+                } else {
+                    ty.cmp_canonical(&l.1, &r.1)?
+                };
                 if sort.descending {
                     order.reverse()
                 } else {
@@ -928,7 +1036,7 @@ impl ComputeBackend for LocalCompute {
                     check_predicate_acl(request, &request.root_kind, pred)?;
                     check_predicate_types(store, &request.namespace, &request.root_kind, pred)?;
                 }
-                check_page_request(request)?;
+                check_page_request(store, request)?;
                 if let Some(breakdown) = &request.breakdown {
                     check_breakdown(request, breakdown)?;
                 }

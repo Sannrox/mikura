@@ -22,8 +22,9 @@
 //! commit as before; recast, rename, retarget, and drop need a declared
 //! migration ([`Store::load_at_schema`] names an earlier version).
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
-//! Optional `types` declare boolean, integer, timestamp, and decimal values
-//! stored as canonical UTF-8 in `props` ([`PropertyType`]).
+//! Optional `types` declare boolean, integer, timestamp, decimal, vector,
+//! time-series, geo, and media values stored as canonical UTF-8 in `props`
+//! ([`PropertyType`]).
 //! A committed [`OverlayPatch`] (`mikura.overlay/{kind}/{key}`) merges
 //! named properties onto later source writes of that identity. Default
 //! merge is user-wins; a schema [`ConflictStrategy`] may select
@@ -83,7 +84,7 @@ pub use store::{
     tenant_namespace, AsOf, ObjectRecord, ObjectVersion, Store, VersionOrigin,
     JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
 };
-pub use value::{PropertyType, PropertyValue};
+pub use value::{PropertyType, PropertyValue, VECTOR_DIM_MAX};
 
 #[cfg(test)]
 mod crate_tests;

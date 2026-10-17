@@ -1,11 +1,16 @@
-//! Canonical scalar encodings for schema-declared property types (ADR 0012).
+//! Canonical encodings for schema-declared property types (ADR 0012, ADR 0043).
 //!
 //! Physical storage stays UTF-8 in [`crate::ObjectRecord::props`]. These
 //! helpers parse and format the accepted subset. Writes may normalize a
 //! timestamp with an offset; other types require the canonical form.
+//! Vectors, geo, and references never store the large payload itself.
 
 use std::cmp::Ordering;
 use std::fmt;
+
+/// Largest admitted vector dimension. An all-zero vector of this dim
+/// fits on a 4 KiB page; the page still bounds longer encodings.
+pub const VECTOR_DIM_MAX: u16 = 1024;
 
 /// Clerk-declared logical type of one property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +19,21 @@ pub enum PropertyType {
     Boolean,
     Integer,
     Timestamp,
-    Decimal { scale: u8 },
+    Decimal {
+        scale: u8,
+    },
+    /// Fixed-dimension embedding. Canonical form is `dim` comma-separated
+    /// numbers; the payload stays in `props`.
+    Vector {
+        dim: u16,
+    },
+    /// External time-series reference plus inclusive `[start, end]` timestamps.
+    TimeSeries,
+    GeoPoint,
+    /// External shape reference plus a bounding envelope.
+    GeoShape,
+    /// External media or attachment reference.
+    Media,
 }
 
 /// Typed view of a canonical property value.
@@ -25,18 +44,31 @@ pub enum PropertyValue {
     Integer(i64),
     Timestamp(String),
     Decimal(String),
+    Vector(String),
+    TimeSeries(String),
+    GeoPoint(String),
+    GeoShape(String),
+    Media(String),
 }
 
 impl PropertyType {
     /// Decode a descriptor token (`boolean`, `integer`, `timestamp`,
-    /// `string`, or `decimal:<scale>`).
+    /// `string`, `decimal:<scale>`, `vector:<dim>`, `tsref`, `geo:point`,
+    /// `geo:shape`, or `media`).
     pub fn from_token(token: &str) -> Result<Self, String> {
         match token {
             "string" => Ok(Self::String),
             "boolean" => Ok(Self::Boolean),
             "integer" => Ok(Self::Integer),
             "timestamp" => Ok(Self::Timestamp),
+            "tsref" => Ok(Self::TimeSeries),
+            "geo:point" => Ok(Self::GeoPoint),
+            "geo:shape" => Ok(Self::GeoShape),
+            "media" => Ok(Self::Media),
             other => {
+                if let Some(dim) = other.strip_prefix("vector:") {
+                    return parse_vector_dim(dim).map(|dim| Self::Vector { dim });
+                }
                 let Some(scale) = other.strip_prefix("decimal:") else {
                     return Err(format!("unknown property type {other}"));
                 };
@@ -62,6 +94,11 @@ impl PropertyType {
             Self::Integer => "integer".into(),
             Self::Timestamp => "timestamp".into(),
             Self::Decimal { scale } => format!("decimal:{scale}"),
+            Self::Vector { dim } => format!("vector:{dim}"),
+            Self::TimeSeries => "tsref".into(),
+            Self::GeoPoint => "geo:point".into(),
+            Self::GeoShape => "geo:shape".into(),
+            Self::Media => "media".into(),
         }
     }
 
@@ -79,20 +116,32 @@ impl PropertyType {
                 Ok(PropertyValue::Timestamp(raw.to_string()))
             }
             Self::Decimal { scale } => parse_decimal(raw, scale),
+            Self::Vector { dim } => parse_vector(raw, dim),
+            Self::TimeSeries => parse_time_series(raw),
+            Self::GeoPoint => parse_geo_point(raw),
+            Self::GeoShape => parse_geo_shape(raw),
+            Self::Media => parse_media(raw),
         }
     }
 
     /// Inclusive ADR 0012 order. `None` bound is unbounded that side.
-    /// Boolean has no range. A stored value that is not canonical is not a
-    /// match rather than a request error.
+    /// Boolean, vector, geo, and media have no range. Time-series range is
+    /// overlap of `[start, end]` with timestamp bounds. A stored value that
+    /// is not canonical is not a match rather than a request error.
     pub fn in_range(
         self,
         stored: &str,
         min: Option<&str>,
         max: Option<&str>,
     ) -> Result<bool, String> {
-        if matches!(self, Self::Boolean) {
-            return Err("range is not defined for boolean".into());
+        match self {
+            Self::Boolean => return Err("range is not defined for boolean".into()),
+            Self::Vector { .. } => return Err("range is not defined for vector".into()),
+            Self::GeoPoint => return Err("range is not defined for geo:point".into()),
+            Self::GeoShape => return Err("range is not defined for geo:shape".into()),
+            Self::Media => return Err("range is not defined for media".into()),
+            Self::TimeSeries => return time_series_overlaps(stored, min, max),
+            Self::String | Self::Integer | Self::Timestamp | Self::Decimal { .. } => {}
         }
         let Ok(value) = self.parse_canonical(stored) else {
             return Ok(false);
@@ -126,7 +175,73 @@ impl PropertyType {
             (Self::Decimal { .. }, PropertyValue::Decimal(a), PropertyValue::Decimal(b)) => {
                 Ok(decimal_units(a)?.cmp(&decimal_units(b)?))
             }
+            (Self::TimeSeries, PropertyValue::TimeSeries(a), PropertyValue::TimeSeries(b))
+            | (Self::GeoPoint, PropertyValue::GeoPoint(a), PropertyValue::GeoPoint(b))
+            | (Self::GeoShape, PropertyValue::GeoShape(a), PropertyValue::GeoShape(b))
+            | (Self::Media, PropertyValue::Media(a), PropertyValue::Media(b))
+            | (Self::Vector { .. }, PropertyValue::Vector(a), PropertyValue::Vector(b)) => {
+                Ok(a.cmp(b))
+            }
             _ => Err("typed comparison mixed property types".into()),
+        }
+    }
+
+    /// Squared L2 distance of two canonical vectors as IEEE f64 of their
+    /// decimal components. Used only for nearest-neighbour ranking.
+    pub fn vector_distance(self, stored: &str, query: &str) -> Result<f64, String> {
+        let Self::Vector { dim } = self else {
+            return Err("nearest requires a vector property".into());
+        };
+        let left = vector_components(stored, dim)?;
+        let right = vector_components(query, dim)?;
+        let distance: f64 = left
+            .iter()
+            .zip(&right)
+            .map(|(a, b)| {
+                let d = a - b;
+                d * d
+            })
+            .sum();
+        if !distance.is_finite() {
+            return Err("vector distance is not finite".into());
+        }
+        Ok(distance)
+    }
+
+    /// Point-in-box or shape-envelope intersection. Bounds are canonical numbers.
+    pub fn in_bbox(
+        self,
+        stored: &str,
+        min_lat: &str,
+        min_lon: &str,
+        max_lat: &str,
+        max_lon: &str,
+    ) -> Result<bool, String> {
+        let min_lat = parse_lat(min_lat)?;
+        let min_lon = parse_lon(min_lon)?;
+        let max_lat = parse_lat(max_lat)?;
+        let max_lon = parse_lon(max_lon)?;
+        if min_lat > max_lat || min_lon > max_lon {
+            return Err("bbox min must not exceed max".into());
+        }
+        match self {
+            Self::GeoPoint => {
+                let Ok((lat, lon)) = geo_point_parts(stored) else {
+                    return Ok(false);
+                };
+                Ok(lat >= min_lat && lat <= max_lat && lon >= min_lon && lon <= max_lon)
+            }
+            Self::GeoShape => {
+                let Ok((_, smin_lat, smin_lon, smax_lat, smax_lon)) = geo_shape_parts(stored)
+                else {
+                    return Ok(false);
+                };
+                Ok(smin_lat <= max_lat
+                    && smax_lat >= min_lat
+                    && smin_lon <= max_lon
+                    && smax_lon >= min_lon)
+            }
+            _ => Err(format!("bbox is not defined for {}", self.token())),
         }
     }
 
@@ -146,7 +261,14 @@ impl PropertyType {
 impl PropertyValue {
     pub fn canonical(&self) -> String {
         match self {
-            Self::String(value) | Self::Timestamp(value) | Self::Decimal(value) => value.clone(),
+            Self::String(value)
+            | Self::Timestamp(value)
+            | Self::Decimal(value)
+            | Self::Vector(value)
+            | Self::TimeSeries(value)
+            | Self::GeoPoint(value)
+            | Self::GeoShape(value)
+            | Self::Media(value) => value.clone(),
             Self::Boolean(true) => "true".into(),
             Self::Boolean(false) => "false".into(),
             Self::Integer(value) => value.to_string(),
@@ -447,6 +569,224 @@ fn civil_from_unix_days(mut days: i64) -> Result<(i32, u32, u32), String> {
     Ok((year, month, (days + 1) as u32))
 }
 
+fn parse_vector_dim(raw: &str) -> Result<u16, String> {
+    if raw.len() > 1 && raw.starts_with('0') {
+        return Err(format!("vector dim {raw} is not canonical"));
+    }
+    let dim: u16 = raw
+        .parse()
+        .map_err(|_| format!("vector dim {raw} is not an integer"))?;
+    if !(1..=VECTOR_DIM_MAX).contains(&dim) {
+        return Err(format!("vector dim {dim} is not in 1..={VECTOR_DIM_MAX}"));
+    }
+    Ok(dim)
+}
+
+/// Restricted decimal: optional `-` (not `-0`), integer `0` or `[1-9][0-9]*`,
+/// optional `.` plus digits that do not end in `0`.
+fn is_canonical_number(raw: &str) -> bool {
+    let body = match raw.strip_prefix('-') {
+        Some("0") => return false,
+        Some(rest) => rest,
+        None => raw,
+    };
+    match body.split_once('.') {
+        None => is_canonical_integer(body) && !body.starts_with('-'),
+        Some((int, frac)) => {
+            if frac.is_empty() || frac.ends_with('0') || !frac.bytes().all(|b| b.is_ascii_digit()) {
+                return false;
+            }
+            if int.starts_with('0') {
+                return int == "0";
+            }
+            !int.is_empty() && int.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
+}
+
+fn parse_vector(raw: &str, dim: u16) -> Result<PropertyValue, String> {
+    vector_components(raw, dim)?;
+    Ok(PropertyValue::Vector(raw.to_string()))
+}
+
+fn vector_components(raw: &str, dim: u16) -> Result<Vec<f64>, String> {
+    let parts: Vec<&str> = raw.split(',').collect();
+    if parts.len() != dim as usize {
+        return Err(format!(
+            "vector wants {dim} components, got {}",
+            parts.len()
+        ));
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            if !is_canonical_number(part) {
+                return Err(format!("vector component {part} is not canonical"));
+            }
+            let n: f64 = part
+                .parse()
+                .map_err(|_| format!("vector component {part} is not a number"))?;
+            if !n.is_finite() {
+                return Err(format!("vector component {part} is not finite"));
+            }
+            Ok(n)
+        })
+        .collect()
+}
+
+/// External reference: non-empty, no comma or whitespace, at most 2048 bytes.
+fn parse_ref_token(raw: &str) -> Result<(), String> {
+    if raw.is_empty() {
+        return Err("reference is empty".into());
+    }
+    if raw.len() > 2048 {
+        return Err("reference exceeds 2048 bytes".into());
+    }
+    if raw.bytes().any(|b| b == b',' || b.is_ascii_whitespace()) {
+        return Err("reference must not contain comma or whitespace".into());
+    }
+    Ok(())
+}
+
+fn parse_time_series(raw: &str) -> Result<PropertyValue, String> {
+    let mut parts = raw.split(' ');
+    let uri = parts
+        .next()
+        .ok_or_else(|| "time-series must be uri start_ts end_ts".to_string())?;
+    let start = parts
+        .next()
+        .ok_or_else(|| "time-series must be uri start_ts end_ts".to_string())?;
+    let end = parts
+        .next()
+        .ok_or_else(|| "time-series must be uri start_ts end_ts".to_string())?;
+    if parts.next().is_some() {
+        return Err("time-series must be uri start_ts end_ts".into());
+    }
+    parse_ref_token(uri)?;
+    if !is_canonical_timestamp(start) {
+        return Err(format!(
+            "time-series start {start} is not canonical UTC millis"
+        ));
+    }
+    parse_timestamp_millis(start)?;
+    if !is_canonical_timestamp(end) {
+        return Err(format!("time-series end {end} is not canonical UTC millis"));
+    }
+    parse_timestamp_millis(end)?;
+    if start > end {
+        return Err("time-series start is after end".into());
+    }
+    Ok(PropertyValue::TimeSeries(raw.to_string()))
+}
+
+fn time_series_overlaps(
+    stored: &str,
+    min: Option<&str>,
+    max: Option<&str>,
+) -> Result<bool, String> {
+    let Ok(value) = parse_time_series(stored) else {
+        return Ok(false);
+    };
+    let canon = value.canonical();
+    let mut parts = canon.split(' ');
+    let _uri = parts.next();
+    let start = parts.next().expect("canonical tsref has a start");
+    let end = parts.next().expect("canonical tsref has an end");
+    if let Some(min) = min {
+        if !is_canonical_timestamp(min) {
+            return Err(format!("range bound {min} is not canonical UTC millis"));
+        }
+        parse_timestamp_millis(min)?;
+    }
+    if let Some(max) = max {
+        if !is_canonical_timestamp(max) {
+            return Err(format!("range bound {max} is not canonical UTC millis"));
+        }
+        parse_timestamp_millis(max)?;
+    }
+    if let (Some(min), Some(max)) = (min, max) {
+        if min > max {
+            return Ok(false);
+        }
+    }
+    if let Some(min) = min {
+        if end < min {
+            return Ok(false);
+        }
+    }
+    if let Some(max) = max {
+        if start > max {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn parse_lat(raw: &str) -> Result<f64, String> {
+    parse_geo_coord(raw, "lat", -90.0, 90.0)
+}
+
+fn parse_lon(raw: &str) -> Result<f64, String> {
+    parse_geo_coord(raw, "lon", -180.0, 180.0)
+}
+
+fn parse_geo_coord(raw: &str, label: &str, min: f64, max: f64) -> Result<f64, String> {
+    if !is_canonical_number(raw) {
+        return Err(format!("{label} {raw} is not canonical"));
+    }
+    let value: f64 = raw
+        .parse()
+        .map_err(|_| format!("{label} {raw} is not a number"))?;
+    if value < min || value > max {
+        return Err(format!("{label} {raw} is out of range"));
+    }
+    Ok(value)
+}
+
+fn parse_geo_point(raw: &str) -> Result<PropertyValue, String> {
+    geo_point_parts(raw)?;
+    Ok(PropertyValue::GeoPoint(raw.to_string()))
+}
+
+fn geo_point_parts(raw: &str) -> Result<(f64, f64), String> {
+    let Some((lat, lon)) = raw.split_once(',') else {
+        return Err(format!("geo:point {raw} must be lat,lon"));
+    };
+    if lat.contains(',') || lon.contains(',') {
+        return Err(format!("geo:point {raw} must be lat,lon"));
+    }
+    Ok((parse_lat(lat)?, parse_lon(lon)?))
+}
+
+fn parse_geo_shape(raw: &str) -> Result<PropertyValue, String> {
+    geo_shape_parts(raw)?;
+    Ok(PropertyValue::GeoShape(raw.to_string()))
+}
+
+fn geo_shape_parts(raw: &str) -> Result<(&str, f64, f64, f64, f64), String> {
+    let Some((uri, envelope)) = raw.split_once(' ') else {
+        return Err("geo:shape must be uri minlat,minlon,maxlat,maxlon".into());
+    };
+    parse_ref_token(uri)?;
+    let parts: Vec<&str> = envelope.split(',').collect();
+    if parts.len() != 4 {
+        return Err("geo:shape must be uri minlat,minlon,maxlat,maxlon".into());
+    }
+    let min_lat = parse_lat(parts[0])?;
+    let min_lon = parse_lon(parts[1])?;
+    let max_lat = parse_lat(parts[2])?;
+    let max_lon = parse_lon(parts[3])?;
+    if min_lat > max_lat || min_lon > max_lon {
+        return Err("geo:shape envelope min must not exceed max".into());
+    }
+    Ok((uri, min_lat, min_lon, max_lat, max_lon))
+}
+
+fn parse_media(raw: &str) -> Result<PropertyValue, String> {
+    parse_ref_token(raw)?;
+    Ok(PropertyValue::Media(raw.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,5 +914,113 @@ mod tests {
         );
         assert!(PropertyType::from_token("decimal:19").is_err());
         assert!(PropertyType::from_token("float").is_err());
+        assert_eq!(
+            PropertyType::from_token("vector:8").unwrap(),
+            PropertyType::Vector { dim: 8 }
+        );
+        assert_eq!(PropertyType::from_token("tsref").unwrap().token(), "tsref");
+        assert_eq!(
+            PropertyType::from_token("geo:point").unwrap().token(),
+            "geo:point"
+        );
+        assert_eq!(
+            PropertyType::from_token("geo:shape").unwrap().token(),
+            "geo:shape"
+        );
+        assert_eq!(PropertyType::from_token("media").unwrap().token(), "media");
+        assert!(PropertyType::from_token("vector:0").is_err());
+        assert_eq!(
+            PropertyType::from_token("vector:1024").unwrap(),
+            PropertyType::Vector {
+                dim: VECTOR_DIM_MAX
+            }
+        );
+        assert!(PropertyType::from_token("vector:1025").is_err());
+        assert!(PropertyType::from_token("vector:4096").is_err());
+        assert!(PropertyType::from_token("vector:08").is_err());
+    }
+
+    #[test]
+    fn vector_geo_and_refs_are_canonical_and_queriable() {
+        let vec2 = PropertyType::Vector { dim: 2 };
+        assert_eq!(
+            vec2.parse_canonical("1,-0.5").unwrap().canonical(),
+            "1,-0.5"
+        );
+        assert!(vec2.parse_canonical("1.0,0").is_err());
+        assert!(vec2.parse_canonical("1,0,0").is_err());
+        assert!(vec2.parse_canonical("1").is_err());
+        assert!(vec2
+            .parse_canonical(&format!("{},0", "1".to_string() + &"0".repeat(400)))
+            .is_err());
+        assert!((vec2.vector_distance("0,0", "3,4").unwrap() - 25.0).abs() < 1e-9);
+        assert!(vec2.in_range("0,0", None, None).is_err());
+
+        let ts = PropertyType::TimeSeries;
+        let stored = "sensor:1 2026-09-19T17:00:00.000Z 2026-09-19T18:00:00.000Z";
+        assert_eq!(ts.parse_canonical(stored).unwrap().canonical(), stored);
+        assert!(ts
+            .in_range(
+                stored,
+                Some("2026-09-19T17:30:00.000Z"),
+                Some("2026-09-19T17:45:00.000Z"),
+            )
+            .unwrap());
+        assert!(!ts
+            .in_range(
+                stored,
+                Some("2026-09-19T18:00:00.001Z"),
+                Some("2026-09-19T19:00:00.000Z"),
+            )
+            .unwrap());
+        assert!(!ts
+            .in_range(
+                stored,
+                Some("2026-09-19T19:00:00.000Z"),
+                Some("2026-09-19T18:00:00.000Z"),
+            )
+            .unwrap());
+        assert!(ts
+            .parse_canonical("sensor:1 2026-09-19T18:00:00.000Z 2026-09-19T17:00:00.000Z")
+            .is_err());
+        assert!(ts
+            .parse_canonical(
+                "sensor 1 with space 2026-09-19T17:00:00.000Z 2026-09-19T18:00:00.000Z"
+            )
+            .is_err());
+
+        let point = PropertyType::GeoPoint;
+        assert_eq!(
+            point.parse_canonical("51.5,-0.1").unwrap().canonical(),
+            "51.5,-0.1"
+        );
+        assert!(point.in_bbox("51.5,-0.1", "51", "-1", "52", "0").unwrap());
+        assert!(!point.in_bbox("51.5,-0.1", "0", "0", "1", "1").unwrap());
+        assert!(point.parse_canonical("91,0").is_err());
+        assert!(point.parse_canonical("0,181").is_err());
+        assert!(point.in_range("0,0", None, None).is_err());
+
+        let shape = PropertyType::GeoShape;
+        let stored_shape = "shape:1 51,-1,52,0";
+        assert_eq!(
+            shape.parse_canonical(stored_shape).unwrap().canonical(),
+            stored_shape
+        );
+        assert!(shape
+            .in_bbox(stored_shape, "51.4", "-0.2", "51.6", "0")
+            .unwrap());
+        assert!(!shape.in_bbox(stored_shape, "0", "0", "1", "1").unwrap());
+        assert!(shape.parse_canonical("shape:1 52,-1,51,0").is_err());
+
+        let media = PropertyType::Media;
+        assert_eq!(
+            media.parse_canonical("blob:abc").unwrap().canonical(),
+            "blob:abc"
+        );
+        assert!(media.parse_canonical("").is_err());
+        assert!(media.parse_canonical("a b").is_err());
+        assert!(media.parse_canonical("a,b").is_err());
+        assert!(media.in_range("blob:abc", None, None).is_err());
+        assert!(media.in_bbox("blob:abc", "0", "0", "1", "1").is_err());
     }
 }

@@ -173,6 +173,9 @@ fn write_hop(out: &mut Vec<u8>, hop: &Hop) {
 fn write_sort(out: &mut Vec<u8>, sort: &Sort) {
     write_str(out, &sort.property);
     out.push(u8::from(sort.descending));
+    if let Some(nearest) = &sort.nearest {
+        write_opt_str(out, Some(nearest));
+    }
 }
 
 fn write_predicate(out: &mut Vec<u8>, pred: &Predicate) {
@@ -214,6 +217,20 @@ fn write_predicate(out: &mut Vec<u8>, pred: &Predicate) {
         Predicate::Not(inner) => {
             out.push(6);
             write_predicate(out, inner);
+        }
+        Predicate::Bbox {
+            property,
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        } => {
+            out.push(7);
+            write_str(out, property);
+            write_str(out, min_lat);
+            write_str(out, min_lon);
+            write_str(out, max_lat);
+            write_str(out, max_lon);
         }
     }
 }
@@ -315,6 +332,7 @@ mod tests {
             sort: Some(Sort {
                 property: "status".into(),
                 descending: false,
+                nearest: None,
             }),
             ..Default::default()
         };

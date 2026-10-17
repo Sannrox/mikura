@@ -159,6 +159,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let desc = Sort {
         property: "priority".into(),
         descending: true,
+        nearest: None,
     };
     let descending = oss
         .evaluate(&store, &page_incidents(desc, 0, None))
@@ -168,6 +169,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
     let note_desc = Sort {
         property: "note".into(),
         descending: true,
+        nearest: None,
     };
     let missing_last_desc = oss
         .evaluate(&store, &page_incidents(note_desc, 0, None))

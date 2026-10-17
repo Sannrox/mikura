@@ -11,7 +11,7 @@ is unauthenticated unless `--bearer` is set. Multi-process hosting is later.
 
 ## Status
 
-Pre-1.0 (`0.2.0`, not published to crates.io). The listed 1.0 surface,
+Pre-1.0 (`0.3.0`, not published to crates.io). The listed 1.0 surface,
 deprecation rule, and log-compat promise are in
 [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
 ([ADR 0042](docs/decisions/0042-api-stability.md)). Suitable for local
@@ -25,7 +25,7 @@ experiments and for contributing to the kernel. Not a production hosted store.
 | Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | |
 | Last-hop measures on `MKJOIN05` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
 | Required store namespace on new logs (`MIKURAV2`, [ADR 0028](docs/decisions/0028-store-namespace.md)) | Existing-log migration |
-| Schema-declared boolean, integer, timestamp, and decimal values as canonical UTF-8 in `props` ([ADR 0012](docs/decisions/0012-typed-values.md)) | |
+| Schema-declared boolean, integer, timestamp, decimal, vector, time-series, geo, and media values as canonical UTF-8 in `props` ([ADR 0012](docs/decisions/0012-typed-values.md), [ADR 0043](docs/decisions/0043-typed-ref-values.md)) | |
 | Property deny-list (fail closed); exact-match filter on evaluate | |
 | Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |
 | Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)); user-wins or newest-timestamp-wins ([ADR 0032](docs/decisions/0032-overlay-conflict-strategy.md)) | |
