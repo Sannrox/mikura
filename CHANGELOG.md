@@ -37,6 +37,14 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Added
 
+- Schema-declared vector, time-series reference, geo point/shape, and
+  media reference types as canonical UTF-8 in `props`. Evaluate adds
+  `Sort.nearest` (k-NN over a vector kind), `range` overlap on `tsref`,
+  and `Predicate::Bbox`. Large payloads stay external references
+  ([#247](https://github.com/Sannrox/mikura/issues/247),
+  [ADR 0043](docs/decisions/0043-typed-ref-values.md)). Exhaustive matches
+  of `PropertyType`, `PropertyValue`, and `Predicate` need new arms.
+  Host `Evaluate` carries `Box<WireEvaluate>`.
 - Listed 1.0 surface, deprecation and log-compat policy, pull-request
   semver check, and tag-driven GitHub Release. crates.io stays
   `publish = false` until a human authorizes it. Public format ids

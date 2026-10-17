@@ -53,6 +53,15 @@ pub enum Predicate {
     And(Vec<Predicate>),
     Or(Vec<Predicate>),
     Not(Box<Predicate>),
+    /// Point-in-box or shape-envelope intersection (ADR 0043). Bounds are
+    /// canonical numbers; `min` must not exceed `max`.
+    Bbox {
+        property: String,
+        min_lat: String,
+        min_lon: String,
+        max_lat: String,
+        max_lon: String,
+    },
 }
 
 impl Predicate {
@@ -96,6 +105,22 @@ impl Predicate {
         Self::Or(args)
     }
 
+    pub fn bbox(
+        property: impl Into<String>,
+        min_lat: impl Into<String>,
+        min_lon: impl Into<String>,
+        max_lat: impl Into<String>,
+        max_lon: impl Into<String>,
+    ) -> Self {
+        Self::Bbox {
+            property: property.into(),
+            min_lat: min_lat.into(),
+            min_lon: min_lon.into(),
+            max_lat: max_lat.into(),
+            max_lon: max_lon.into(),
+        }
+    }
+
     pub fn properties(&self) -> Vec<&str> {
         let mut out = Vec::new();
         self.collect_properties(&mut out);
@@ -107,7 +132,8 @@ impl Predicate {
             Self::Eq { property, .. }
             | Self::Neq { property, .. }
             | Self::Range { property, .. }
-            | Self::Missing { property } => out.push(property.as_str()),
+            | Self::Missing { property }
+            | Self::Bbox { property, .. } => out.push(property.as_str()),
             Self::And(args) | Self::Or(args) => {
                 for arg in args {
                     arg.collect_properties(out);
@@ -132,8 +158,12 @@ impl std::ops::Not for Predicate {
 pub struct Sort {
     pub property: String,
     /// When true, reverse the typed property order. Keys still tie-break
-    /// ascending.
+    /// ascending. For [`Self::nearest`], reverse is farthest first.
     pub descending: bool,
+    /// Canonical query vector for k-nearest ranking of a `vector:<dim>`
+    /// property (ADR 0043). `page_size` is k. Absent, vector sort fails
+    /// closed. Does not combine with [`EvaluateRequest::then_by`] or a cursor.
+    pub nearest: Option<String>,
 }
 
 impl Sort {
@@ -141,6 +171,15 @@ impl Sort {
         Self {
             property: property.into(),
             descending: false,
+            nearest: None,
+        }
+    }
+
+    pub fn nearest(property: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            property: property.into(),
+            descending: false,
+            nearest: Some(query.into()),
         }
     }
 }

@@ -49,7 +49,7 @@ with key equal to the described kind. The descriptor body uses string
 properties `properties` (comma-separated closed set), optional `required`,
 optional `links` (`name:far_kind:out|in:0..1`), optional `sums`
 (comma-separated property names already in `properties`), and optional
-`types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>`),
+`types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>` or `name:vector:<dim>` or `name:tsref` or `name:geo:point` or `name:geo:shape` or `name:media`),
 optional `conflict` (`user` or `newest`), optional `conflict_properties`
 (`name:user|newest`), and optional `conflict_time` (a declared timestamp
 property). Historical descriptors without `sums`, `types`, or `conflict`

@@ -7,7 +7,7 @@
 - Amends: none. [#122](https://github.com/Sannrox/mikura/issues/122) stays no-action for the two-object seed.
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR 0039](0039-multi-key-sort.md) (up to three sort keys)
+- Amended by: [ADR 0039](0039-multi-key-sort.md) (up to three sort keys), [ADR 0043](0043-typed-ref-values.md) (`bbox`, `tsref` range overlap, `Sort.nearest`)
 
 ## Context
 
@@ -75,7 +75,8 @@ silent subset.
 | --- | --- | --- |
 | Start | `root_kind` | Visible identities of that kind (restriction first) |
 | `eq` / `neq` | Current kind property | Typed equality ([ADR 0012](0012-typed-values.md)): same type and canonical bytes. `integer` `1` is not `string` `"1"`. |
-| `range` | integer, timestamp, decimal, string | Inclusive bounds using ADR 0012 order. Missing bound = unbounded that side. |
+| `range` | integer, timestamp, decimal, string, tsref | Inclusive bounds using ADR 0012 order. Missing bound = unbounded that side. `tsref` overlaps `[start, end]` with timestamp bounds (ADR 0043). |
+| `bbox` | geo:point, geo:shape | Point-in-box or shape-envelope intersection (ADR 0043). |
 | `missing` | property | Key absent. Not `""`. `""` is `eq` of empty string and is invalid on non-string types. |
 | `and` / `or` / `not` | Predicates on the **current** kind | Boolean composition. `not` is relative to the current set, not the whole log. |
 | Hop | Named link | Distinct far identities. Filter **before** hop restricts starters; filter **after** hop restricts the far set. Those answers differ on the proposed fixture (`open=true` then `affects` vs hop then `tier=prod`). |

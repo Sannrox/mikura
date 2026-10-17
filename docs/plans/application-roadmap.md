@@ -91,8 +91,10 @@ are not prerequisites for that pilot.
 [ADR 0008](../decisions/0008-type-link-delete.md) keeps strings for the
 product-loop fixture. [ADR 0012](../decisions/0012-typed-values.md) accepts
 boolean, integer, timestamp, and decimal as schema-declared logical types
-stored as canonical UTF-8 in the existing `props` map. Keep arrays,
-structured values, geospatial, media, and vectors demand-driven.
+stored as canonical UTF-8 in the existing `props` map.
+[ADR 0043](../decisions/0043-typed-ref-values.md) adds vector, time-series
+reference, geo, and media reference types the same way. Keep arrays and
+structured values demand-driven.
 
 The external catalog authors schema definitions. Mikura validates supplied
 descriptors and stores the last accepted one as a `mikura.schema` object

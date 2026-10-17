@@ -344,6 +344,7 @@ fn sorted(sort: &[(&str, bool)], page_size: usize, cursor: Option<String>) -> Ev
     let mut keys = sort.iter().map(|(property, descending)| Sort {
         property: (*property).into(),
         descending: *descending,
+        nearest: None,
     });
     EvaluateRequest {
         namespace: SHOP.into(),

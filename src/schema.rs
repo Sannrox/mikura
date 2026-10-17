@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::store::ObjectRecord;
-use crate::value::PropertyType;
+use crate::value::{PropertyType, VECTOR_DIM_MAX};
 
 /// Reserved kind for the last accepted descriptor of another kind.
 pub const SCHEMA_KIND: &str = "mikura.schema";
@@ -28,8 +28,10 @@ pub const SCHEMA_LINKS: &str = "links";
 /// Comma-separated property names that are last-hop sum measures. Absent means none.
 pub const SCHEMA_SUMS: &str = "sums";
 
-/// Comma-separated `name:type` or `name:decimal:<scale>` logical types.
-/// Absent means every property is a string (ADR 0012).
+/// Comma-separated `name:type` logical types (`boolean`, `integer`,
+/// `timestamp`, `string`, `decimal:<scale>`, `vector:<dim>`, `tsref`,
+/// `geo:point`, `geo:shape`, `media`). Absent means every property is a
+/// string (ADR 0012, ADR 0043).
 pub const SCHEMA_TYPES: &str = "types";
 
 /// Kind-wide overlay conflict strategy: `user` or `newest`. Absent means user-wins.
@@ -711,6 +713,23 @@ impl SchemaDescriptor {
                     return Err(format!("decimal scale {scale} on {name} exceeds 18"));
                 }
             }
+            if let PropertyType::Vector { dim } = ty {
+                if !(1..=VECTOR_DIM_MAX).contains(dim) {
+                    return Err(format!(
+                        "vector dim {dim} on {name} is not in 1..={VECTOR_DIM_MAX}"
+                    ));
+                }
+            }
+        }
+        for name in &self.sums {
+            if let Some(ty) = self.property_type(name) {
+                if !matches!(
+                    ty,
+                    PropertyType::String | PropertyType::Integer | PropertyType::Decimal { .. }
+                ) {
+                    return Err(format!("sum property {name} cannot be {}", ty.token()));
+                }
+            }
         }
         for link in self.links.iter().filter(|link| link.outgoing) {
             if let Some(ty) = self
@@ -913,7 +932,7 @@ fn parse_types(entries: Vec<String>) -> Result<Vec<(String, PropertyType)>, Stri
 fn split_type_entry(entry: &str) -> Result<(String, &str), String> {
     let Some((name, token)) = entry.split_once(':') else {
         return Err(format!(
-            "type {entry} must be name:string|boolean|integer|timestamp or name:decimal:<scale>"
+            "type {entry} must be name:token (boolean|integer|timestamp|string|decimal:<scale>|vector:<dim>|tsref|geo:point|geo:shape|media)"
         ));
     };
     if name.is_empty() || token.is_empty() {
@@ -1118,6 +1137,44 @@ mod tests {
         assert!(
             err.contains("typed property missing is not declared"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn reference_types_roundtrip_and_cannot_be_sums_or_links() {
+        let mut schema = descriptor();
+        schema.properties = vec![
+            "affects".into(),
+            "embedding".into(),
+            "file".into(),
+            "location".into(),
+            "name".into(),
+            "region".into(),
+            "series".into(),
+        ];
+        schema.types = vec![
+            ("embedding".into(), PropertyType::Vector { dim: 2 }),
+            ("file".into(), PropertyType::Media),
+            ("location".into(), PropertyType::GeoPoint),
+            ("region".into(), PropertyType::GeoShape),
+            ("series".into(), PropertyType::TimeSeries),
+        ];
+        let record = schema.to_record("ns").unwrap();
+        assert_eq!(
+            record.props.get(SCHEMA_TYPES).map(String::as_str),
+            Some("embedding:vector:2,file:media,location:geo:point,region:geo:shape,series:tsref")
+        );
+        assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
+
+        schema.sums = vec!["embedding".into()];
+        let sum_err = schema.to_record("ns").unwrap_err();
+        assert!(sum_err.contains("sum property embedding"), "{sum_err}");
+        schema.sums.clear();
+        schema.types.push(("affects".into(), PropertyType::Media));
+        let link_err = schema.to_record("ns").unwrap_err();
+        assert!(
+            link_err.contains("outgoing link affects must be a string type"),
+            "{link_err}"
         );
     }
 
