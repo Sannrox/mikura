@@ -49,6 +49,7 @@ cargo fmt --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p mikura-ingest --example quickstart
+cargo bench -p mikura-host --bench product
 ./build/release-images.sh
 ```
 

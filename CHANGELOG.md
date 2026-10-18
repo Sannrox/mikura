@@ -42,6 +42,15 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Added
 
+- Product benchmark suite: `cargo bench -p mikura-host --bench product`
+  reports p50/p95/p99 and the machine class for append+commit,
+  `append_batch`, point and ACL reads, list/filter, one- and two-hop
+  count+sum (declared and undeclared), open with and without the sidecar,
+  log size, peak RSS, and host reads and writes under concurrent load. A
+  nightly job fails on a p50 more than 20% above its stored baseline
+  ([#255](https://github.com/Sannrox/mikura/issues/255),
+  [docs/benchmarks.md](docs/benchmarks.md)).
+
 - Schema-declared vector, time-series reference, geo point/shape, and
   media reference types as canonical UTF-8 in `props`. Evaluate adds
   `Sort.nearest` (k-NN over a vector kind), `range` overlap on `tsref`,
