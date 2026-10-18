@@ -31,7 +31,9 @@ jobs:
       # Baselines are per machine class; a new CPU model starts a new one.
       - name: Machine class
         id: machine
-        run: echo "class=$(nproc)-$(lscpu | sed -n 's/^Model name: *//p' | tr -c 'A-Za-z0-9' '-')" >> "$GITHUB_OUTPUT"
+        run: |
+          model=$(lscpu | sed -n 's/^Model name: *//p' | tr -c 'A-Za-z0-9' '-')
+          echo "class=$(nproc)-${model}" >> "$GITHUB_OUTPUT"
       - name: Restore baseline
         id: baseline
         uses: actions/cache/restore@v4
