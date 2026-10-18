@@ -48,6 +48,7 @@ a new ADR. Allocate the next number and list it here.
 | [0041](0041-host-operational-metrics.md) | Prometheus metrics scrape; health stays the process-serving signal | accepted |
 | [0042](0042-api-stability.md) | Versioned crates and 1.0 API stability | accepted |
 | [0043](0043-typed-ref-values.md) | Vector, time-series, geo, and media reference types | accepted |
+| [0044](0044-log-encryption.md) | Object log encryption at rest (`MIKURAV3`) | accepted |
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should

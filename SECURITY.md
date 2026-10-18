@@ -38,7 +38,8 @@ These are **not** a security boundary yet:
 - Non-loopback bind checks a clerk-owned bearer for equality ([ADR 0007](docs/decisions/0007-host-bearer.md)).
   That is a process secret, not an authorization service or multi-tenant
   isolation. Loopback is unauthenticated unless `--bearer` is set.
-- Object logs on disk are not encrypted by mikura.
+- Object logs on disk are plaintext `MIKURAV2` unless the caller opens
+  them with keys (`MIKURAV3`, [ADR 0044](docs/decisions/0044-log-encryption.md)).
 
 Treat a mikura log file as sensitive application data. Do not commit `*.mikura`
 files or copy them into issues.

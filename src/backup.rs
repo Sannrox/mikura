@@ -18,7 +18,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crate::log::{decode_page, page_crc, parse_superblock, superblock_page, verify_page, PAGE};
+use crate::log::{
+    decode_page, page_crc, parse_superblock, superblock_magic, superblock_with_committed,
+    verify_page, PAGE,
+};
 use crate::store::{checkpoint_stamp, Store};
 
 /// Attempts to read a superblock that a concurrent writer may be replacing.
@@ -70,10 +73,10 @@ pub struct VerifyReport {
 pub fn backup_log(src: &Path, dst: &Path) -> Result<RestorePoint, String> {
     require_absent(dst)?;
     let mut source = File::open(src).map_err(|e| format!("open {}: {e}", src.display()))?;
-    let committed = read_commit_point(&mut source)?;
+    let (committed, page0) = read_superblock(&mut source)?;
+    let superblock = superblock_with_committed(&page0, committed)?;
     write_new(dst, |out| {
-        out.write_all(&superblock_page(committed))
-            .map_err(|e| e.to_string())?;
+        out.write_all(&superblock).map_err(|e| e.to_string())?;
         copy_pages(&mut source, out, 1, committed)
     })?;
     carry_checkpoint_or_unpublish(src, dst, committed)?;
@@ -90,7 +93,7 @@ pub fn backup_log_incremental(src: &Path, dst: &Path) -> Result<RestorePoint, St
     }
     let held = verify_superblock_only(dst)?;
     let mut source = File::open(src).map_err(|e| format!("open {}: {e}", src.display()))?;
-    let committed = read_commit_point(&mut source)?;
+    let (committed, page0) = read_superblock(&mut source)?;
     if committed < held.commit_point {
         return Err(format!(
             "backup is past the source: {} > {committed}",
@@ -115,9 +118,9 @@ pub fn backup_log_incremental(src: &Path, dst: &Path) -> Result<RestorePoint, St
     out.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
     copy_pages(&mut source, &mut out, held.commit_point + 1, committed)?;
     out.sync_data().map_err(|e| e.to_string())?;
+    let superblock = superblock_with_committed(&page0, committed)?;
     out.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-    out.write_all(&superblock_page(committed))
-        .map_err(|e| e.to_string())?;
+    out.write_all(&superblock).map_err(|e| e.to_string())?;
     out.sync_data().map_err(|e| e.to_string())?;
     carry_checkpoint(src, dst, committed)?;
     restore_point_at(dst, committed)
@@ -127,14 +130,17 @@ pub fn backup_log_incremental(src: &Path, dst: &Path) -> Result<RestorePoint, St
 /// up to one commit point read once, which the report names. Read-only.
 pub fn verify_log(path: &Path) -> Result<VerifyReport, String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
-    let committed = read_commit_point(&mut file)?;
+    let (committed, superblock) = read_superblock(&mut file)?;
+    let encrypted = superblock_magic(&superblock)? == crate::LOG_FORMAT_ENCRYPTED;
     let mut records = 0;
     let mut last = None;
     for index in 1..=committed {
         let page = read_page(&mut file, index)?;
-        records += decode_page(&page)
-            .map_err(|e| format!("committed page {index}: {e}"))?
-            .len();
+        if !encrypted {
+            records += decode_page(&page)
+                .map_err(|e| format!("committed page {index}: {e}"))?
+                .len();
+        }
         last = Some(page);
     }
     Ok(VerifyReport {
@@ -188,9 +194,10 @@ pub fn restore_log(
         }
     };
     let mut source = File::open(backup).map_err(|e| e.to_string())?;
+    let (_, page0) = read_superblock(&mut source)?;
+    let superblock = superblock_with_committed(&page0, point.commit_point)?;
     write_new(dst, |out| {
-        out.write_all(&superblock_page(point.commit_point))
-            .map_err(|e| e.to_string())?;
+        out.write_all(&superblock).map_err(|e| e.to_string())?;
         copy_pages(&mut source, out, 1, point.commit_point)
     })?;
     carry_checkpoint_or_unpublish(backup, dst, point.commit_point)?;
@@ -296,15 +303,22 @@ fn write_new(dst: &Path, fill: impl FnOnce(&mut File) -> Result<(), String>) -> 
 
 /// Commit point of a log whose superblock a writer may be replacing: a torn
 /// read is retried, a persistent mismatch fails closed.
-fn read_commit_point(file: &mut File) -> Result<u32, String> {
+fn read_superblock(file: &mut File) -> Result<(u32, Vec<u8>), String> {
     let mut last = String::new();
     for _ in 0..SUPERBLOCK_READS {
-        match read_page_at(file, 0).and_then(|page| parse_superblock(&page)) {
-            Ok(committed) => return Ok(committed),
+        match read_page_at(file, 0) {
+            Ok(page) => match parse_superblock(&page) {
+                Ok(committed) => return Ok((committed, page)),
+                Err(err) => last = err,
+            },
             Err(err) => last = err,
         }
     }
     Err(last)
+}
+
+fn read_commit_point(file: &mut File) -> Result<u32, String> {
+    Ok(read_superblock(file)?.0)
 }
 
 /// Superblock-only check of an existing backup, for incremental appends.

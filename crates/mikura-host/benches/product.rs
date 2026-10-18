@@ -17,8 +17,9 @@
 //! 20% above the baseline p50 for the same name and size fails the run.
 
 use mikura::{
-    Aggregate, ComputeBackend, EvaluateRequest, ExactMatch, Hop, LocalCompute, ObjectRecord,
-    PropertyAcl, SchemaDescriptor, SchemaLink, Sort, Store,
+    tenant_namespace, Aggregate, ComputeBackend, EvaluateRequest, ExactMatch, Hop, KeyPurpose,
+    LocalCompute, LogKeys, MemoryKeyProvider, ObjectRecord, PropertyAcl, RuntimeProfile,
+    SchemaDescriptor, SchemaLink, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
 };
 use mikura_host::{Host, HostRequest};
 use mikura_ingest::BatchIngest;
@@ -487,6 +488,36 @@ fn host_mixed(log: &Path, scale: &Scale) -> Result<(Vec<u64>, Vec<u64>), String>
     })
 }
 
+fn bench_encrypted_append(results: &mut Vec<Measurement>) -> Result<(), String> {
+    let provider: std::sync::Arc<dyn mikura::KeyProvider + Send + Sync> = std::sync::Arc::new(
+        MemoryKeyProvider::new(RuntimeProfile::Development).map_err(|e| e.to_string())?,
+    );
+    let grant = |tenant: &str| -> Result<UnwrapGrant, String> {
+        Ok(UnwrapGrant {
+            tenant_id: TenantId::new(tenant).map_err(|e| e.to_string())?,
+            purpose: KeyPurpose::Store,
+            expires_unix_secs: i64::MAX,
+        })
+    };
+    let keys = LogKeys::new(provider, vec![grant(STORE_KEY_TENANT)?, grant("acme")?])?;
+    let fixture = Fixture::new(FIXED_WRITES as u64);
+    let ns = tenant_namespace("acme", NS)?;
+    let mut store = Store::create_with_keys(&fixture.log, keys)?;
+    let mut values = Vec::with_capacity(FIXED_WRITES);
+    for id in 0..FIXED_WRITES as u64 {
+        let mut record = shipment(id, &Scale::new(FIXED_WRITES as u64));
+        record.namespace = ns.clone();
+        values.push(timed(|| store.append(record).expect("encrypted append")));
+    }
+    results.push(Measurement::new(
+        "encrypted_append",
+        FIXED_WRITES as u64,
+        "ns/op",
+        values,
+    ));
+    Ok(())
+}
+
 fn machine() -> Machine {
     let cpu = std::process::Command::new("sysctl")
         .args(["-n", "machdep.cpu.brand_string"])
@@ -564,6 +595,7 @@ fn run() -> Result<bool, String> {
     for objects in sizes()? {
         bench_size(objects, &mut results)?;
     }
+    bench_encrypted_append(&mut results)?;
     println!(
         "{:<26} {:>10} {:>10} {:>8} {:>14} {:>14} {:>14}",
         "measurement", "objects", "unit", "samples", "p50", "p95", "p99"

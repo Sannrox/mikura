@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
+use crate::crypto::{matches_tenant, Dek};
 use crate::joins::{
-    append_checksummed, check_join_crc, read_checksummed, write_checksummed, Checkpoint, JoinMaps,
-    LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
+    append_checksummed, check_join_crc, crc32, read_checksummed, write_checksummed, Checkpoint,
+    JoinMaps, LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
 };
-use crate::log::read_records_after;
+use crate::log::{read_records_after_with_keys, LogWriter};
 
 use super::{LiveId, Store};
 
@@ -33,6 +34,15 @@ impl Store {
 
     pub(super) fn persist_projection(&mut self) -> Result<(), String> {
         let pages = self.writer.committed_pages();
+        if self.writer.keys().is_some() {
+            self.writer.revalidate_catalog()?;
+            self.drop_revoked_tenants();
+            if !self.writer.withheld().is_empty() {
+                // Partial grants must not overwrite a complete snapshot.
+                return Ok(());
+            }
+            return self.rewrite_checkpoint(pages);
+        }
         let compact =
             !self.has_checkpoint || self.dirty.len().saturating_mul(4) > self.identity.len().max(1);
         if compact {
@@ -59,7 +69,20 @@ impl Store {
     }
 
     pub(super) fn encode_projection_after_magic(&self, body: &mut Vec<u8>) -> Result<(), String> {
-        let mut namespaces: Vec<_> = self.joins.keys().cloned().collect();
+        self.encode_projection_after_magic_for(body, None)
+    }
+
+    pub(super) fn encode_projection_after_magic_for(
+        &self,
+        body: &mut Vec<u8>,
+        tenant: Option<&str>,
+    ) -> Result<(), String> {
+        let mut namespaces: Vec<_> = self
+            .joins
+            .keys()
+            .filter(|namespace| matches_tenant(namespace, tenant))
+            .cloned()
+            .collect();
         namespaces.sort();
         let ns_n =
             u32::try_from(namespaces.len()).map_err(|_| "too many namespaces".to_string())?;
@@ -125,12 +148,79 @@ impl Store {
     }
 
     fn persist_checkpoint(&self, pages: u32) -> Result<(), String> {
+        if let Some(store_dek) = self.writer.store_dek() {
+            let mut plains = BTreeMap::new();
+            for tenant in self.live_tenants() {
+                let mut body = Vec::new();
+                body.extend_from_slice(JOIN_MAGIC);
+                body.extend_from_slice(&pages.to_le_bytes());
+                self.encode_projection_after_magic_for(&mut body, Some(&tenant))?;
+                self.encode_instance_schema_versions_for(&mut body, Some(&tenant))?;
+                plains.insert(tenant, body);
+            }
+            let sealed = Self::seal_partitioned(store_dek, self.writer.deks(), pages, plains)?;
+            let path = Self::join_map_path(&self.log);
+            let tmp = path.with_extension("tmp");
+            std::fs::write(&tmp, sealed).map_err(|e| e.to_string())?;
+            return std::fs::rename(&tmp, &path).map_err(|e| e.to_string());
+        }
         let mut body = Vec::new();
         body.extend_from_slice(JOIN_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
         self.encode_projection_after_magic(&mut body)?;
         self.encode_instance_schema_versions(&mut body)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
+    }
+
+    pub(super) fn seal_partitioned(
+        store_dek: &Dek,
+        deks: &std::collections::HashMap<String, Dek>,
+        pages: u32,
+        plains: BTreeMap<String, Vec<u8>>,
+    ) -> Result<Vec<u8>, String> {
+        let mut parts = BTreeMap::new();
+        for (tenant, body) in plains {
+            let dek = deks
+                .get(&tenant)
+                .ok_or_else(|| format!("missing tenant dek {tenant}"))?;
+            let mut checksummed = body.clone();
+            checksummed.extend_from_slice(&crc32(&body).to_le_bytes());
+            parts.insert(tenant, crate::crypto::seal_blob(dek, pages, &checksummed)?);
+        }
+        let index = crate::crypto::encode_parts(&parts)?;
+        let mut payload = index.clone();
+        payload.extend_from_slice(&crc32(&index).to_le_bytes());
+        crate::crypto::seal_blob(store_dek, pages, &payload)
+    }
+
+    pub(super) fn open_partitioned(
+        writer: &LogWriter,
+        sealed: &[u8],
+    ) -> Result<(u32, Vec<Vec<u8>>), String> {
+        let store_dek = writer
+            .store_dek()
+            .ok_or_else(|| "partitioned snapshot requires keys".to_string())?;
+        let (stamp, checksummed) = crate::crypto::open_blob(store_dek, sealed)?;
+        if checksummed.len() < 12 {
+            return Err("partitioned snapshot too short".into());
+        }
+        let (index, crc_bytes) = checksummed.split_at(checksummed.len() - 4);
+        check_join_crc(index, u32::from_le_bytes(crc_bytes.try_into().unwrap()))?;
+        let parts = crate::crypto::decode_parts(index)?;
+        let mut opened = Vec::new();
+        for (tenant, blob) in parts {
+            let Some(dek) = writer.tenant_dek(&tenant) else {
+                continue;
+            };
+            let (_, plain) = crate::crypto::open_blob(dek, &blob)?;
+            if plain.len() < 12 {
+                return Err("tenant snapshot too short".into());
+            }
+            let (body, crc_bytes) = plain.split_at(plain.len() - 4);
+            check_join_crc(body, u32::from_le_bytes(crc_bytes.try_into().unwrap()))?;
+            opened.push(body.to_vec());
+        }
+        Ok((stamp, opened))
     }
 
     fn persist_delta(&mut self, pages: u32) -> Result<(), String> {
@@ -287,13 +377,46 @@ impl Store {
         Ok((all_joins, identity, hidden_props))
     }
 
-    fn load_checkpoint(path: &Path) -> Result<Checkpoint, String> {
+    fn load_checkpoint(path: &Path, writer: &LogWriter) -> Result<Checkpoint, String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        if writer.keys().is_some() && !crate::crypto::is_sealed(&bytes) {
+            return Err("encrypted log requires a sealed snapshot".into());
+        }
+        if crate::crypto::is_sealed(&bytes) {
+            let (pages, slices) = Self::open_partitioned(writer, &bytes)?;
+            let mut loaded = Checkpoint {
+                pages,
+                joins: HashMap::new(),
+                identity: HashMap::new(),
+                hidden_props: HashMap::new(),
+            };
+            for body in slices {
+                Self::merge_join_body(&mut loaded, &body)?;
+            }
+            return Ok(loaded);
+        }
         let body = read_checksummed(path)?;
+        let mut loaded = Checkpoint {
+            pages: 0,
+            joins: HashMap::new(),
+            identity: HashMap::new(),
+            hidden_props: HashMap::new(),
+        };
+        Self::merge_join_body(&mut loaded, &body)?;
+        Ok(loaded)
+    }
+
+    fn merge_join_body(loaded: &mut Checkpoint, body: &[u8]) -> Result<(), String> {
         if body.len() < 12 || &body[..8] != JOIN_MAGIC {
             return Err("bad join magic".into());
         }
         let mut cur = &body[8..];
         let pages = read_u32(&mut cur)?;
+        if loaded.joins.is_empty() && loaded.identity.is_empty() {
+            loaded.pages = pages;
+        } else if loaded.pages != pages {
+            return Err("tenant snapshot page mismatch".into());
+        }
         let (joins, mut identity, hidden_props) = Self::decode_projection_after_magic(&mut cur)?;
         if !cur.is_empty() {
             Store::apply_instance_schema_versions(
@@ -304,12 +427,15 @@ impl Store {
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
-        Ok(Checkpoint {
-            pages,
-            joins,
-            identity,
-            hidden_props,
-        })
+        for (namespace, maps) in joins {
+            if loaded.joins.contains_key(&namespace) {
+                return Err(format!("duplicate namespace {namespace}"));
+            }
+            loaded.joins.insert(namespace, maps);
+        }
+        loaded.identity.extend(identity);
+        loaded.hidden_props.extend(hidden_props);
+        Ok(())
     }
 
     fn apply_delta(&mut self, path: &Path) -> Result<u32, String> {
@@ -372,12 +498,17 @@ impl Store {
         let sidecar = Self::join_map_path(&self.log);
         let delta = Self::join_delta_path(&self.log);
         let pages = self.writer.committed_pages();
+        let encrypted = self.writer.keys().is_some();
+        if encrypted && delta.exists() {
+            let _ = std::fs::remove_file(&delta);
+        }
+        let apply_delta = !encrypted && delta.exists();
         // Superblock `committed_pages` is not proof the file still holds those
         // pages. A matching sidecar or checkpoint must not skip this check.
-        let _ = read_records_after(&self.log, pages)?;
+        let _ = read_records_after_with_keys(&self.log, pages, self.writer.keys())?;
         if sidecar.exists() {
-            let loaded = Self::load_checkpoint(&sidecar)?;
-            if loaded.pages == pages && !delta.exists() {
+            let loaded = Self::load_checkpoint(&sidecar, &self.writer)?;
+            if loaded.pages == pages && !apply_delta {
                 self.adopt_checkpoint(loaded)?;
                 self.restore_action_catalog(pages)?;
                 return Ok(());
@@ -386,7 +517,7 @@ impl Store {
                 let loaded_pages = loaded.pages;
                 self.adopt_checkpoint(loaded)?;
                 let mut from = loaded_pages;
-                if delta.exists() {
+                if apply_delta {
                     let delta_pages = self.apply_delta(&delta)?;
                     if delta_pages == pages {
                         self.restore_action_catalog(pages)?;

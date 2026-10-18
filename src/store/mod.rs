@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::acl::PropertyAcl;
 use crate::actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
+use crate::crypto::{tenant_of_namespace, LogKeys};
 use crate::joins::{JoinMaps, LiveMeta};
-use crate::log::{read_records, read_records_after, read_v1_records, LogWriter, SyncPolicy};
+use crate::log::{
+    read_records_after_with_keys, read_records_with_keys, read_v1_records, LogWriter, SyncPolicy,
+};
 use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
@@ -151,15 +154,30 @@ impl Store {
     }
 
     pub fn create_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
+        Self::create_cleared(log, LogWriter::create(log, sync)?)
+    }
+
+    /// Encrypted log (`MIKURAV3`). Namespaces must be tenant-prefixed
+    /// (`tenant_namespace`).
+    pub fn create_with_keys(log: &Path, keys: LogKeys) -> Result<Self, String> {
+        Self::create_with_keys_sync(log, SyncPolicy::Group(32), keys)
+    }
+
+    pub fn create_with_keys_sync(
+        log: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+    ) -> Result<Self, String> {
+        Self::create_cleared(log, LogWriter::create_with_keys(log, sync, keys)?)
+    }
+
+    fn create_cleared(log: &Path, writer: LogWriter) -> Result<Self, String> {
         let _ = std::fs::remove_file(Self::join_map_path(log));
         let _ = std::fs::remove_file(Self::join_delta_path(log));
         let _ = std::fs::remove_file(Self::checkpoint_path(log));
         let _ = std::fs::remove_file(Self::checkpoint_prev_path(log));
         let _ = std::fs::remove_file(Self::checkpoint_tmp_path(log));
-        Ok(Self::empty(
-            log.to_path_buf(),
-            LogWriter::create(log, sync)?,
-        ))
+        Ok(Self::empty(log.to_path_buf(), writer))
     }
 
     /// Explicit log-format step for a pre-namespace `MIKURAV1` log (ADR 0030).
@@ -245,10 +263,68 @@ impl Store {
     }
 
     pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        let mut store = Self::empty(log.to_path_buf(), LogWriter::open(log, sync)?);
+        Self::open_writer(log, LogWriter::open(log, sync)?)
+    }
+
+    /// Open a `MIKURAV3` log. Revoked or ungranted tenants are omitted.
+    pub fn open_with_keys(log: &Path, keys: LogKeys) -> Result<Self, String> {
+        Self::open_with_keys_sync(log, SyncPolicy::Group(32), keys)
+    }
+
+    pub fn open_with_keys_sync(
+        log: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+    ) -> Result<Self, String> {
+        Self::open_writer(log, LogWriter::open_with_keys(log, sync, keys)?)
+    }
+
+    fn open_writer(log: &Path, writer: LogWriter) -> Result<Self, String> {
+        let mut store = Self::empty(log.to_path_buf(), writer);
         store.install_projection()?;
+        store.drop_revoked_tenants();
         store.ensure_schema_history()?;
         Ok(store)
+    }
+
+    fn drop_revoked_tenants(&mut self) {
+        if self.writer.keys().is_none() {
+            return;
+        }
+        let revoked = |namespace: &str| {
+            tenant_of_namespace(namespace).ok().is_some_and(|tenant| {
+                self.writer.tenant_revoked(tenant) || self.writer.tenant_withheld(tenant)
+            })
+        };
+        self.joins.retain(|namespace, _| !revoked(namespace));
+        self.identity.retain(|id, _| !revoked(&id.0));
+        self.hidden_props.retain(|id, _| !revoked(&id.0));
+        self.action_commits
+            .retain(|(namespace, _), _| !revoked(namespace));
+        self.schema_history
+            .retain(|(namespace, _), _| !revoked(namespace));
+    }
+
+    fn live_tenants(&self) -> Vec<String> {
+        let mut tenants = BTreeSet::new();
+        let mut push = |namespace: &str| {
+            if let Ok(tenant) = tenant_of_namespace(namespace) {
+                tenants.insert(tenant.to_string());
+            }
+        };
+        for namespace in self.joins.keys() {
+            push(namespace);
+        }
+        for (namespace, _, _) in self.identity.keys() {
+            push(namespace);
+        }
+        for (namespace, _) in self.action_commits.keys() {
+            push(namespace);
+        }
+        for (namespace, _) in self.schema_history.keys() {
+            push(namespace);
+        }
+        tenants.into_iter().collect()
     }
 
     fn empty(log: PathBuf, writer: LogWriter) -> Self {
@@ -351,7 +427,7 @@ impl Store {
             return Ok(());
         }
         let since_open = std::mem::take(&mut self.action_commits);
-        for record in read_records(&self.log)? {
+        for record in read_records_with_keys(&self.log, self.writer.keys())? {
             self.remember_action(&record);
         }
         for (id, commit) in since_open {
@@ -570,6 +646,11 @@ impl Store {
     ) -> Result<ObjectRecord, String> {
         let namespace = self.require_known_namespace(namespace)?;
         let missing = || format!("unknown identity {namespace}/{kind}/{key}");
+        if let Ok(tenant) = tenant_of_namespace(namespace) {
+            if !self.writer.tenant_key_usable(tenant) {
+                return Err(missing());
+            }
+        }
         let id = live_id(namespace, kind, key);
         let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
@@ -777,6 +858,10 @@ impl Store {
     /// also hides that overlay. [`Self::apply_action`] uses
     /// [`Self::append_replace`] so it stays a whole-record replace.
     pub fn append_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
+        if self.writer.keys().is_some() {
+            self.writer.revalidate_catalog()?;
+            self.drop_revoked_tenants();
+        }
         self.write_uncommitted(record, true, ActionIdWrite::Claim)
     }
 
@@ -1093,6 +1178,7 @@ impl Store {
         self.schema_history_from_checkpoint = false;
         self.action_commits_from_log = true;
         self.install_projection()?;
+        self.drop_revoked_tenants();
         self.ensure_schema_history()?;
         Ok(())
     }
@@ -1426,6 +1512,11 @@ impl Store {
     ) -> Result<ObjectRecord, String> {
         let namespace = self.require_known_namespace(namespace)?;
         let missing = || format!("unknown identity {namespace}/{kind}/{key}");
+        if let Ok(tenant) = tenant_of_namespace(namespace) {
+            if !self.writer.tenant_key_usable(tenant) {
+                return Err(missing());
+            }
+        }
         let id = live_id(namespace, kind, key);
         let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
@@ -1472,7 +1563,7 @@ impl Store {
             return Ok(());
         }
         self.schema_history.clear();
-        for record in read_records(&self.log)? {
+        for record in read_records_with_keys(&self.log, self.writer.keys())? {
             if record.kind == SCHEMA_KIND && !record.hidden {
                 if let Ok(desc) = SchemaDescriptor::from_record(&record) {
                     self.remember_schema(&record.namespace, desc);
@@ -1885,7 +1976,7 @@ impl Store {
     }
 
     fn replay_tail(&mut self, after_page: u32) -> Result<(), String> {
-        for record in read_records_after(&self.log, after_page)? {
+        for record in read_records_after_with_keys(&self.log, after_page, self.writer.keys())? {
             let schema_namespace = record.namespace.clone();
             let schema_kind = record.kind.clone();
             let schema_key = record.key.clone();
@@ -1959,6 +2050,11 @@ impl Store {
 
     fn require_known_namespace<'a>(&self, namespace: &'a str) -> Result<&'a str, String> {
         let namespace = require_namespace(namespace)?;
+        if let Ok(tenant) = tenant_of_namespace(namespace) {
+            if !self.writer.tenant_key_usable(tenant) {
+                return Err(format!("unknown namespace {namespace}"));
+            }
+        }
         if self.joins.contains_key(namespace) {
             Ok(namespace)
         } else {

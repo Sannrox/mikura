@@ -88,7 +88,13 @@ current descriptor.
   `committed_pages` `u32`. `MIKURAV1` fails closed on open;
   `Store::migrate_unnamespaced` writes it as a new `MIKURAV2` log under a
   caller-named namespace ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
+  Encrypted logs write `MIKURAV3` with a wrapped-DEK catalog after the
+  commit point (`Store::create_with_keys`, [ADR 0044](decisions/0044-log-encryption.md)).
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
+  Encrypted pages are tenant-homogeneous AES-256-GCM with the tenant id
+  in the clear. Encrypted sidecars and checkpoints seal a per-tenant
+  index (`MKPART01`) with the store DEK; each tenant payload uses that
+  tenant's DEK.
 - Record body: `gen` `u64`, `hidden` `u8`, namespace, kind, key, property
   count, then properties in sorted key order, then an optional
   length-prefixed Action id. Empty namespace fails closed on encode and
@@ -493,7 +499,8 @@ checkpoint falls back.
 Closing stdin stops the listener. Stop does not flush the stream buffer;
 rebuild still reads only `1..=committed_pages`. Upgrade is replace the
 binary and `Host::open` the same files. Wire `v` other than omit/`1` stays
-a typed error. New logs are `MIKURAV2`. `MIKURAV1` fails closed
+a typed error. New logs are `MIKURAV2`, or `MIKURAV3` when created with
+keys. `MIKURAV1` fails closed
 ([ADR 0028](decisions/0028-store-namespace.md)) until migrated
 ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
 

@@ -1640,3 +1640,36 @@ fn evaluate_nearest_and_bbox_on_the_wire() {
     assert!(!unknown.ok, "{unknown:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn open_with_keys_round_trips_a_tenant() {
+    use mikura::{
+        tenant_namespace, KeyPurpose, LogKeys, MemoryKeyProvider, RuntimeProfile, TenantId,
+        UnwrapGrant, STORE_KEY_TENANT,
+    };
+    let (dir, log) = temp_log("enc-host");
+    let provider = Arc::new(MemoryKeyProvider::new(RuntimeProfile::Development).unwrap());
+    let grant = |tenant: &str| UnwrapGrant {
+        tenant_id: TenantId::new(tenant).unwrap(),
+        purpose: KeyPurpose::Store,
+        expires_unix_secs: i64::MAX,
+    };
+    let keys = LogKeys::new(provider, vec![grant(STORE_KEY_TENANT), grant("acme")]).unwrap();
+    let host = Host::open_with_keys(&log, 32, keys).unwrap();
+    let ns = tenant_namespace("acme", "ns").unwrap();
+    let mut record = rec("Item", "k1", false, &[("secret", "host-secret")]);
+    record.namespace = ns.clone();
+    let ingest = host.handle(HostRequest::IngestBatch {
+        records: vec![record],
+    });
+    assert!(ingest.ok, "{ingest:?}");
+    let loaded = host.handle(HostRequest::Load {
+        namespace: ns,
+        kind: "Item".into(),
+        key: "k1".into(),
+        deny: Vec::new(),
+        restriction: None,
+    });
+    assert!(loaded.ok, "{loaded:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -34,7 +34,8 @@ use metrics::{Metrics, ProcessSnapshot};
 
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
-    Hop, LocalCompute, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl, Sort, Store,
+    Hop, LocalCompute, LogKeys, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl,
+    Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -359,11 +360,21 @@ pub struct Host {
 
 impl Host {
     pub fn open(log: &Path, stream_bound: usize) -> Result<Self, String> {
+        Self::open_store(log, stream_bound, None)
+    }
+
+    /// Encrypted log (`MIKURAV3`). Same wire as [`Self::open`].
+    pub fn open_with_keys(log: &Path, stream_bound: usize, keys: LogKeys) -> Result<Self, String> {
+        Self::open_store(log, stream_bound, Some(keys))
+    }
+
+    fn open_store(log: &Path, stream_bound: usize, keys: Option<LogKeys>) -> Result<Self, String> {
         let started = Instant::now();
-        let store = if log.exists() {
-            Store::open(log)?
-        } else {
-            Store::create(log)?
+        let store = match (log.exists(), keys) {
+            (true, Some(keys)) => Store::open_with_keys(log, keys)?,
+            (false, Some(keys)) => Store::create_with_keys(log, keys)?,
+            (true, None) => Store::open(log)?,
+            (false, None) => Store::create(log)?,
         };
         let open_replay = started.elapsed();
         let log_bytes_at_open = std::fs::metadata(log).map(|meta| meta.len()).unwrap_or(0);

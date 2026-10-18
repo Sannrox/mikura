@@ -4,16 +4,22 @@
 use crc32fast::Hasher as Crc;
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::codec::{read_str, take, write_str};
+use crate::crypto::{
+    decode_catalog, encode_catalog, encrypted_overhead, open_page_body, read_page_tenant,
+    seal_page_body, tenant_of_namespace, Dek, DekStatus, LogKeys, WrappedDek, STORE_KEY_TENANT,
+};
 use crate::store::ObjectRecord;
 
 pub const PAGE: usize = 4096;
 const MAGIC: &[u8; 8] = crate::LOG_FORMAT;
+const V3_MAGIC: &[u8; 8] = crate::LOG_FORMAT_ENCRYPTED;
 /// Pre-namespace magic. Read only by [`read_v1_records`].
 const V1_MAGIC: &[u8; 8] = b"MIKURAV1";
 const CRC_LEN: usize = 4;
@@ -55,6 +61,12 @@ pub struct LogWriter {
     hold_commits: bool,
     synced: u32,
     failed: bool,
+    keys: Option<Arc<LogKeys>>,
+    catalog: BTreeMap<String, WrappedDek>,
+    deks: HashMap<String, Dek>,
+    revoked: HashSet<String>,
+    withheld: HashSet<String>,
+    page_tenant: Option<String>,
 }
 
 impl LogWriter {
@@ -63,32 +75,33 @@ impl LogWriter {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let file = File::create(path).map_err(|e| e.to_string())?;
-        let mut writer = Self {
-            file,
-            page: vec![0u8; PAGE],
-            used: 0,
-            written: 0,
-            committed: 0,
-            sync,
-            fsync_count: 0,
-            hold_commits: false,
-            synced: 0,
-            failed: false,
-        };
+        let mut writer = Self::blank(file, sync, 0);
+        writer.write_superblock()?;
+        Ok(writer)
+    }
+
+    pub fn create_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let file = File::create(path).map_err(|e| e.to_string())?;
+        let mut writer = Self::blank(file, sync, 0);
+        writer.install_keys(Arc::new(keys))?;
+        writer.mint_store_dek()?;
         writer.write_superblock()?;
         Ok(writer)
     }
 
     pub fn open(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        let committed = read_committed(&mut file)?;
-        let end = PAGE as u64 * u64::from(1 + committed);
-        file.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
-        Ok(Self {
+        Self::open_inner(path, sync, None)
+    }
+
+    pub fn open_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
+        Self::open_inner(path, sync, Some(keys))
+    }
+
+    fn blank(file: File, sync: SyncPolicy, committed: u32) -> Self {
+        Self {
             file,
             page: vec![0u8; PAGE],
             used: 0,
@@ -99,7 +112,208 @@ impl LogWriter {
             hold_commits: false,
             synced: committed,
             failed: false,
-        })
+            keys: None,
+            catalog: BTreeMap::new(),
+            deks: HashMap::new(),
+            revoked: HashSet::new(),
+            withheld: HashSet::new(),
+            page_tenant: None,
+        }
+    }
+
+    fn open_inner(path: &Path, sync: SyncPolicy, keys: Option<LogKeys>) -> Result<Self, String> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        let mut superblock = vec![0u8; PAGE];
+        file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+        std::io::Read::read_exact(&mut file, &mut superblock).map_err(|e| e.to_string())?;
+        let magic = superblock_magic(&superblock)?;
+        if magic == V1_MAGIC {
+            return Err(
+                "bad magic: MIKURAV1 logs need Store::migrate_unnamespaced before open".into(),
+            );
+        }
+        if magic != MAGIC && magic != V3_MAGIC {
+            return Err("bad magic".into());
+        }
+        if magic == V3_MAGIC && keys.is_none() {
+            return Err("encrypted log requires keys".into());
+        }
+        if magic == MAGIC && keys.is_some() {
+            return Err("log is not encrypted".into());
+        }
+        let committed = superblock_commit(&superblock);
+        let end = PAGE as u64 * u64::from(1 + committed);
+        file.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
+        let mut writer = Self::blank(file, sync, committed);
+        if let Some(keys) = keys {
+            writer.install_keys(Arc::new(keys))?;
+            writer.load_catalog(&superblock)?;
+        }
+        Ok(writer)
+    }
+
+    fn install_keys(&mut self, keys: Arc<LogKeys>) -> Result<(), String> {
+        self.keys = Some(keys);
+        Ok(())
+    }
+
+    fn mint_store_dek(&mut self) -> Result<(), String> {
+        let keys = self
+            .keys
+            .clone()
+            .ok_or_else(|| "encrypted log requires keys".to_string())?;
+        let (dek, wrapped) = keys.mint(STORE_KEY_TENANT)?;
+        self.catalog.insert(String::new(), wrapped);
+        self.deks.insert(STORE_KEY_TENANT.to_string(), dek);
+        Ok(())
+    }
+
+    fn load_catalog(&mut self, superblock: &[u8]) -> Result<(), String> {
+        let mut cur = &superblock[SUPER_COMMIT_OFF + 4..];
+        // Trailing CRC padding is zeros after the catalog.
+        let catalog = decode_catalog(&mut cur)?;
+        let keys = self
+            .keys
+            .clone()
+            .ok_or_else(|| "encrypted log requires keys".to_string())?;
+        for (tenant, wrapped) in catalog {
+            let dek_key = if tenant.is_empty() {
+                STORE_KEY_TENANT.to_string()
+            } else {
+                tenant.clone()
+            };
+            match keys.unwrap_status(&wrapped)? {
+                DekStatus::Ready(dek) => {
+                    self.deks.insert(dek_key, dek);
+                    self.catalog.insert(tenant, wrapped);
+                }
+                DekStatus::Withheld => {
+                    self.withheld.insert(dek_key);
+                    self.catalog.insert(tenant, wrapped);
+                }
+                DekStatus::Shredded => {
+                    self.revoked.insert(dek_key);
+                    self.catalog.insert(tenant, wrapped);
+                }
+            }
+        }
+        if !self.deks.contains_key(STORE_KEY_TENANT) {
+            return Err("encrypted log is missing a usable store key".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn keys(&self) -> Option<&LogKeys> {
+        self.keys.as_deref()
+    }
+
+    pub(crate) fn keys_arc(&self) -> Option<Arc<LogKeys>> {
+        self.keys.clone()
+    }
+
+    pub(crate) fn store_dek(&self) -> Option<&Dek> {
+        self.deks.get(STORE_KEY_TENANT)
+    }
+
+    pub(crate) fn tenant_revoked(&self, tenant: &str) -> bool {
+        self.revoked.contains(tenant)
+    }
+
+    pub(crate) fn tenant_withheld(&self, tenant: &str) -> bool {
+        self.withheld.contains(tenant)
+    }
+
+    pub(crate) fn withheld(&self) -> &HashSet<String> {
+        &self.withheld
+    }
+
+    pub(crate) fn tenant_dek(&self, tenant: &str) -> Option<&Dek> {
+        self.deks.get(tenant)
+    }
+
+    pub(crate) fn deks(&self) -> &HashMap<String, Dek> {
+        &self.deks
+    }
+
+    pub(crate) fn tenant_key_usable(&self, tenant: &str) -> bool {
+        if self.keys.is_none() {
+            return true;
+        }
+        if self.revoked.contains(tenant) || self.withheld.contains(tenant) {
+            return false;
+        }
+        let Some(keys) = self.keys.as_ref() else {
+            return true;
+        };
+        let Some(wrapped) = self.catalog.get(tenant) else {
+            return self.deks.contains_key(tenant);
+        };
+        matches!(keys.unwrap_status(wrapped), Ok(DekStatus::Ready(_)))
+    }
+
+    pub(crate) fn revalidate_catalog(&mut self) -> Result<(), String> {
+        let Some(keys) = self.keys.clone() else {
+            return Ok(());
+        };
+        let entries: Vec<_> = self.catalog.clone().into_iter().collect();
+        for (tenant, wrapped) in entries {
+            let name = if tenant.is_empty() {
+                STORE_KEY_TENANT.to_string()
+            } else {
+                tenant
+            };
+            match keys.unwrap_status(&wrapped)? {
+                DekStatus::Ready(_) => {}
+                DekStatus::Withheld => {
+                    self.deks.remove(&name);
+                    self.withheld.insert(name);
+                }
+                DekStatus::Shredded => {
+                    if name == STORE_KEY_TENANT {
+                        return Err("encrypted log is missing a usable store key".into());
+                    }
+                    self.deks.remove(&name);
+                    self.revoked.insert(name);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_tenant_dek(&mut self, tenant: &str) -> Result<(), String> {
+        if self.revoked.contains(tenant) {
+            return Err("encrypted writes refuse revoked tenant".into());
+        }
+        if self.deks.contains_key(tenant) {
+            self.revalidate_catalog()?;
+            if self.revoked.contains(tenant) {
+                return Err("encrypted writes refuse revoked tenant".into());
+            }
+            if self.withheld.contains(tenant) {
+                return Err("encrypted writes refuse tenant whose key is unavailable".into());
+            }
+            if self.deks.contains_key(tenant) {
+                return Ok(());
+            }
+        }
+        if self.withheld.contains(tenant) || self.catalog.contains_key(tenant) {
+            return Err("encrypted writes refuse tenant whose key is unavailable".into());
+        }
+        let keys = self
+            .keys
+            .clone()
+            .ok_or_else(|| "encrypted log requires keys".to_string())?;
+        if keys.grant_for(tenant).is_none() {
+            return Err("encrypted writes refuse tenant without unwrap grant".into());
+        }
+        let (dek, wrapped) = keys.mint(tenant)?;
+        self.catalog.insert(tenant.to_string(), wrapped);
+        self.deks.insert(tenant.to_string(), dek);
+        Ok(())
     }
 
     pub fn fsync_count(&self) -> u64 {
@@ -159,6 +373,7 @@ impl LogWriter {
         self.ensure_usable()?;
         self.page = vec![0u8; PAGE];
         self.used = 0;
+        self.page_tenant = None;
         self.written = self.committed;
         self.synced = self.committed;
         let end = PAGE as u64 * u64::from(1 + self.committed);
@@ -169,10 +384,25 @@ impl LogWriter {
         Ok(())
     }
 
+    fn page_capacity(&self, tenant: Option<&str>) -> usize {
+        match tenant {
+            Some(tenant) if self.keys.is_some() => {
+                let overhead = CRC_LEN + encrypted_overhead(tenant.len()) + USED_LEN;
+                PAGE.saturating_sub(overhead)
+            }
+            _ => PAGE - PAGE_HDR,
+        }
+    }
+
     /// Fail closed when `record` cannot fit on a 4 KiB page.
     pub(crate) fn check_record_fits(&self, record: &ObjectRecord) -> Result<(), String> {
         let framed = framed_record(&encode_body(record)?)?;
-        if PAGE_HDR + framed.len() > PAGE {
+        let tenant = if self.keys.is_some() {
+            Some(tenant_of_namespace(&record.namespace)?)
+        } else {
+            None
+        };
+        if framed.len() > self.page_capacity(tenant) {
             return Err("record larger than a page".into());
         }
         Ok(())
@@ -181,11 +411,30 @@ impl LogWriter {
     pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
         self.ensure_usable()?;
         let framed = framed_record(&encode_body(record)?)?;
-        if PAGE_HDR + framed.len() > PAGE {
+        let tenant = if self.keys.is_some() {
+            Some(tenant_of_namespace(&record.namespace)?.to_string())
+        } else {
+            None
+        };
+        if let Some(tenant) = tenant.as_deref() {
+            self.ensure_tenant_dek(tenant)?;
+        }
+        if framed.len() > self.page_capacity(tenant.as_deref()) {
             return Err("record larger than a page".into());
         }
-        if PAGE_HDR + self.used + framed.len() > PAGE {
+        if let Some(tenant) = tenant.as_deref() {
+            if self.used > 0 && self.page_tenant.as_deref() != Some(tenant) {
+                self.flush_page()?;
+            }
+            if self.used == 0 {
+                self.page_tenant = Some(tenant.to_string());
+            }
+        }
+        if self.used + framed.len() > self.page_capacity(self.page_tenant.as_deref()) {
             self.flush_page()?;
+            if let Some(tenant) = tenant {
+                self.page_tenant = Some(tenant);
+            }
         }
         let start = PAGE_HDR + self.used;
         self.page[start..start + framed.len()].copy_from_slice(&framed);
@@ -205,11 +454,18 @@ impl LogWriter {
             return Ok(());
         }
         self.page[CRC_LEN..PAGE_HDR].copy_from_slice(&(self.used as u16).to_le_bytes());
-        seal_page(&mut self.page);
-        self.file.write_all(&self.page).map_err(|e| e.to_string())?;
+        let disk = if self.keys.is_some() {
+            self.seal_current_page()?
+        } else {
+            let mut disk = self.page.clone();
+            seal_page(&mut disk);
+            disk
+        };
+        self.file.write_all(&disk).map_err(|e| e.to_string())?;
         self.written += 1;
         self.page = vec![0u8; PAGE];
         self.used = 0;
+        self.page_tenant = None;
         if self.hold_commits {
             if self.sync.durable() && self.written - self.synced >= self.sync.group_size() {
                 self.sync_data()?;
@@ -248,8 +504,38 @@ impl LogWriter {
         })
     }
 
+    fn seal_current_page(&self) -> Result<Vec<u8>, String> {
+        let tenant = self
+            .page_tenant
+            .as_deref()
+            .ok_or_else(|| "encrypted page is missing tenant".to_string())?;
+        let dek = self
+            .deks
+            .get(tenant)
+            .ok_or_else(|| "encrypted page is missing tenant key".to_string())?;
+        let inner_len = PAGE
+            .checked_sub(CRC_LEN + encrypted_overhead(tenant.len()))
+            .ok_or_else(|| "encrypted page overhead exceeds page".to_string())?;
+        let mut inner = vec![0u8; inner_len];
+        inner[..USED_LEN].copy_from_slice(&self.page[CRC_LEN..PAGE_HDR]);
+        inner[USED_LEN..USED_LEN + self.used]
+            .copy_from_slice(&self.page[PAGE_HDR..PAGE_HDR + self.used]);
+        let sealed = seal_page_body(dek, tenant, self.written + 1, &inner)?;
+        if CRC_LEN + sealed.len() > PAGE {
+            return Err("encrypted page overflow".into());
+        }
+        let mut disk = vec![0u8; PAGE];
+        disk[CRC_LEN..CRC_LEN + sealed.len()].copy_from_slice(&sealed);
+        seal_page(&mut disk);
+        Ok(disk)
+    }
+
     fn write_superblock_body(&mut self) -> Result<(), String> {
-        let superblock = superblock_page(self.committed);
+        let superblock = if self.keys.is_some() {
+            superblock_page_v3(self.committed, &self.catalog)?
+        } else {
+            superblock_page(self.committed)
+        };
         let pos = self.file.stream_position().map_err(|e| e.to_string())?;
         self.file
             .seek(SeekFrom::Start(0))
@@ -273,25 +559,43 @@ impl LogWriter {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_records(path: &Path) -> Result<Vec<ObjectRecord>, String> {
-    read_committed_records(path, None, 0)
+    read_records_with_keys(path, None)
+}
+
+pub(crate) fn read_records_with_keys(
+    path: &Path,
+    keys: Option<&LogKeys>,
+) -> Result<Vec<ObjectRecord>, String> {
+    read_committed_records(path, None, 0, keys)
 }
 
 /// Committed records on pages `(after_page + 1)..=committed_pages`.
 /// `after_page == 0` is a full replay.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_records_after(path: &Path, after_page: u32) -> Result<Vec<ObjectRecord>, String> {
-    read_committed_records(path, None, after_page)
+    read_records_after_with_keys(path, after_page, None)
+}
+
+pub(crate) fn read_records_after_with_keys(
+    path: &Path,
+    after_page: u32,
+    keys: Option<&LogKeys>,
+) -> Result<Vec<ObjectRecord>, String> {
+    read_committed_records(path, None, after_page, keys)
 }
 
 /// Committed records that `keep` accepts, with the page that holds each, in
 /// log order (ADR 0036). Every commit ends on a page boundary, so a page that a
 /// commit returned as `committed_pages` is an exact commit point.
-pub(crate) fn read_records_with_pages(
+pub(crate) fn read_records_with_pages_keys(
     path: &Path,
+    keys: Option<&LogKeys>,
     mut keep: impl FnMut(&ObjectRecord) -> bool,
 ) -> Result<Vec<(u32, ObjectRecord)>, String> {
     let mut paged = Vec::new();
-    visit_committed_pages(path, None, 0, |index, records| {
+    visit_committed_pages(path, None, 0, keys, |index, records| {
         paged.extend(
             records
                 .into_iter()
@@ -308,7 +612,7 @@ pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>
     if namespace.is_empty() {
         return Err("namespace required".into());
     }
-    read_committed_records(path, Some(namespace), 0)
+    read_committed_records(path, Some(namespace), 0, None)
 }
 
 /// `v1_namespace` selects the `MIKURAV1` body layout and the namespace its
@@ -317,9 +621,10 @@ fn read_committed_records(
     path: &Path,
     v1_namespace: Option<&str>,
     after_page: u32,
+    keys: Option<&LogKeys>,
 ) -> Result<Vec<ObjectRecord>, String> {
     let mut all = Vec::new();
-    visit_committed_pages(path, v1_namespace, after_page, |_, records| {
+    visit_committed_pages(path, v1_namespace, after_page, keys, |_, records| {
         all.extend(records);
     })?;
     Ok(all)
@@ -331,6 +636,7 @@ fn visit_committed_pages(
     path: &Path,
     v1_namespace: Option<&str>,
     after_page: u32,
+    keys: Option<&LogKeys>,
     mut visit: impl FnMut(u32, Vec<ObjectRecord>),
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
@@ -340,6 +646,22 @@ fn visit_committed_pages(
     let committed = match v1_namespace {
         None => parse_superblock(&superblock)?,
         Some(_) => parse_v1_superblock(&superblock)?,
+    };
+    let magic = if v1_namespace.is_some() {
+        V1_MAGIC
+    } else {
+        superblock_magic(&superblock)?
+    };
+    if magic == V3_MAGIC && keys.is_none() {
+        return Err("encrypted log requires keys".into());
+    }
+    let deks = if magic == V3_MAGIC {
+        Some(unwrap_catalog(
+            keys.ok_or("encrypted log requires keys")?,
+            &superblock,
+        )?)
+    } else {
+        None
     };
     let needed = PAGE as u64 * u64::from(1 + committed);
     let len = file.metadata().map_err(|e| e.to_string())?.len();
@@ -359,18 +681,52 @@ fn visit_committed_pages(
                 .map_err(|_| format!("committed page {index}: short read"))?;
             verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
             let mut records = Vec::new();
-            decode_data_page(&page, v1_namespace, &mut records)?;
+            if let Some(deks) = deks.as_ref() {
+                decode_encrypted_page(&page, index, deks, &mut records)
+                    .map_err(|e| format!("committed page {index}: {e}"))?;
+            } else {
+                decode_data_page(&page, v1_namespace, &mut records)?;
+            }
             visit(index, records);
         }
     }
     Ok(())
 }
 
-fn read_committed(file: &mut File) -> Result<u32, String> {
-    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-    let mut superblock = vec![0u8; PAGE];
-    std::io::Read::read_exact(file, &mut superblock).map_err(|e| e.to_string())?;
-    parse_superblock(&superblock)
+fn unwrap_catalog(keys: &LogKeys, superblock: &[u8]) -> Result<HashMap<String, Dek>, String> {
+    let mut cur = &superblock[SUPER_COMMIT_OFF + 4..];
+    let catalog = decode_catalog(&mut cur)?;
+    let mut deks = HashMap::new();
+    for (tenant, wrapped) in catalog {
+        if let Some(dek) = keys.unwrap_dek(&wrapped)? {
+            let dek_key = if tenant.is_empty() {
+                STORE_KEY_TENANT.to_string()
+            } else {
+                tenant
+            };
+            deks.insert(dek_key, dek);
+        }
+    }
+    Ok(deks)
+}
+
+fn decode_encrypted_page(
+    page: &[u8],
+    index: u32,
+    deks: &HashMap<String, Dek>,
+    records: &mut Vec<ObjectRecord>,
+) -> Result<(), String> {
+    let (tenant, body) = read_page_tenant(&page[CRC_LEN..])?;
+    let Some(dek) = deks.get(tenant) else {
+        return Ok(());
+    };
+    let inner = open_page_body(dek, tenant, index, body)?;
+    let mut fake = vec![0u8; PAGE];
+    if CRC_LEN + inner.len() > PAGE {
+        return Err("encrypted page inner overflow".into());
+    }
+    fake[CRC_LEN..CRC_LEN + inner.len()].copy_from_slice(&inner);
+    decode_data_page(&fake, None, records)
 }
 
 /// A sealed `MIKURAV2` superblock that commits pages `1..=committed`.
@@ -383,6 +739,40 @@ pub(crate) fn superblock_page(committed: u32) -> Vec<u8> {
     superblock
 }
 
+fn superblock_page_v3(
+    committed: u32,
+    catalog: &BTreeMap<String, WrappedDek>,
+) -> Result<Vec<u8>, String> {
+    let mut superblock = vec![0u8; PAGE];
+    superblock[CRC_LEN..CRC_LEN + 8].copy_from_slice(V3_MAGIC);
+    superblock[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
+    superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4].copy_from_slice(&committed.to_le_bytes());
+    let encoded = encode_catalog(catalog)?;
+    let start = SUPER_COMMIT_OFF + 4;
+    if start + encoded.len() > PAGE {
+        return Err("key catalog does not fit in the superblock".into());
+    }
+    superblock[start..start + encoded.len()].copy_from_slice(&encoded);
+    seal_page(&mut superblock);
+    Ok(superblock)
+}
+
+/// Copy a superblock, set `committed`, and reseal so backup keeps a V3 catalog.
+pub(crate) fn superblock_with_committed(page: &[u8], committed: u32) -> Result<Vec<u8>, String> {
+    verify_page(page).map_err(|e| format!("superblock: {e}"))?;
+    let mut superblock = page.to_vec();
+    superblock[SUPER_COMMIT_OFF..SUPER_COMMIT_OFF + 4].copy_from_slice(&committed.to_le_bytes());
+    seal_page(&mut superblock);
+    Ok(superblock)
+}
+
+pub(crate) fn superblock_magic(superblock: &[u8]) -> Result<&[u8; 8], String> {
+    verify_page(superblock).map_err(|e| format!("superblock: {e}"))?;
+    superblock[CRC_LEN..CRC_LEN + 8]
+        .try_into()
+        .map_err(|_| "bad magic".to_string())
+}
+
 /// The stored CRC of a sealed page.
 pub(crate) fn page_crc(page: &[u8]) -> u32 {
     u32::from_le_bytes(page[..CRC_LEN].try_into().unwrap())
@@ -393,7 +783,7 @@ pub(crate) fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
     let magic = &superblock[CRC_LEN..CRC_LEN + 8];
     if magic == V1_MAGIC {
         return Err("bad magic: MIKURAV1 logs need Store::migrate_unnamespaced before open".into());
-    } else if magic != MAGIC {
+    } else if magic != MAGIC && magic != V3_MAGIC {
         return Err("bad magic".into());
     }
     Ok(superblock_commit(superblock))
