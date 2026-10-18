@@ -8,7 +8,7 @@
 
 use super::{ObjectRecord, Store};
 use crate::acl::PropertyAcl;
-use crate::log::read_records_with_pages;
+use crate::log::read_records_with_pages_keys;
 
 /// How one generation came to be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl Store {
         kind: &str,
         key: &str,
     ) -> Result<Vec<(u32, ObjectRecord, VersionOrigin)>, String> {
-        let stored = read_records_with_pages(&self.log, |record| {
+        let stored = read_records_with_pages_keys(&self.log, self.writer.keys(), |record| {
             record.namespace == namespace && record.kind == kind && record.key == key
         })?;
         if stored.is_empty() {

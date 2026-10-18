@@ -122,7 +122,7 @@ The named production workload is the product-loop
 Synthetic envelopes do not set its SLOs. They do not block remaining
 M7 research.
 
-Out until an ADR: encrypt logs; per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. The two-object seed stays unambiguous without extra operators ([#122](https://github.com/Sannrox/mikura/issues/122)).
+Out until an ADR: per-op join WAL; principals or tenants in this crate; a query language; a cluster compute backend; group-by or other aggregates until a consumer names one with a fixture. The two-object seed stays unambiguous without extra operators ([#122](https://github.com/Sannrox/mikura/issues/122)). Log encryption at rest is [ADR 0044](docs/decisions/0044-log-encryption.md) / [#282](https://github.com/Sannrox/mikura/issues/282).
 
 ## Later (not this repository)
 

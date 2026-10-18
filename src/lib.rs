@@ -34,14 +34,15 @@
 //! id, all or nothing ([`Store::apply_change_set`]).
 //!
 //! See `docs/architecture.md` in the repository for the v1 contract.
-//! Format ids on the 1.0 surface: [`LOG_FORMAT`], [`JOIN_FORMAT`],
-//! [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
+//! Format ids on the 1.0 surface: [`LOG_FORMAT`], [`LOG_FORMAT_ENCRYPTED`],
+//! [`JOIN_FORMAT`], [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
 
 mod acl;
 mod actions;
 pub mod backup;
 mod codec;
 mod compute;
+mod crypto;
 mod joins;
 mod log;
 mod objectset;
@@ -51,8 +52,10 @@ mod schema;
 mod store;
 mod value;
 
-/// Superblock magic this crate writes and opens (`MIKURAV2`).
+/// Superblock magic this crate writes and opens for plaintext logs (`MIKURAV2`).
 pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
+/// Superblock magic for encrypted logs (`MIKURAV3`, ADR 0044).
+pub const LOG_FORMAT_ENCRYPTED: &[u8; 8] = b"MIKURAV3";
 /// Join sidecar magic (`MKJOIN05`). Rebuildable; unknown magic fails closed.
 pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN05";
 /// Join dirty-set magic this crate writes (`MKJOIN6D`).
@@ -65,6 +68,10 @@ pub const CHECKPOINT_FORMAT: &[u8; 8] = b"MKCKPT01";
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
 pub use compute::{ComputeBackend, ComputeError, LocalCompute, SparkCompute};
+pub use crypto::{
+    Dek, KeyError, KeyId, KeyProvider, KeyPurpose, LogKeys, MemoryKeyProvider, RuntimeProfile,
+    TenantId, UnwrapGrant, WrappedDek, STORE_KEY_TENANT,
+};
 pub use joins::JoinMaps;
 pub use objectset::{
     Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, ObjectSet,

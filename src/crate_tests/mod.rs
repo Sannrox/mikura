@@ -5,6 +5,7 @@ mod backup;
 mod batch;
 mod change_set;
 mod delta;
+mod encrypt;
 mod evolution;
 mod helpers;
 mod hide;

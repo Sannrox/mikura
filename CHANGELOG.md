@@ -8,8 +8,20 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
+### Added
+
+- Object logs encrypt at rest with caller-supplied keys (`Store::create_with_keys` / `open_with_keys`, `Host::open_with_keys`). Encrypted logs write `MIKURAV3`. Per-tenant DEKs wrap through `sekai-keys`; a revoked tenant is omitted from the projection and its writes are refused. Backup copies the superblock catalog. Compaction mints new DEKs ([#282](https://github.com/Sannrox/mikura/issues/282), [ADR 0044](docs/decisions/0044-log-encryption.md)).
+
 ### Upgrade
 
+- Encrypted logs are opt-in `MIKURAV3`. Unkeyed `Store::create` / `open`
+  still write and open `MIKURAV2`. Opening a `MIKURAV3` log without keys
+  fails closed. Namespaces on encrypted logs must be tenant-prefixed
+  (`tenant_namespace`). Sidecars and checkpoints of an encrypted log are
+  sealed (`MKSEAL01` / `MKPART01`); tenant payloads use the tenant DEK.
+  `sekai-keys` is a git pin until it is on crates.io
+  ([#282](https://github.com/Sannrox/mikura/issues/282),
+  [ADR 0044](docs/decisions/0044-log-encryption.md)).
 - Crate version is 0.3.0. `PropertyType`, `PropertyValue`, and
   `Predicate` gain variants; `Sort.nearest` is new; host
   `HostRequest::Evaluate` is `Box<WireEvaluate>`. JSON wire is unchanged
