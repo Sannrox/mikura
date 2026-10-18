@@ -19,6 +19,9 @@ MIKURA_BENCH_SIZES=10000000 cargo bench -p mikura-host --bench product   # opt-i
 | `MIKURA_BENCH_OUT` | Write the results and machine class as JSON to this file. |
 | `MIKURA_BENCH_BASELINE` | Compare with a previous JSON file. Any p50 more than 20% above the baseline p50 for the same measurement and size fails the run. |
 
+`cargo bench` runs the binary from `crates/mikura-host`, so relative paths in
+these variables resolve there. Use absolute paths.
+
 Output prints the machine class (OS, architecture, CPU count, CPU model)
 and one row per measurement with p50, p95 and p99. Every measurement is
 lower-is-better, so one rule covers the gate.

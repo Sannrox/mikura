@@ -44,13 +44,14 @@ jobs:
       - name: Run benchmarks
         env:
           MIKURA_BENCH_SIZES: "10000,1000000"
-          MIKURA_BENCH_OUT: bench-results.json
+          # cargo bench runs the binary from the crate directory, so paths are absolute.
+          MIKURA_BENCH_OUT: ${{ github.workspace }}/bench-results.json
         run: |
           if [ "${{ inputs.reset_baseline }}" = "true" ]; then
             rm -rf bench-baseline
           fi
           if [ -f bench-baseline/results.json ]; then
-            export MIKURA_BENCH_BASELINE=bench-baseline/results.json
+            export MIKURA_BENCH_BASELINE="$GITHUB_WORKSPACE/bench-baseline/results.json"
           else
             echo "No stored baseline yet; this run becomes the baseline."
           fi
