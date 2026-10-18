@@ -1,0 +1,70 @@
+name: Bench
+
+# Nightly product benchmarks (docs/benchmarks.md). The stored baseline is
+# the first run's results on this runner's machine class; any p50 more than
+# 20% slower fails the job. A manual run with `reset_baseline` replaces it
+# after an accepted change.
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      reset_baseline:
+        description: Store this run's results as the new baseline
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  bench:
+    name: Product benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Baselines are per machine class; a new CPU model starts a new one.
+      - name: Machine class
+        id: machine
+        run: echo "class=$(nproc)-$(lscpu | sed -n 's/^Model name: *//p' | tr -c 'A-Za-z0-9' '-')" >> "$GITHUB_OUTPUT"
+      - name: Restore baseline
+        id: baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: bench-baseline
+          key: bench-baseline-${{ runner.os }}-${{ steps.machine.outputs.class }}-${{ github.run_id }}
+          restore-keys: bench-baseline-${{ runner.os }}-${{ steps.machine.outputs.class }}-
+      - name: Run benchmarks
+        env:
+          MIKURA_BENCH_SIZES: "10000,1000000"
+          MIKURA_BENCH_OUT: bench-results.json
+        run: |
+          if [ "${{ inputs.reset_baseline }}" = "true" ]; then
+            rm -rf bench-baseline
+          fi
+          if [ -f bench-baseline/results.json ]; then
+            export MIKURA_BENCH_BASELINE=bench-baseline/results.json
+          else
+            echo "No stored baseline yet; this run becomes the baseline."
+          fi
+          cargo bench --locked -p mikura-host --bench product
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-results.json
+          if-no-files-found: ignore
+      - name: Store baseline
+        id: store
+        if: github.ref == 'refs/heads/main' && hashFiles('bench-baseline/results.json') == ''
+        run: mkdir -p bench-baseline && cp bench-results.json bench-baseline/results.json
+      - uses: actions/cache/save@v4
+        if: steps.store.outcome == 'success'
+        with:
+          path: bench-baseline
+          key: bench-baseline-${{ runner.os }}-${{ steps.machine.outputs.class }}-${{ github.run_id }}

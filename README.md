@@ -125,6 +125,7 @@ ROADMAP.md           what to build next, in order
 | [docs/plans/application-roadmap.md](docs/plans/application-roadmap.md) | Application-led milestone proposal |
 | [docs/architecture.md](docs/architecture.md) | How the crate works today |
 | [docs/glossary.md](docs/glossary.md) | Terms (log, projection, envelope, …) |
+| [docs/benchmarks.md](docs/benchmarks.md) | Product benchmark suite, baseline table, regression gate |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, pull requests |
 | [AGENTS.md](AGENTS.md) | Instructions for coding agents |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
