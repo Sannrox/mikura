@@ -41,19 +41,50 @@ impl Store {
                 // Partial grants must not overwrite a complete snapshot.
                 return Ok(());
             }
-            return self.rewrite_checkpoint(pages);
+            self.rewrite_checkpoint(pages)?;
+            self.note_projection_persisted();
+            return Ok(());
         }
         let compact =
             !self.has_checkpoint || self.dirty.len().saturating_mul(4) > self.identity.len().max(1);
         if compact {
-            return self.rewrite_checkpoint(pages);
+            self.rewrite_checkpoint(pages)?;
+            self.note_projection_persisted();
+            return Ok(());
         }
         self.persist_delta(pages)?;
         self.dirty.clear();
         if self.delta_bytes > self.delta_compact_bytes {
-            return self.rewrite_checkpoint(pages);
+            self.rewrite_checkpoint(pages)?;
         }
+        self.note_projection_persisted();
         Ok(())
+    }
+
+    /// Persist the sidecar when due, or immediately when `force` (close,
+    /// checkpoint catch-up). Skip when the in-memory projection already
+    /// matches a persisted sidecar, or when uncommitted pages are still
+    /// held: those maps must not be stamped at the last commit point.
+    pub(super) fn maybe_persist_projection(&mut self, force: bool) -> Result<(), String> {
+        if self.writer.has_pending() || !self.projection_persist_due(force) {
+            return Ok(());
+        }
+        self.persist_projection()
+    }
+
+    fn projection_persist_due(&self, force: bool) -> bool {
+        if self.dirty.is_empty() && self.has_checkpoint {
+            return false;
+        }
+        force
+            || !self.has_checkpoint
+            || self.sidecar_commits_since_persist >= self.sidecar_persist_commits
+            || self.sidecar_last_persist.elapsed() >= self.sidecar_persist_interval
+    }
+
+    fn note_projection_persisted(&mut self) {
+        self.sidecar_commits_since_persist = 0;
+        self.sidecar_last_persist = std::time::Instant::now();
     }
 
     fn rewrite_checkpoint(&mut self, pages: u32) -> Result<(), String> {

@@ -169,8 +169,10 @@ migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schem
 sums persist on that sidecar as parent → `(count, sum)` rollups
 ([ADR 0010](decisions/0010-last-hop-measures.md)).
 
-After the first checkpoint, a dirty commit writes `{log}.joins.delta`
-instead of rewriting the whole sidecar. A successful delta persist clears
+After the first checkpoint, dirty commits persist `{log}.joins.delta`
+every 32 commits, every 100 ms, or when the store is dropped, instead of
+on every log flush. The object log stays authority; a lagging sidecar is
+caught up from the log tail on open. A successful delta persist clears
 that dirty set so later ingest chunks do not accumulate until every
 commit rewrites the checkpoint; later chunks append only the new dirty
 rows. Compact when dirty rows exceed a quarter of identity, or when the
