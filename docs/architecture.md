@@ -48,11 +48,13 @@ Schema descriptors persist as ordinary objects of kind `mikura.schema`
 with key equal to the described kind. The descriptor body uses string
 properties `properties` (comma-separated closed set), optional `required`,
 optional `links` (`name:far_kind:out|in:0..1`), optional `sums`
-(comma-separated property names already in `properties`), and optional
+(comma-separated property names already in `properties`), optional
+`indexes` (comma-separated property names already in `properties` that
+evaluate may look up instead of scanning), and optional
 `types` (`name:boolean|integer|timestamp|string` or `name:decimal:<scale>` or `name:vector:<dim>` or `name:tsref` or `name:geo:point` or `name:geo:shape` or `name:media`),
 optional `conflict` (`user` or `newest`), optional `conflict_properties`
 (`name:user|newest`), and optional `conflict_time` (a declared timestamp
-property). Historical descriptors without `sums`, `types`, or `conflict`
+property). Historical descriptors without `sums`, `indexes`, `types`, or `conflict`
 still load. Visible writes
 of a typed property fail closed unless the value is canonical (timestamps
 with an offset normalize to UTC millis on write). Consumer kinds must
@@ -64,7 +66,7 @@ absent. No schema row means today's unvalidated strings.
 A later visible descriptor is a new schema version compared to the previous
 visible row for that kind ([ADR 0013](decisions/0013-schema-evolution.md),
 [ADR 0035](decisions/0035-versioned-schema-migration.md)): additive properties,
-shrinking `required`, new typed names, incoming links, `sums`, and overlay
+shrinking `required`, new typed names, incoming links, `sums`, `indexes`, and overlay
 `conflict` fields commit without migrate keys. Recast, rename, outgoing-link
 retarget, and closed-set drop commit only with a matching `migrate_cast`,
 `migrate_rename`, `migrate_retarget`, or `migrate_drop`. Extra or missing
@@ -269,12 +271,18 @@ brokers stay out.
    ([ADR 0012](decisions/0012-typed-values.md)); `integer` `1` is not
    `string` `"1"`. Range is inclusive on integer, timestamp, decimal,
    and string; boolean range fails closed. `missing` is key-absent, not
-   `""`.
+   `""`. When every property in an `eq`/`range`/`and`/`or` tree is a
+   schema-named index, evaluate looks those ids up in
+   `by_prop[(kind, property)]` (range walks distinct stored values)
+   instead of scanning roots. Undeclared names still scan.
 3. For each `Hop` except the last, join either default (`parent.key` to
    child `join_property` among visible `far_kind` children) or
    `incoming: true` (follow `props[join_property]` on the frontier to a
    visible `far_kind` key), keeping `(root, identity)` only for the
    current frontier. `Hop.predicate` then restricts that far set.
+   When that predicate is an indexed `eq`/`range`/`and`/`or` tree,
+   evaluate inverts matching far ids into the frontier instead of
+   scanning `hop_targets` then matching.
    Filter-then-hop and hop-then-filter are different answers.
    Named many-to-many is two of these hops through an association kind,
    not a `0..n` property or edge record

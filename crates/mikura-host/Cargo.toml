@@ -1,6 +1,6 @@
 [package]
 name = "mikura-host"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 publish = false
 description = "Single-process ingest/evaluate/load host over an in-process mikura Store."
@@ -9,8 +9,8 @@ repository = "https://github.com/Sannrox/mikura"
 readme = "../../README.md"
 
 [dependencies]
-mikura = { version = "0.3.0", path = "../.." }
-mikura-ingest = { version = "0.3.0", path = "../mikura-ingest" }
+mikura = { version = "0.4.0", path = "../.." }
+mikura-ingest = { version = "0.4.0", path = "../mikura-ingest" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

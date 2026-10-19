@@ -22,6 +22,7 @@
 //! commit as before; recast, rename, retarget, and drop need a declared
 //! migration ([`Store::load_at_schema`] names an earlier version).
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
+//! Optional `indexes` name properties evaluate may look up instead of scanning.
 //! Optional `types` declare boolean, integer, timestamp, decimal, vector,
 //! time-series, geo, and media values stored as canonical UTF-8 in `props`
 //! ([`PropertyType`]).
@@ -83,7 +84,7 @@ pub use overlay::{
 };
 pub use schema::{
     ConflictPlan, ConflictStrategy, SchemaDescriptor, SchemaLink, SchemaMigration, SCHEMA_CONFLICT,
-    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_KIND, SCHEMA_LINKS,
+    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS,
     SCHEMA_MIGRATE_CAST, SCHEMA_MIGRATE_DROP, SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET,
     SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION,
 };

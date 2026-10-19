@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use crate::value::PropertyType;
+
 thread_local! {
     static COUNT_SCRATCH: RefCell<CountScratch> = RefCell::new(CountScratch::default());
 }
@@ -406,6 +408,36 @@ impl JoinMaps {
             .unwrap_or_default()
     }
 
+    /// Visible keys of `kind` whose `property` value is in `[min, max]`
+    /// under `ty`. Distinct stored values are walked; missing keys stay out.
+    pub(crate) fn matching_range_ids(
+        &self,
+        kind: &str,
+        property: &str,
+        ty: PropertyType,
+        min: Option<&str>,
+        max: Option<&str>,
+    ) -> Result<HashSet<u32>, String> {
+        let (Some(&kind_id), Some(&prop_id)) =
+            (self.intern_ix.get(kind), self.intern_ix.get(property))
+        else {
+            return Ok(HashSet::new());
+        };
+        let Some(by_val) = self.by_prop.get(&(kind_id, prop_id)) else {
+            return Ok(HashSet::new());
+        };
+        let mut ids = HashSet::new();
+        for (&value_id, keys) in by_val {
+            let Some(stored) = self.intern_get(value_id) else {
+                continue;
+            };
+            if ty.in_range(stored, min, max)? {
+                ids.extend(keys.iter().copied());
+            }
+        }
+        Ok(ids)
+    }
+
     /// Like [`Self::count_and_sum`], but only roots matching `property == value`.
     pub fn count_and_sum_matching(
         &self,
@@ -536,6 +568,54 @@ impl JoinMaps {
                 .and_then(|by_val| by_val.get(&parent))
                 .cloned()
                 .unwrap_or_default()
+        }
+    }
+
+    /// Frontier keys that join to `child` on `join_property`. Incoming follows
+    /// the frontier's owned pair; outgoing reads the child's join value.
+    pub(crate) fn join_parents(
+        &self,
+        frontier_kind: &str,
+        far_kind: &str,
+        join_property: &str,
+        incoming: bool,
+        child: u32,
+    ) -> Vec<u32> {
+        if incoming {
+            let (Some(&kind_id), Some(&prop_id)) = (
+                self.intern_ix.get(frontier_kind),
+                self.intern_ix.get(join_property),
+            ) else {
+                return Vec::new();
+            };
+            self.by_prop
+                .get(&(kind_id, prop_id))
+                .and_then(|by_val| by_val.get(&child))
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            let (Some(&far_id), Some(&prop_id), Some(&frontier_id)) = (
+                self.intern_ix.get(far_kind),
+                self.intern_ix.get(join_property),
+                self.intern_ix.get(frontier_kind),
+            ) else {
+                return Vec::new();
+            };
+            let Some(owned) = self.owned.get(&(far_id, child)) else {
+                return Vec::new();
+            };
+            let Some((_, parent_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
+                return Vec::new();
+            };
+            if self
+                .by_kind
+                .get(&frontier_id)
+                .is_some_and(|keys| keys.contains(parent_id))
+            {
+                vec![*parent_id]
+            } else {
+                Vec::new()
+            }
         }
     }
 

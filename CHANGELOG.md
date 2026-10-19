@@ -17,10 +17,22 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Added
 
+- Schema `indexes` names properties evaluate may look up as secondary
+  indexes. Equality and inclusive range on those names use the join map
+  instead of scanning identities. Hop-target predicates invert from that
+  lookup into the frontier. Undeclared names still scan. Dual-read
+  against the scan path holds. Sidecar format unchanged; indexes rebuild
+  from owned pairs
+  ([#257](https://github.com/Sannrox/mikura/issues/257)).
 - Object logs encrypt at rest with caller-supplied keys (`Store::create_with_keys` / `open_with_keys`, `Host::open_with_keys`). Encrypted logs write `MIKURAV3`. Per-tenant DEKs wrap through `sekai-keys`; a revoked tenant is omitted from the projection and its writes are refused. Backup copies the superblock catalog. Compaction mints new DEKs ([#282](https://github.com/Sannrox/mikura/issues/282), [ADR 0044](docs/decisions/0044-log-encryption.md)).
 
 ### Upgrade
 
+- Crate version is 0.4.0. `SchemaDescriptor` gains `indexes`;
+  `SCHEMA_INDEXES` is a new schema property name. Historical descriptors
+  without `indexes` load as empty (scan). Struct literals of
+  `SchemaDescriptor` need the field or `..Default::default()`
+  ([#257](https://github.com/Sannrox/mikura/issues/257)).
 - Encrypted logs are opt-in `MIKURAV3`. Unkeyed `Store::create` / `open`
   still write and open `MIKURAV2`. Opening a `MIKURAV3` log without keys
   fails closed. Namespaces on encrypted logs must be tenant-prefixed

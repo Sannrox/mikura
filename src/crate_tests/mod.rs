@@ -11,6 +11,7 @@ mod helpers;
 mod hide;
 mod history;
 mod hops;
+mod indexes;
 mod load;
 mod log_checkpoint;
 mod measures;

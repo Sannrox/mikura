@@ -1,6 +1,6 @@
 [package]
 name = "mikura-ingest"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 publish = false
 description = "Write orchestrator for mikura: batch, snapshot changelog, identity merge, stream append, and ordered stream apply of object records."
@@ -9,4 +9,4 @@ repository = "https://github.com/Sannrox/mikura"
 readme = "../../README.md"
 
 [dependencies]
-mikura = { version = "0.3.0", path = "../.." }
+mikura = { version = "0.4.0", path = "../.." }

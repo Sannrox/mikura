@@ -151,7 +151,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mikura"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "crc32fast",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "mikura-host"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "mikura",
  "mikura-ingest",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "mikura-ingest"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "mikura",
 ]
