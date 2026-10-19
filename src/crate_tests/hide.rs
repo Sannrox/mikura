@@ -70,12 +70,10 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
 
     let reopened = Store::open(&log).unwrap();
     assert!(!reopened.joins(NS).unwrap().is_visible("incident", "inc-1"));
-    assert!(
-        reopened
-            .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
-            .unwrap()
-            .hidden
-    );
+    let from_sidecar = reopened
+        .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(from_sidecar.hidden);
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
@@ -84,6 +82,7 @@ fn hide_drops_identity_from_join_maps_and_rebuilds() {
         .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
         .unwrap();
     assert!(rebuilt.hidden);
+    assert_eq!(rebuilt.props, from_sidecar.props);
     assert_eq!(rebuilt.props.get("note").map(String::as_str), Some("acked"));
     let _ = std::fs::remove_dir_all(&dir);
 }

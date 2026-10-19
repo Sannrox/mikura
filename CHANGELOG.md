@@ -10,6 +10,11 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Changed
 
+- Live identity keys and hidden property maps store interned `(namespace,
+  kind, key)` and `(prop, value)` ids shared with the join sidecar. Load
+  materializes strings at the `ObjectRecord` API. Dual-read against log
+  replay holds
+  ([#259](https://github.com/Sannrox/mikura/issues/259)).
 - `Store::commit` flushes the object log on every call and persists the
   join sidecar every 32 commits, every 100 ms, or on close. A crash
   between log commit and sidecar persist still reopens from the log
