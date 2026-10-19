@@ -19,7 +19,7 @@ tracked. Do not treat that directory as gitignored.
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
-| `src/joins.rs` | Interned `JoinMaps`, last-hop rollups, sidecar checksum helpers (`MKJOIN05`) |
+| `src/joins.rs` | Interned `JoinMaps`, last-hop rollups, sidecar checksum helpers (`MKJOIN06`) |
 | `src/store/` | Identity, sidecar persist/load, append/commit |
 | `src/crate_tests/` | In-crate tests split by persist, hops, load, schema, overlay, measures |
 | `src/schema.rs` | Clerk-supplied descriptors; write-time validation ([ADR 0008](docs/decisions/0008-type-link-delete.md)) |

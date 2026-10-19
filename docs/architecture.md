@@ -163,8 +163,8 @@ return them. A missing identity fails closed. The sidecar stamp is log
 delta, loads `{log}.ckpt` when present and replays only pages after that
 stamp; otherwise it rebuilds from the log
 ([ADR 0034](decisions/0034-log-checkpoints.md)).
-Checksum mismatch, truncation, or bad magic (current `MKJOIN05` /
-`MKJOIN5D`; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
+Checksum mismatch, truncation, or bad magic (current `MKJOIN06` /
+`MKJOIN6D`; `MKJOIN05` / `MKJOIN5D` still read; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
 the sidecar recovers from a `MIKURAV2` log. A torn `{log}.ckpt` falls
 back to `{log}.ckpt.prev` or full replay; it does not fail closed. Pre-namespace logs are
 migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schema-named last-hop
@@ -294,8 +294,8 @@ brokers stay out.
    `(sum_kind, sum_property)` is a schema-named sum on that last hop's
    `far_kind` and the hop is the default (child points at parent),
    evaluate reads the parent rollup columns instead of hashing every
-   leaf. Undeclared pairs keep the leaf walk
-   ([#59](https://github.com/Sannrox/mikura/issues/59)). A hop predicate
+   leaf. Undeclared pairs build the same rollups on first evaluate
+   and persist them on `MKJOIN06` ([#258](https://github.com/Sannrox/mikura/issues/258)). A hop predicate
    walks surviving paths instead of the last-hop fold. Hidden rows are
    absent from measures; overlay or hide of a leaf or parent updates
    the affected parent rollups.
@@ -335,7 +335,7 @@ contributing values, min, max, an exact `(sum, n)` average, and a distinct
 count, under the ADR 0018 contribution rules and a `max_groups` bound that
 fails closed ([ADR 0038](decisions/0038-breakdown-aggregates.md)). It reads
 the interned `amounts` map per path and needs no sidecar change. Last-hop count and sum for
-a schema-named leaf property persist as parent rollups on `MKJOIN05`
+a schema-named or first-use leaf property persist as parent rollups on `MKJOIN06`
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151),
 [ADR 0028](decisions/0028-store-namespace.md)). Zero-hop evaluate

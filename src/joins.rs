@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use crate::value::PropertyType;
 
@@ -129,9 +131,28 @@ impl CountScratch {
         sum_property: &str,
     ) -> (usize, i64) {
         self.reset_reachable(maps.intern.len());
-        let Some(rollup) = maps.measure_table(leaf_kind, join_property, sum_property) else {
+        if let Some(rollup) = maps.measure_table(leaf_kind, join_property, sum_property) {
+            return self.fold_rollup_table(rollup);
+        }
+        let Ok(guard) = maps.lazy_rollups.lock() else {
             return (0, 0);
         };
+        let Some(kind_id) = maps.intern_ix.get(leaf_kind) else {
+            return (0, 0);
+        };
+        let Some(join_id) = maps.intern_ix.get(join_property) else {
+            return (0, 0);
+        };
+        let Some(sum_id) = maps.intern_ix.get(sum_property) else {
+            return (0, 0);
+        };
+        let Some(rollup) = guard.get(&(*kind_id, *join_id, *sum_id)) else {
+            return (0, 0);
+        };
+        self.fold_rollup_table(rollup)
+    }
+
+    fn fold_rollup_table(&mut self, rollup: &MeasureTable) -> (usize, i64) {
         let mut reachable = 0usize;
         let mut total = 0i64;
         for &(root, parent) in &self.paths {
@@ -261,7 +282,7 @@ impl CountScratch {
         }
         if last.2 {
             self.fold_follow(maps, frontier_kind, last.1, last.0, sum_kind, sum_property)
-        } else if maps.has_declared_sum(sum_kind, sum_property) && last.0 == sum_kind {
+        } else if last.0 == sum_kind && maps.has_last_hop_table(last.0, last.1, sum_property) {
             self.fold_rollups(maps, last.0, last.1, sum_property)
         } else {
             self.fold_leaves(
@@ -299,6 +320,13 @@ impl CountScratch {
     }
 }
 
+/// First-use lazy rollup refuses a leaf kind larger than this (#258).
+/// 10^7 undeclared two-hop is in budget; a larger envelope fails closed.
+pub(crate) const MAX_LAZY_MEASURE_LEAVES: usize = 20_000_000;
+/// Distinct undeclared `(leaf, sum)` caches per namespace. Schema-named
+/// sums do not count. Extra first-use measures fail closed.
+pub(crate) const MAX_CACHED_SUMS: usize = 32;
+
 pub(crate) const JOIN_MAGIC: &[u8; 8] = crate::JOIN_FORMAT;
 /// Delta frames without per-row schema versions; still read, never written.
 pub(crate) const JOIN_DELTA_MAGIC_V5: &[u8; 8] = crate::JOIN_DELTA_FORMAT_V5;
@@ -324,9 +352,10 @@ pub(crate) struct LiveMeta {
 /// packed identity lists. Hidden records are absent from hop/sum indexes.
 /// The checkpoint stores interned owned property pairs for every identity
 /// (hidden props sit on the identity row), interned Action ids, and
-/// schema-named last-hop rollups (`MKJOIN05`). Hop and sum indexes are
-/// derived; undeclared sums still walk leaves.
-#[derive(Clone, Debug, Default)]
+/// schema-named last-hop rollups (`MKJOIN06`). Hop and sum indexes are
+/// derived. Undeclared sums build the same parent rollups on first
+/// evaluate and keep them on apply (#258).
+#[derive(Debug, Default)]
 pub struct JoinMaps {
     pub(crate) intern: Vec<String>,
     pub(crate) intern_ix: HashMap<String, u32>,
@@ -335,9 +364,43 @@ pub struct JoinMaps {
     amounts: HashMap<(u32, u32), HashMap<u32, i64>>,
     /// Declared `(leaf_kind, sum_property)` intern ids from `mikura.schema`.
     declared_sums: HashSet<(u32, u32)>,
+    /// Undeclared `(leaf_kind, sum_property)` intern ids built on first evaluate.
+    cached_sums: Mutex<HashSet<(u32, u32)>>,
     /// Last-hop parent → `(count, sum)` for `(leaf_kind, join_property, sum_property)`.
     rollups: HashMap<MeasureKey, MeasureTable>,
+    /// Rollups for [`Self::cached_sums`]. Evaluate is `&Store`, so first use
+    /// fills this under the mutex; apply merges into it too.
+    lazy_rollups: Mutex<HashMap<MeasureKey, MeasureTable>>,
+    lazy_dirty: AtomicBool,
     pub(crate) owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
+}
+
+impl Clone for JoinMaps {
+    fn clone(&self) -> Self {
+        Self {
+            intern: self.intern.clone(),
+            intern_ix: self.intern_ix.clone(),
+            by_kind: self.by_kind.clone(),
+            by_prop: self.by_prop.clone(),
+            amounts: self.amounts.clone(),
+            declared_sums: self.declared_sums.clone(),
+            cached_sums: Mutex::new(
+                self.cached_sums
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default(),
+            ),
+            rollups: self.rollups.clone(),
+            lazy_rollups: Mutex::new(
+                self.lazy_rollups
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default(),
+            ),
+            lazy_dirty: AtomicBool::new(self.lazy_dirty.load(Ordering::Relaxed)),
+            owned: self.owned.clone(),
+        }
+    }
 }
 
 impl JoinMaps {
@@ -754,7 +817,6 @@ impl JoinMaps {
             return;
         };
         self.sub_leaf_contribution(kind_id, &owned);
-        self.drop_parent_rollups(key_id);
         if let Some(keys) = self.by_kind.get_mut(&kind_id) {
             keys.remove(&key_id);
             if keys.is_empty() {
@@ -782,6 +844,14 @@ impl JoinMaps {
                 }
             }
         }
+        // Parent rows are keyed by interned key only. Rebuild after dropping
+        // this row's indexes so a leaf that shares the key cannot restore
+        // itself. Another still-visible kind keeps the parent row.
+        if self.key_is_visible(key_id) {
+            self.restore_parent_rollups(key_id);
+        } else {
+            self.drop_parent_rollups(key_id);
+        }
     }
 
     pub(crate) fn row_props(&self, kind: &str, key: &str) -> HashMap<String, String> {
@@ -804,14 +874,113 @@ impl JoinMaps {
         crate::acl::PropertyAcl::omit_owned(&self.intern, kind_id, owned, denied)
     }
 
+    #[cfg(test)]
     pub(crate) fn has_declared_sum(&self, leaf_kind: &str, sum_property: &str) -> bool {
-        let (Some(&kind_id), Some(&prop_id)) = (
-            self.intern_ix.get(leaf_kind),
-            self.intern_ix.get(sum_property),
-        ) else {
+        self.sum_ids(leaf_kind, sum_property)
+            .is_some_and(|ids| self.declared_sums.contains(&ids))
+    }
+
+    pub(crate) fn has_measure_sum(&self, leaf_kind: &str, sum_property: &str) -> bool {
+        let Some(ids) = self.sum_ids(leaf_kind, sum_property) else {
             return false;
         };
-        self.declared_sums.contains(&(kind_id, prop_id))
+        if self.declared_sums.contains(&ids) {
+            return true;
+        }
+        self.cached_sums
+            .lock()
+            .map(|g| g.contains(&ids))
+            .unwrap_or(false)
+    }
+
+    fn sum_ids(&self, leaf_kind: &str, sum_property: &str) -> Option<(u32, u32)> {
+        Some((
+            *self.intern_ix.get(leaf_kind)?,
+            *self.intern_ix.get(sum_property)?,
+        ))
+    }
+
+    /// First undeclared evaluate builds last-hop rollups. Returns whether a
+    /// new table was built. Leaves above [`MAX_LAZY_MEASURE_LEAVES`] fail closed.
+    pub(crate) fn ensure_cached_sum(
+        &self,
+        leaf_kind: &str,
+        sum_property: &str,
+    ) -> Result<bool, String> {
+        self.ensure_cached_sum_limited(leaf_kind, sum_property, MAX_LAZY_MEASURE_LEAVES)
+    }
+
+    pub(crate) fn ensure_cached_sum_limited(
+        &self,
+        leaf_kind: &str,
+        sum_property: &str,
+        leaf_budget: usize,
+    ) -> Result<bool, String> {
+        if self.has_measure_sum(leaf_kind, sum_property) {
+            return Ok(false);
+        }
+        let Some(kind_id) = self.intern_existing(leaf_kind) else {
+            return Ok(false);
+        };
+        let leaves = self.by_kind.get(&kind_id).map(HashSet::len).unwrap_or(0);
+        if leaves > leaf_budget {
+            return Err(format!(
+                "undeclared measure {leaf_kind}.{sum_property} has {leaves} leaves; budget is {leaf_budget}"
+            ));
+        }
+        let Some(prop_id) = self.intern_existing(sum_property) else {
+            return Ok(false);
+        };
+        if !self.amounts.contains_key(&(kind_id, prop_id)) {
+            return Ok(false);
+        }
+        {
+            let mut sums = self
+                .cached_sums
+                .lock()
+                .map_err(|_| "lazy measure lock poisoned".to_string())?;
+            if sums.contains(&(kind_id, prop_id)) {
+                return Ok(false);
+            }
+            if sums.len() >= MAX_CACHED_SUMS {
+                return Err(format!("undeclared measures at cap {MAX_CACHED_SUMS}"));
+            }
+            sums.insert((kind_id, prop_id));
+        }
+        let built = self.materialize_lazy_rollups(kind_id, prop_id);
+        if built.is_empty() {
+            if let Ok(mut sums) = self.cached_sums.lock() {
+                sums.remove(&(kind_id, prop_id));
+            }
+            return Ok(false);
+        }
+        let mut tables = self
+            .lazy_rollups
+            .lock()
+            .map_err(|_| "lazy measure lock poisoned".to_string())?;
+        for (key, parents) in built {
+            tables.insert(key, parents);
+        }
+        self.lazy_dirty.store(true, Ordering::Relaxed);
+        Ok(true)
+    }
+
+    pub(crate) fn has_unpersisted_lazy(&self) -> bool {
+        self.lazy_dirty.load(Ordering::Relaxed)
+    }
+
+    /// Sidecar rollups whose `(leaf, sum)` is not schema-declared are lazy caches.
+    pub(crate) fn recover_cached_sums(&mut self) {
+        let mut cached = HashSet::new();
+        for (leaf, _, sum) in self.rollups.keys() {
+            if !self.declared_sums.contains(&(*leaf, *sum)) {
+                cached.insert((*leaf, *sum));
+            }
+        }
+        match self.cached_sums.get_mut() {
+            Ok(g) => *g = cached,
+            Err(p) => *p.into_inner() = cached,
+        }
     }
 
     #[cfg(test)]
@@ -823,8 +992,39 @@ impl JoinMaps {
         parent: &str,
     ) -> Option<(u32, i64)> {
         let parent_id = self.intern_existing(parent)?;
-        self.measure_table(leaf_kind, join_property, sum_property)
+        if let Some(table) = self.measure_table(leaf_kind, join_property, sum_property) {
+            return table.get(&parent_id).copied();
+        }
+        let kind_id = *self.intern_ix.get(leaf_kind)?;
+        let join_id = *self.intern_ix.get(join_property)?;
+        let sum_id = *self.intern_ix.get(sum_property)?;
+        self.lazy_rollups
+            .lock()
+            .ok()?
+            .get(&(kind_id, join_id, sum_id))
             .and_then(|table| table.get(&parent_id).copied())
+    }
+
+    fn has_last_hop_table(&self, leaf_kind: &str, join_property: &str, sum_property: &str) -> bool {
+        if self
+            .measure_table(leaf_kind, join_property, sum_property)
+            .is_some()
+        {
+            return true;
+        }
+        let Some(kind_id) = self.intern_ix.get(leaf_kind) else {
+            return false;
+        };
+        let Some(join_id) = self.intern_ix.get(join_property) else {
+            return false;
+        };
+        let Some(sum_id) = self.intern_ix.get(sum_property) else {
+            return false;
+        };
+        self.lazy_rollups
+            .lock()
+            .map(|g| g.contains_key(&(*kind_id, *join_id, *sum_id)))
+            .unwrap_or(false)
     }
 
     fn measure_table(
@@ -842,10 +1042,10 @@ impl JoinMaps {
     pub(crate) fn set_declared_sums(&mut self, leaf_kind: &str, sums: &[String]) {
         let kind_id = self.intern(leaf_kind);
         self.declared_sums.retain(|(kind, _)| *kind != kind_id);
-        self.rollups.retain(|(kind, _, _), _| *kind != kind_id);
         for name in sums {
             let prop_id = self.intern(name);
             self.declared_sums.insert((kind_id, prop_id));
+            self.drop_cached_pair(kind_id, prop_id);
         }
         self.rebuild_leaf_rollups(kind_id);
     }
@@ -855,7 +1055,12 @@ impl JoinMaps {
             return;
         };
         self.declared_sums.retain(|(kind, _)| *kind != kind_id);
-        self.rollups.retain(|(kind, _, _), _| *kind != kind_id);
+        if self.leaf_sum_ids(kind_id).is_empty() {
+            self.drop_cached_kind(kind_id);
+            self.rollups.retain(|(kind, _, _), _| *kind != kind_id);
+            return;
+        }
+        self.rebuild_leaf_rollups(kind_id);
     }
 
     pub(crate) fn adopt_declared_sums(&mut self, leaf_kind: &str, sums: &[String]) {
@@ -864,7 +1069,37 @@ impl JoinMaps {
         for name in sums {
             let prop_id = self.intern(name);
             self.declared_sums.insert((kind_id, prop_id));
+            self.drop_cached_pair(kind_id, prop_id);
         }
+    }
+
+    fn drop_cached_pair(&mut self, kind_id: u32, prop_id: u32) {
+        if let Ok(cached) = self.cached_sums.get_mut() {
+            cached.remove(&(kind_id, prop_id));
+        }
+        if let Ok(lazy) = self.lazy_rollups.get_mut() {
+            lazy.retain(|(leaf, _, sum), _| !(*leaf == kind_id && *sum == prop_id));
+        }
+    }
+
+    fn drop_cached_kind(&mut self, kind_id: u32) {
+        if let Ok(cached) = self.cached_sums.get_mut() {
+            cached.retain(|(kind, _)| *kind != kind_id);
+        }
+        if let Ok(lazy) = self.lazy_rollups.get_mut() {
+            lazy.retain(|(leaf, _, _), _| *leaf != kind_id);
+        }
+    }
+
+    /// Move first-use tables into [`Self::rollups`] after a sidecar write.
+    pub(crate) fn adopt_lazy_rollups(&mut self) {
+        let Ok(lazy) = self.lazy_rollups.get_mut() else {
+            return;
+        };
+        for (key, table) in lazy.drain() {
+            self.rollups.entry(key).or_insert(table);
+        }
+        self.lazy_dirty.store(false, Ordering::Relaxed);
     }
 
     fn key_is_visible(&self, key_id: u32) -> bool {
@@ -872,8 +1107,10 @@ impl JoinMaps {
     }
 
     fn leaf_sum_ids(&self, kind_id: u32) -> Vec<u32> {
+        let cached = self.cached_sums.lock().ok();
         self.declared_sums
             .iter()
+            .chain(cached.iter().flat_map(|g| g.iter()))
             .filter(|(kind, _)| *kind == kind_id)
             .map(|(_, prop)| *prop)
             .collect()
@@ -892,13 +1129,30 @@ impl JoinMaps {
     }
 
     fn bump_rollup(&mut self, table: (u32, u32, u32), parent: u32, dcount: i32, dsum: i64) {
-        let parents = self.rollups.entry(table).or_default();
+        let declared = self.declared_sums.contains(&(table.0, table.2));
+        if declared || self.rollups.contains_key(&table) {
+            Self::bump_table(&mut self.rollups, table, parent, dcount, dsum);
+            return;
+        }
+        if let Ok(mut lazy) = self.lazy_rollups.lock() {
+            Self::bump_table(&mut lazy, table, parent, dcount, dsum);
+        }
+    }
+
+    fn bump_table(
+        rollups: &mut HashMap<MeasureKey, MeasureTable>,
+        table: MeasureKey,
+        parent: u32,
+        dcount: i32,
+        dsum: i64,
+    ) {
+        let parents = rollups.entry(table).or_default();
         let entry = parents.entry(parent).or_insert((0, 0));
         let next = i64::from(entry.0) + i64::from(dcount);
         if next <= 0 {
             parents.remove(&parent);
             if parents.is_empty() {
-                self.rollups.remove(&table);
+                rollups.remove(&table);
             }
             return;
         }
@@ -957,11 +1211,29 @@ impl JoinMaps {
         for table in empty {
             self.rollups.remove(&table);
         }
+        if let Ok(lazy) = self.lazy_rollups.get_mut() {
+            let mut empty = Vec::new();
+            for (table, parents) in lazy.iter_mut() {
+                parents.remove(&parent_id);
+                if parents.is_empty() {
+                    empty.push(*table);
+                }
+            }
+            for table in empty {
+                lazy.remove(&table);
+            }
+        }
     }
 
     fn restore_parent_rollups(&mut self, parent_id: u32) {
-        let declared: Vec<(u32, u32)> = self.declared_sums.iter().copied().collect();
-        for (leaf_id, sum_prop) in declared {
+        let cached = self.cached_sums.lock().ok();
+        let sums: Vec<(u32, u32)> = self
+            .declared_sums
+            .iter()
+            .chain(cached.iter().flat_map(|g| g.iter()))
+            .copied()
+            .collect();
+        for (leaf_id, sum_prop) in sums {
             let joins: Vec<u32> = self
                 .by_prop
                 .keys()
@@ -989,16 +1261,59 @@ impl JoinMaps {
                         total = total.wrapping_add(*amount);
                     }
                 }
-                self.rollups
-                    .entry((leaf_id, join_id, sum_prop))
-                    .or_default()
-                    .insert(parent_id, (count, total));
+                let table = (leaf_id, join_id, sum_prop);
+                let into_rollups = self.declared_sums.contains(&(leaf_id, sum_prop))
+                    || self.rollups.contains_key(&table);
+                if into_rollups {
+                    self.rollups
+                        .entry(table)
+                        .or_default()
+                        .insert(parent_id, (count, total));
+                } else if let Ok(lazy) = self.lazy_rollups.get_mut() {
+                    lazy.entry(table)
+                        .or_default()
+                        .insert(parent_id, (count, total));
+                }
             }
         }
     }
 
+    fn materialize_lazy_rollups(
+        &self,
+        leaf_id: u32,
+        sum_prop: u32,
+    ) -> HashMap<MeasureKey, MeasureTable> {
+        let mut out = HashMap::new();
+        let amounts = self.amounts.get(&(leaf_id, sum_prop));
+        for ((kind, join_id), by_val) in &self.by_prop {
+            if *kind != leaf_id || *join_id == sum_prop {
+                continue;
+            }
+            let mut parents = MeasureTable::new();
+            for (parent_id, children) in by_val {
+                if children.is_empty() || !self.key_is_visible(*parent_id) {
+                    continue;
+                }
+                let mut total = 0i64;
+                for child in children {
+                    if let Some(amount) = amounts.and_then(|map| map.get(child)) {
+                        total = total.wrapping_add(*amount);
+                    }
+                }
+                parents.insert(*parent_id, (children.len() as u32, total));
+            }
+            if !parents.is_empty() {
+                out.insert((leaf_id, *join_id, sum_prop), parents);
+            }
+        }
+        out
+    }
+
     fn rebuild_leaf_rollups(&mut self, leaf_id: u32) {
         self.rollups.retain(|(kind, _, _), _| *kind != leaf_id);
+        if let Ok(lazy) = self.lazy_rollups.get_mut() {
+            lazy.retain(|(kind, _, _), _| *kind != leaf_id);
+        }
         let sums = self.leaf_sum_ids(leaf_id);
         if sums.is_empty() {
             return;
@@ -1034,12 +1349,26 @@ impl JoinMaps {
         }
     }
 
+    /// Serialize declared and lazy tables. Does not clear [`Self::lazy_dirty`]:
+    /// log checkpoints reuse this encoder, and reopen prefers the join sidecar.
     pub(crate) fn write_measures(&self, body: &mut Vec<u8>) -> Result<(), String> {
-        let mut tables: Vec<_> = self.rollups.iter().collect();
+        let lazy = self.lazy_rollups.lock().ok();
+        let mut tables: Vec<(MeasureKey, MeasureTable)> = self
+            .rollups
+            .iter()
+            .map(|(key, parents)| (*key, parents.clone()))
+            .collect();
+        if let Some(guard) = lazy.as_ref() {
+            for (key, parents) in guard.iter() {
+                if !self.rollups.contains_key(key) {
+                    tables.push((*key, parents.clone()));
+                }
+            }
+        }
         tables.sort_by_key(|(key, _)| *key);
         let n = u32::try_from(tables.len()).map_err(|_| "too many measure tables".to_string())?;
         body.extend_from_slice(&n.to_le_bytes());
-        for ((leaf, join, sum), parents) in tables {
+        for ((leaf, join, sum), parents) in &tables {
             body.extend_from_slice(&leaf.to_le_bytes());
             body.extend_from_slice(&join.to_le_bytes());
             body.extend_from_slice(&sum.to_le_bytes());

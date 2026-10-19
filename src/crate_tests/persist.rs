@@ -257,6 +257,31 @@ fn single_record_append_is_durable_across_reopen() {
 }
 
 #[test]
+fn mkjoin05_sidecar_still_opens() {
+    let (dir, log) = temp_log("join-mkjoin05");
+    let sidecar = Store::join_map_path(&log);
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    drop(store);
+    let mut bytes = std::fs::read(&sidecar).unwrap();
+    let crc_at = bytes.len() - 4;
+    bytes[..8].copy_from_slice(JOIN_FORMAT_V5);
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&bytes[..crc_at]);
+    bytes[crc_at..].copy_from_slice(&hasher.finalize().to_le_bytes());
+    std::fs::write(&sidecar, &bytes).unwrap();
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(
+        ObjectSet::new(LocalCompute)
+            .evaluate(&reopened, &fixture_request())
+            .unwrap()
+            .sum_amount,
+        10
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn old_join_sidecar_magic_fails_closed() {
     let (dir, log) = temp_log("join-old-magic");
     let sidecar = Store::join_map_path(&log);

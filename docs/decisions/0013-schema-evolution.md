@@ -64,7 +64,7 @@ Relative to the previous visible descriptor for the same kind:
 | Rename a property | **reject** (not a primitive) | n/a | n/a |
 | Change an outgoing link's `far_kind` or direction | **reject** | n/a | n/a |
 | Add or remove an incoming link rule | allow | unchanged | stored shape unchanged |
-| Add or remove `sums` | allow | unchanged | evaluate follows [ADR 0010](0010-last-hop-measures.md); undeclared sums still leaf-walk |
+| Add or remove `sums` | allow | unchanged | evaluate follows [ADR 0010](0010-last-hop-measures.md); undeclared sums cache on first use |
 | Hide the schema row | allow (already) | instances still load | later writes unvalidated until a visible descriptor returns |
 | Append a previously accepted body | allow | follows that body | follows that body |
 

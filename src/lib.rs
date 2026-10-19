@@ -57,8 +57,10 @@ mod value;
 pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
 /// Superblock magic for encrypted logs (`MIKURAV3`, ADR 0044).
 pub const LOG_FORMAT_ENCRYPTED: &[u8; 8] = b"MIKURAV3";
-/// Join sidecar magic (`MKJOIN05`). Rebuildable; unknown magic fails closed.
-pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN05";
+/// Join sidecar magic (`MKJOIN06`). Rebuildable; unknown magic fails closed.
+pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN06";
+/// Previous join sidecar magic this crate still reads (`MKJOIN05`).
+pub const JOIN_FORMAT_V5: &[u8; 8] = b"MKJOIN05";
 /// Join dirty-set magic this crate writes (`MKJOIN6D`).
 pub const JOIN_DELTA_FORMAT: &[u8; 8] = b"MKJOIN6D";
 /// Earlier dirty-set magic this crate still reads (`MKJOIN5D`).

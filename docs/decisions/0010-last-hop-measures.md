@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-09-18
 - Owners: mikura maintainers
-- Related: [#150](https://github.com/Sannrox/mikura/issues/150), [#151](https://github.com/Sannrox/mikura/issues/151), [#59](https://github.com/Sannrox/mikura/issues/59), [#51](https://github.com/Sannrox/mikura/issues/51), [ADR 0002](0002-join-sidecar.md), [ADR 0004](0004-slim-join-maps.md), [ADR 0008](0008-type-link-delete.md), [ADR 0009](0009-refresh-safe-edit-overlay.md)
+- Related: [#150](https://github.com/Sannrox/mikura/issues/150), [#151](https://github.com/Sannrox/mikura/issues/151), [#258](https://github.com/Sannrox/mikura/issues/258), [#59](https://github.com/Sannrox/mikura/issues/59), [#51](https://github.com/Sannrox/mikura/issues/51), [ADR 0002](0002-join-sidecar.md), [ADR 0004](0004-slim-join-maps.md), [ADR 0008](0008-type-link-delete.md), [ADR 0009](0009-refresh-safe-edit-overlay.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -51,10 +51,13 @@ parent invalidates affected parent rollups
 A denied sum property still fails closed (`AclError::Denied`), even when
 a rollup column exists.
 
-Undeclared `(sum_kind, sum_property)` keeps today's leaf walk
-([#59](https://github.com/Sannrox/mikura/issues/59)). No new aggregate
-([#51](https://github.com/Sannrox/mikura/issues/51)). Zero-hop evaluate
-is unchanged.
+Undeclared `(sum_kind, sum_property)` builds the same parent rollups on
+the first matching evaluate, persists them on the sidecar, and keeps
+them on apply ([#258](https://github.com/Sannrox/mikura/issues/258)).
+That cache is not a catalog declaration: schema `sums` remains how a
+clerk names a measure. Leaves above the lazy budget fail closed. No new
+aggregate ([#51](https://github.com/Sannrox/mikura/issues/51)). Zero-hop
+evaluate is unchanged.
 
 The object log stays authority. No `MIKURAV1` change.
 
@@ -62,8 +65,9 @@ The object log stays authority. No `MIKURAV1` change.
 
 | Option | Why not |
 | --- | --- |
-| Infer measures from the first evaluate | Query shape is not a catalog. A first request would persist columns the clerk never named, and hide/overlay invalidation would track inferred keys. Schema already names properties, required keys, and links. |
-| Schema-named only (this ADR) | Chosen. The clerk declares the measure on the leaf kind; evaluate uses the rollup only when the request matches. |
+| Infer measures from the first evaluate as catalog | Query shape is not a catalog. Schema already names properties, required keys, and links. A first request must not become a clerk-named `sums` declaration. |
+| Schema-named only | Chosen for catalog. The clerk declares the measure on the leaf kind; evaluate uses the rollup when the request matches. |
+| Lazy last-hop cache on first undeclared use | Accepted as a projection cache in [#258](https://github.com/Sannrox/mikura/issues/258). Same parent `(count, sum)` shape as declared rollups; not a schema declaration. A leaf-count budget fails closed. |
 | No-action leaf walk | 10⁷ already misses 500 ms. Walking every leaf does not become cheaper by waiting. |
 | Cluster compute | A miss is not an engine pick. Cluster compute stays out until a remasure after [#151](https://github.com/Sannrox/mikura/issues/151) still misses a published budget. |
 
@@ -85,8 +89,9 @@ The implementation Issue must prove:
 1. Ingest of a leaf whose schema declares the sum property maintains
    parent `(count, sum)` for the last hop; evaluate of a matching
    request reads those columns.
-2. Undeclared `(sum_kind, sum_property)` still leaf-walks and matches
-   today's answers.
+2. Undeclared `(sum_kind, sum_property)` builds last-hop rollups on first
+   evaluate; later evaluates and apply read those columns; dual-read
+   against log replay holds.
 3. Delete the sidecar, reopen: count and sum match the live store.
 4. Hidden leaves and parents are absent from measures. Overlay or hide
    of a leaf or parent updates affected parent rollups.
@@ -96,3 +101,12 @@ The implementation Issue must prove:
 
 Revisit if a remasure after #151 still misses a published budget, or if
 a fixture names another aggregate.
+
+## Amendments
+
+- 2026-10-19, [#258](https://github.com/Sannrox/mikura/issues/258):
+  First undeclared evaluate builds last-hop rollups and caches them on
+  the deletable sidecar. Apply maintains the cache. Leaves above
+  20_000_000 fail closed. Schema `sums` is still the catalog. Sidecar
+  magic is `MKJOIN06`; `MKJOIN05` still opens. Dual-read vs log replay is
+  the unit proof; 10⁷ after first use is the product bench.

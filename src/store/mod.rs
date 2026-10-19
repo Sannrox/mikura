@@ -2078,6 +2078,23 @@ impl Store {
                 }
             }
         }
+        for joins in self.joins.values_mut() {
+            joins.recover_cached_sums();
+        }
+        Ok(())
+    }
+
+    /// Build last-hop rollups for an undeclared measure on first evaluate.
+    pub(crate) fn ensure_lazy_measure(
+        &self,
+        namespace: &str,
+        leaf_kind: &str,
+        sum_property: &str,
+    ) -> Result<(), String> {
+        let Some(joins) = self.joins.get(namespace) else {
+            return Ok(());
+        };
+        joins.ensure_cached_sum(leaf_kind, sum_property)?;
         Ok(())
     }
 

@@ -1314,12 +1314,12 @@ fn chisei_explorer_workload_keeps_slo_cells_unresolved() {
         "Explorer investigation must not invent production SLOs"
     );
     assert!(
-        collapsed.contains("Undeclared two-hop sums stay the leaf walk"),
-        "undeclared sums must remain the ADR 0010 leaf walk"
+        collapsed.contains("First undeclared evaluate builds last-hop rollups"),
+        "undeclared sums cache last-hop rollups on first evaluate"
     );
     assert!(
-        collapsed.contains("Do not infer measures on first use"),
-        "lazy undeclared rollups stay rejected"
+        collapsed.contains("Leaves above the lazy measure budget fail closed"),
+        "first-use above the leaf budget must fail closed"
     );
     assert!(
         page.contains(

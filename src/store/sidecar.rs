@@ -8,6 +8,7 @@ use crate::joins::{
     JoinMaps, LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
 };
 use crate::log::{read_records_after_with_keys, LogWriter};
+use crate::JOIN_FORMAT_V5;
 
 use super::{LiveId, Store};
 
@@ -42,20 +43,29 @@ impl Store {
                 return Ok(());
             }
             self.rewrite_checkpoint(pages)?;
-            self.note_projection_persisted();
+            self.finish_projection_persist();
+            return Ok(());
+        }
+        // Measures live on the checkpoint, not on delta frames. First-use
+        // lazy rollups must rewrite the checkpoint or they vanish on reopen.
+        if self.joins.values().any(JoinMaps::has_unpersisted_lazy) {
+            self.rewrite_checkpoint(pages)?;
+            self.finish_projection_persist();
             return Ok(());
         }
         let compact =
             !self.has_checkpoint || self.dirty.len().saturating_mul(4) > self.identity.len().max(1);
         if compact {
             self.rewrite_checkpoint(pages)?;
-            self.note_projection_persisted();
+            self.finish_projection_persist();
             return Ok(());
         }
         self.persist_delta(pages)?;
         self.dirty.clear();
         if self.delta_bytes > self.delta_compact_bytes {
             self.rewrite_checkpoint(pages)?;
+            self.finish_projection_persist();
+            return Ok(());
         }
         self.note_projection_persisted();
         Ok(())
@@ -73,6 +83,9 @@ impl Store {
     }
 
     fn projection_persist_due(&self, force: bool) -> bool {
+        if self.joins.values().any(JoinMaps::has_unpersisted_lazy) {
+            return true;
+        }
         if self.dirty.is_empty() && self.has_checkpoint {
             return false;
         }
@@ -85,6 +98,13 @@ impl Store {
     fn note_projection_persisted(&mut self) {
         self.sidecar_commits_since_persist = 0;
         self.sidecar_last_persist = std::time::Instant::now();
+    }
+
+    fn finish_projection_persist(&mut self) {
+        self.note_projection_persisted();
+        for joins in self.joins.values_mut() {
+            joins.adopt_lazy_rollups();
+        }
     }
 
     fn rewrite_checkpoint(&mut self, pages: u32) -> Result<(), String> {
@@ -438,7 +458,7 @@ impl Store {
     }
 
     fn merge_join_body(loaded: &mut Checkpoint, body: &[u8]) -> Result<(), String> {
-        if body.len() < 12 || &body[..8] != JOIN_MAGIC {
+        if body.len() < 12 || (&body[..8] != JOIN_MAGIC && &body[..8] != JOIN_FORMAT_V5) {
             return Err("bad join magic".into());
         }
         let mut cur = &body[8..];
