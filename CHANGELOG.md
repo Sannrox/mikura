@@ -10,6 +10,10 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Changed
 
+- Load and evaluate skip denied interned `(kind, property)` ids and clone
+  only allowed strings into `ObjectRecord.props`. Evaluate precomputes
+  those ids once per request. Public `Store::load` still returns an owned
+  map ([#260](https://github.com/Sannrox/mikura/issues/260)).
 - Live identity keys and hidden property maps store interned `(namespace,
   kind, key)` and `(prop, value)` ids shared with the join sidecar. Load
   materializes strings at the `ObjectRecord` API. Dual-read against log

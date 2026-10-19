@@ -452,17 +452,7 @@ impl Store {
     }
 
     fn materialize_owned(maps: &JoinMaps, owned: &[(u32, u32)]) -> HashMap<String, String> {
-        let mut props = HashMap::with_capacity(owned.len());
-        for &(prop_id, value_id) in owned {
-            let Some(name) = maps.intern_get(prop_id) else {
-                continue;
-            };
-            let Some(value) = maps.intern_get(value_id) else {
-                continue;
-            };
-            props.insert(name.to_string(), value.to_string());
-        }
-        props
+        PropertyAcl::omit_owned(&maps.intern, 0, owned, &HashSet::new())
     }
 
     /// Use a tiny compact bound in tests so a few dirty-set frames can exceed
@@ -781,6 +771,19 @@ impl Store {
         key: &str,
         acl: &PropertyAcl,
     ) -> Result<ObjectRecord, String> {
+        self.load_in_view(namespace, kind, key, acl, None)
+    }
+
+    /// [`Self::load`] with optional precomputed interned deny ids for this
+    /// namespace. Evaluate computes them once per request.
+    pub(crate) fn load_in_view(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+        acl: &PropertyAcl,
+        denied: Option<&HashSet<(u32, u32)>>,
+    ) -> Result<ObjectRecord, String> {
         let namespace = self.require_known_namespace(namespace)?;
         let missing = || format!("unknown identity {namespace}/{kind}/{key}");
         if let Ok(tenant) = tenant_of_namespace(namespace) {
@@ -791,11 +794,18 @@ impl Store {
         let id = self.find_live(namespace, kind, key).ok_or_else(missing)?;
         let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
-        let denied = acl.interned_denies(|token| maps.intern_existing(token));
+        let denied_buf;
+        let denied = match denied {
+            Some(denied) => denied,
+            None => {
+                denied_buf = acl.interned_denies(|token| maps.intern_existing(token));
+                &denied_buf
+            }
+        };
         let props = if meta.hidden {
-            self.hidden_props_omitting(maps, kind, &id, &denied)
+            self.hidden_props_omitting(maps, kind, &id, denied)
         } else {
-            maps.row_props_omitting(kind, key, &denied)
+            maps.row_props_omitting(kind, key, denied)
         };
         // Row-filter properties are never denied, so `props` still holds them.
         // Declared drops are omitted before visibility so current load matches
@@ -2146,23 +2156,10 @@ impl Store {
         let Some(owned) = self.hidden_props.get(id) else {
             return HashMap::new();
         };
-        let kind_id = maps.intern_existing(kind);
-        let mut allowed = HashMap::with_capacity(owned.len());
-        for &(prop_id, value_id) in owned {
-            if let Some(kind_id) = kind_id {
-                if denied.contains(&(kind_id, prop_id)) {
-                    continue;
-                }
-            }
-            let Some(name) = maps.intern_get(prop_id) else {
-                continue;
-            };
-            let Some(value) = maps.intern_get(value_id) else {
-                continue;
-            };
-            allowed.insert(name.to_string(), value.to_string());
+        match maps.intern_existing(kind) {
+            Some(kind_id) => PropertyAcl::omit_owned(&maps.intern, kind_id, owned, denied),
+            None => PropertyAcl::omit_owned(&maps.intern, 0, owned, &HashSet::new()),
         }
-        allowed
     }
 
     fn replay_from_log(&mut self) -> Result<(), String> {

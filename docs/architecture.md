@@ -365,7 +365,9 @@ allow-list and no principal. Policy stays in the clerk.
 
 Load of a restriction-invisible identity matches missing. Load of a
 visible identity omits denied properties; remaining keys keep stored
-values. Evaluate omits invisible identities from membership, hops,
+values. Interned deny ids are resolved once per evaluate request;
+property maps clone only allowed keys. Evaluate omits invisible
+identities from membership, hops,
 count+sum, and pages. Overlay, action, and hide of an invisible
 identity fail closed without writing. Source ingest is unrestricted.
 The restriction is never stored on the log.

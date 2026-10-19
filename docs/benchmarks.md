@@ -45,6 +45,7 @@ its fixture in a fresh temp directory unique to the process.
 | `log_size` | Object log bytes after ingest |
 | `append_commit` | One `Store::append` (append plus group commit) |
 | `point_read` / `point_read_acl` | One `Store::load` of a visible shipment, without and with a property deny |
+| `list` / `list_acl` | First page of 100 shipments sorted by `amount`, without and with a property deny on `weight` |
 | `list_filter` | First page of 100 shipments matching `weight = 3`, sorted by `amount` |
 | `one_hop_sum_*` | Order -> Shipment count and sum, declared (`amount`) or undeclared (`weight`) |
 | `two_hop_sum_*` | Customer -> Order -> Shipment count and sum, declared or undeclared |

@@ -359,9 +359,24 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String
         page_size: 100,
         ..hop_request("Shipment", Vec::new(), "amount")
     };
+    let list_open = EvaluateRequest {
+        // append_commit has already added FIXED_WRITES extra shipments.
+        object_bound: (scale.shipments as usize)
+            .saturating_add(FIXED_WRITES)
+            .saturating_add(1),
+        sort: Some(Sort::by("amount")),
+        page_size: 100,
+        ..hop_request("Shipment", Vec::new(), "amount")
+    };
+    let list_acl = EvaluateRequest {
+        acl: PropertyAcl::deny_property("Shipment", "weight"),
+        ..list_open.clone()
+    };
     let one_hop = vec![hop("Shipment", "order_id")];
     let two_hop = vec![hop("Order", "customer_id"), hop("Shipment", "order_id")];
     let queries = [
+        ("list", list_open),
+        ("list_acl", list_acl),
         ("list_filter", list),
         (
             "one_hop_sum_declared",
@@ -609,6 +624,32 @@ fn run() -> Result<bool, String> {
             "{:<26} {:>10} {:>10} {:>8} {:>14} {:>14} {:>14}",
             m.name, m.objects, m.unit, m.samples, m.p50, m.p95, m.p99
         );
+    }
+    for m in &results {
+        if matches!(m.name.as_str(), "point_read" | "point_read_acl") && m.p99 > 1_000_000 {
+            return Err(format!(
+                "{} @ {} p99 {} ns exceeds 1 ms",
+                m.name, m.objects, m.p99
+            ));
+        }
+    }
+    let mut sizes: Vec<u64> = results.iter().map(|m| m.objects).collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    for objects in sizes {
+        let open = results
+            .iter()
+            .find(|m| m.name == "list" && m.objects == objects);
+        let acl = results
+            .iter()
+            .find(|m| m.name == "list_acl" && m.objects == objects);
+        if let (Some(open), Some(acl)) = (open, acl) {
+            let ratio = acl.p50 as f64 / open.p50.max(1) as f64;
+            println!(
+                "list_acl p50 overhead @ {objects}: {:+.1}%",
+                (ratio - 1.0) * 100.0
+            );
+        }
     }
     let report = Report { machine, results };
     if let Some(path) = std::env::var_os("MIKURA_BENCH_OUT") {

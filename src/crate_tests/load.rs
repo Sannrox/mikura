@@ -148,3 +148,47 @@ fn load_omits_denied_properties() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn list_page_omits_denied_properties() {
+    let (dir, log) = temp_log("list-acl");
+    let mut store = Store::create(&log).unwrap();
+    append_all(
+        &mut store,
+        vec![rec(
+            "Shipment",
+            "s1",
+            false,
+            &[("order_id", "o1"), ("amount", "10"), ("note", "secret")],
+        )],
+    );
+    let mut request = EvaluateRequest {
+        namespace: NS.into(),
+        root_kind: "Shipment".into(),
+        sum_kind: "Shipment".into(),
+        sum_property: "amount".into(),
+        object_bound: 8,
+        page_size: 8,
+        sort: Some(Sort::by("amount")),
+        acl: PropertyAcl::deny_property("Shipment", "note"),
+        ..EvaluateRequest::default()
+    };
+    let denied = ObjectSet::new(LocalCompute)
+        .evaluate(&store, &request)
+        .unwrap();
+    assert_eq!(denied.objects.len(), 1);
+    assert!(!denied.objects[0].props.contains_key("note"));
+    assert_eq!(
+        denied.objects[0].props.get("amount").map(String::as_str),
+        Some("10")
+    );
+    request.acl = PropertyAcl::allow_all();
+    let open = ObjectSet::new(LocalCompute)
+        .evaluate(&store, &request)
+        .unwrap();
+    assert_eq!(
+        open.objects[0].props.get("note").map(String::as_str),
+        Some("secret")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

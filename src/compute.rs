@@ -932,11 +932,23 @@ fn page_objects(
     } else {
         None
     };
+    let maps = store
+        .joins(&request.namespace)
+        .map_err(ComputeError::Load)?;
+    let denied = request
+        .acl
+        .interned_denies(|token| maps.intern_existing(token));
     let mut objects = Vec::with_capacity(page.len());
     for row in page {
         objects.push(
             store
-                .load(&request.namespace, kind, &row.key, &request.acl)
+                .load_in_view(
+                    &request.namespace,
+                    kind,
+                    &row.key,
+                    &request.acl,
+                    Some(&denied),
+                )
                 .map_err(ComputeError::Load)?,
         );
     }
