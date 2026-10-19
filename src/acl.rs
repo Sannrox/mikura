@@ -290,6 +290,27 @@ impl PropertyAcl {
             .collect()
     }
 
+    /// Borrow interned `(property, value)` pairs, skipping denied
+    /// `(kind_id, prop_id)`. Callers that need an owned map collect
+    /// [`Self::omit_owned`].
+    pub(crate) fn iter_owned<'a>(
+        intern: &'a [String],
+        kind_id: u32,
+        owned: &'a [(u32, u32)],
+        denied: &'a HashSet<(u32, u32)>,
+    ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+        let filter = !denied.is_empty();
+        owned.iter().filter_map(move |&(prop_id, value_id)| {
+            if filter && denied.contains(&(kind_id, prop_id)) {
+                return None;
+            }
+            Some((
+                intern.get(prop_id as usize)?.as_str(),
+                intern.get(value_id as usize)?.as_str(),
+            ))
+        })
+    }
+
     /// Materialize interned property pairs, cloning only allowed keys.
     pub(crate) fn omit_owned(
         intern: &[String],
@@ -298,17 +319,8 @@ impl PropertyAcl {
         denied: &HashSet<(u32, u32)>,
     ) -> HashMap<String, String> {
         let mut props = HashMap::with_capacity(owned.len());
-        for &(prop_id, value_id) in owned {
-            if !denied.is_empty() && denied.contains(&(kind_id, prop_id)) {
-                continue;
-            }
-            let Some(prop) = intern.get(prop_id as usize) else {
-                continue;
-            };
-            let Some(value) = intern.get(value_id as usize) else {
-                continue;
-            };
-            props.insert(prop.clone(), value.clone());
+        for (prop, value) in Self::iter_owned(intern, kind_id, owned, denied) {
+            props.insert(prop.to_string(), value.to_string());
         }
         props
     }
@@ -389,6 +401,28 @@ mod tests {
         let redacted = PropertyAcl::omit_owned(&intern, 0, &owned, &denied);
         assert!(!redacted.contains_key("amount"));
         assert_eq!(redacted.get("order_id").map(String::as_str), Some("o1"));
+    }
+
+    #[test]
+    fn iter_owned_borrows_intern_and_skips_denied() {
+        let intern = [
+            "Shipment".into(),
+            "amount".into(),
+            "10".into(),
+            "order_id".into(),
+            "o1".into(),
+        ];
+        let owned = [(1, 2), (3, 4)];
+        let denied = HashSet::from([(0, 1)]);
+        let pairs: Vec<_> = PropertyAcl::iter_owned(&intern, 0, &owned, &denied).collect();
+        assert_eq!(pairs, vec![("order_id", "o1")]);
+        assert!(std::ptr::eq(pairs[0].0, intern[3].as_str()));
+        assert!(std::ptr::eq(pairs[0].1, intern[4].as_str()));
+        let none = HashSet::new();
+        let open: Vec<_> = PropertyAcl::iter_owned(&intern, 0, &owned, &none).collect();
+        assert_eq!(open, vec![("amount", "10"), ("order_id", "o1")]);
+        assert!(std::ptr::eq(open[0].0, intern[1].as_str()));
+        assert!(std::ptr::eq(open[0].1, intern[2].as_str()));
     }
 
     #[test]
