@@ -3,9 +3,9 @@
 - Status: accepted
 - Date: 2026-09-20
 - Owners: mikura maintainers
-- Related: [#185](https://github.com/Sannrox/mikura/issues/185), [#237](https://github.com/Sannrox/mikura/issues/237), [#107](https://github.com/Sannrox/mikura/issues/107), [#121](https://github.com/Sannrox/mikura/issues/121), [#137](https://github.com/Sannrox/mikura/issues/137), [#152](https://github.com/Sannrox/mikura/issues/152), [m0-application-contract.md](../plans/m0-application-contract.md), [m4-hosted-pilot-contract.md](../plans/m4-hosted-pilot-contract.md), [m9-workload-acceptance.md](../plans/m9-workload-acceptance.md), [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md)
+- Related: [#185](https://github.com/Sannrox/mikura/issues/185), [#237](https://github.com/Sannrox/mikura/issues/237), [#258](https://github.com/Sannrox/mikura/issues/258), [#107](https://github.com/Sannrox/mikura/issues/107), [#121](https://github.com/Sannrox/mikura/issues/121), [#137](https://github.com/Sannrox/mikura/issues/137), [#152](https://github.com/Sannrox/mikura/issues/152), [m0-application-contract.md](../plans/m0-application-contract.md), [m4-hosted-pilot-contract.md](../plans/m4-hosted-pilot-contract.md), [m9-workload-acceptance.md](../plans/m9-workload-acceptance.md), [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md)
 - Amends: none. M0 two-object budgets stay unset. Spike 011 envelopes stay scale research.
-- Amended by: this file's 2026-10-16 amendment ([#237](https://github.com/Sannrox/mikura/issues/237))
+- Amended by: this file's 2026-10-16 amendment ([#237](https://github.com/Sannrox/mikura/issues/237)) and 2026-10-19 amendment ([#258](https://github.com/Sannrox/mikura/issues/258))
 - Supersedes: none
 - Superseded by: none
 
@@ -118,4 +118,10 @@ the product-loop as the representative workload.
   Undeclared two-hop sums keep the leaf walk
   ([ADR 0010](0010-last-hop-measures.md)). Do not infer measures on
   first use. Do not invent an undeclared size cutoff. Details:
+  [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md).
+- 2026-10-19, [#258](https://github.com/Sannrox/mikura/issues/258):
+  First undeclared evaluate builds last-hop rollups and caches them on
+  the sidecar. Leaves above the lazy measure budget fail closed. Numeric
+  production cells still do not publish. 10⁷ after first use is the
+  product bench, not an SLO. Schema `sums` remains the catalog. Details:
   [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md).

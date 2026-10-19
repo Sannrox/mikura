@@ -17,6 +17,12 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Added
 
+- First evaluate of an undeclared two-hop sum builds last-hop rollups,
+  caches them on the join sidecar, and maintains them on apply. Leaves
+  above 20_000_000 fail closed. At most 32 undeclared caches per
+  namespace. Sidecar stays deletable; dual-read against log replay
+  holds. Schema `sums` remains the catalog
+  ([#258](https://github.com/Sannrox/mikura/issues/258)).
 - Schema `indexes` names properties evaluate may look up as secondary
   indexes. Equality and inclusive range on those names use the join map
   instead of scanning identities. Hop-target predicates invert from that
@@ -28,6 +34,9 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Upgrade
 
+- Join sidecars write `MKJOIN06`. `MKJOIN05` still opens. Delete the
+  sidecar to rebuild from the log if an older binary must reopen
+  ([#258](https://github.com/Sannrox/mikura/issues/258)).
 - Crate version is 0.4.0. `SchemaDescriptor` gains `indexes`;
   `SCHEMA_INDEXES` is a new schema property name. Historical descriptors
   without `indexes` load as empty (scan). Struct literals of

@@ -54,7 +54,7 @@ correctness check.
 
 | Envelope | Result | What it is not |
 | --- | --- | --- |
-| 10⁷ hop count+sum on **declared** last-hop rollups | **40 ms hold** vs 500 ms; dual-read holds; 7.1 GiB RSS ([#152](https://github.com/Sannrox/mikura/issues/152)) | General query p95; undeclared sums still leaf-walk |
+| 10⁷ hop count+sum on **declared** last-hop rollups | **40 ms hold** vs 500 ms; dual-read holds; 7.1 GiB RSS ([#152](https://github.com/Sannrox/mikura/issues/152)) | General query p95; undeclared first-use is [#258](https://github.com/Sannrox/mikura/issues/258) |
 | 10⁷ hop count+sum **before** last-hop measures | miss vs 500 ms (878–2117 ms depending on addendum) | Current declared-rollup path |
 | 10⁸ ingest | **completes** (~2.8 h, 100 × 1 M chunks, peak 7.9 GiB) ([#137](https://github.com/Sannrox/mikura/issues/137)) | Query, `Store::open`, mixed load, or dual-read at 10⁸ |
 | 10⁸ query / open / dual-read | **unmeasured** | A hold or miss |
@@ -96,8 +96,9 @@ Query shape without real data: product-loop `component`/`incident` plus
 the `shop` Explorer fixture
 ([evaluate-aggregate-sort-fixture.md](evaluate-aggregate-sort-fixture.md)).
 Scale hop evidence stays spike 011. Declared `amount` rollups hold 500 ms
-at 10⁷; undeclared leaf walks miss that figure and are **not** a
-production fail. Details:
+at 10⁷. After [#258](https://github.com/Sannrox/mikura/issues/258),
+undeclared two-hop caches last-hop rollups on first use; that product
+bench is **not** a published SLO. Details:
 [m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md).
 
 ## Measurement method
@@ -123,7 +124,7 @@ production fail. Details:
 | [#187](https://github.com/Sannrox/mikura/issues/187) bounded execution / concurrent clients | Unblocked as research of fail-closed admission using the existing request-line bounds. Must not invent a client mix or mixed-load p95. |
 | [#188](https://github.com/Sannrox/mikura/issues/188) concurrent workload | Serial host proved, then amended by [#243](https://github.com/Sannrox/mikura/issues/243) / [ADR 0040](../decisions/0040-concurrent-host-readers.md). Unpublished simultaneous-client SLOs stay unresolved. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) recovery and upgrade readiness | Closed unresolved-evidence. See [m9-readiness.md](m9-readiness.md). Numeric targets in the table above stay blank. Availability closed retain-one-process ([#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0023](../decisions/0023-single-process-availability.md)). Capacity closed unpartitioned ([#192](https://github.com/Sannrox/mikura/issues/192), [ADR 0024](../decisions/0024-unpartitioned-store.md)). |
-| [#237](https://github.com/Sannrox/mikura/issues/237) Explorer workload | Closed: Chisei named, numbers unpublished, undeclared leaf-walk kept. See [m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md). |
+| [#237](https://github.com/Sannrox/mikura/issues/237) Explorer workload | Closed: Chisei named, numbers unpublished. [#258](https://github.com/Sannrox/mikura/issues/258) later caches undeclared last-hop rollups on first use. See [m9-chisei-explorer-workload.md](m9-chisei-explorer-workload.md). |
 | [#244](https://github.com/Sannrox/mikura/issues/244) replication | Closed no-action: keep one process; restore from the log; unpublished RPO/RTO is not a miss. See [m10-replication-availability.md](m10-replication-availability.md). |
 
 ## Out of this investigation

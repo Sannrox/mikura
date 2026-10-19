@@ -36,7 +36,7 @@ separate authorized step.**
 
 | Rule | Behavior |
 | --- | --- |
-| Listed surface | Public items of `mikura`, `mikura-ingest`, and `mikura-host` named in 1.0-surface.md, plus log magic `MIKURAV2`, join magic `MKJOIN05` / `MKJOIN6D` (read `MKJOIN5D`), checkpoint magic `MKCKPT01`, and host wire `v=1`. |
+| Listed surface | Public items of `mikura`, `mikura-ingest`, and `mikura-host` named in 1.0-surface.md, plus log magic `MIKURAV2`, join magic `MKJOIN06` / `MKJOIN6D` (read `MKJOIN05` / `MKJOIN5D`), checkpoint magic `MKCKPT01`, and host wire `v=1`. |
 | Not covered | Private modules, spikes, test helpers, `SyncPolicy` (not exported), and any `pub` item the surface page does not name. Those may change without a bump. |
 | Pre-1.0 semver | Breaking changes on the listed surface require a minor bump (`0.x` → `0.(x+1)`). Additive changes may be a patch. Document breaks under CHANGELOG Upgrade. |
 | After 1.0 | Cargo semver: break = major, additive = minor, repair = patch. Removal from the listed surface needs a deprecation in at least one minor, then a major. |

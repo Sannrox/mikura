@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::acl::PropertyAcl;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::crypto::matches_tenant;
-use crate::joins::{check_join_crc, crc32, Checkpoint, LiveMeta};
+use crate::joins::{check_join_crc, crc32, Checkpoint, JoinMaps, LiveMeta};
 use crate::log::{read_records_after_with_keys, LogWriter, SyncPolicy};
 
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
@@ -54,7 +54,13 @@ impl Store {
         }
         self.ensure_action_commits()?;
         self.ensure_schema_history()?;
-        if self.dirty.is_empty() && self.has_checkpoint {
+        // Lazy first-use tables live on the join sidecar. A log-checkpoint-only
+        // write serializes them into `{log}.ckpt` but reopen prefers a matching
+        // sidecar, so unpersisted lazy must take the projection path.
+        if self.dirty.is_empty()
+            && self.has_checkpoint
+            && !self.joins.values().any(JoinMaps::has_unpersisted_lazy)
+        {
             return self.persist_log_checkpoint();
         }
         self.persist_projection()

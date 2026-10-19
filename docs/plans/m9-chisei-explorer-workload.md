@@ -13,11 +13,13 @@ and does not invent numeric SLOs.
 **Keep numeric production cells unresolved. Treat Chisei Explorer as the
 named consumer whose ADRs still omit counts, rates, and p95/p99. Keep
 the 500 ms hop figure as the declared last-hop rollup budget only.
-Undeclared two-hop sums stay the leaf walk ([ADR 0010](../decisions/0010-last-hop-measures.md)).**
+First undeclared evaluate builds last-hop rollups
+([#258](https://github.com/Sannrox/mikura/issues/258),
+[ADR 0010](../decisions/0010-last-hop-measures.md)).**
 
-Do not infer measures on first use. Do not reject undeclared aggregates
-by object count. Do not start a feature to make undeclared sums meet
-500 ms until Chisei publishes that as a budget.
+Leaves above the lazy measure budget fail closed. Do not reject
+undeclared aggregates by an invented production object count. Do not
+treat the 10⁷ product bench as a published SLO.
 
 ## Named consumer
 
@@ -48,7 +50,7 @@ Machine class only: 32 GiB arm64. Dual-read vs log replay is the
 correctness check. Host-process mixed-load p95 under one second is a
 fixture, not a published SLO (`mixed_load_read_p95_stays_under_a_second`).
 
-| Question | Declared last-hop rollup | Undeclared leaf walk |
+| Question | Declared last-hop rollup | Undeclared (pre-#258 leaf walk) |
 | --- | --- | --- |
 | 10⁷ two-hop count+sum vs 500 ms | **40 ms hold** ([#152](https://github.com/Sannrox/mikura/issues/152)) | **miss** (878–1298 ms on the same envelope before rollups) |
 | 10⁶ two-hop count+sum vs 500 ms | unmeasured after declared rollups | hold (33–105 ms on pre-rollup addenda); not a production p95 |
@@ -57,20 +59,21 @@ fixture, not a published SLO (`mixed_load_read_p95_stays_under_a_second`).
 | List / filter / one-hop on Explorer seed | qualitative e2e pass | qualitative e2e pass |
 | p50/p95/p99 hosted evaluate under Chisei counts | unpublished | unpublished |
 
-`undeclared_sum_still_leaf_walks` keeps the leaf-walk contract. Schema
-`sums` is how a clerk opts into the 40 ms path.
+`undeclared_sum_builds_cache_on_first_evaluate` is the unit contract.
+Schema `sums` is how a clerk names a measure in the catalog. First
+undeclared evaluate builds the same parent rollups.
 
 ## Undeclared two-hop options
 
 | Option | Verdict |
 | --- | --- |
 | 1. Derive a Chisei-shaped fixture (no real data) | Done as the table above. Counts and rates stay blank. |
-| 2. Lazy last-hop measure on first undeclared use | **Rejected.** [ADR 0010](../decisions/0010-last-hop-measures.md) already refused inferring catalog from query shape. A first evaluate would persist columns the clerk never named. |
-| 3. Plan-time reject undeclared aggregates above a size | **Rejected.** No consumer-published size. An invented cutoff would encode an unresolved SLO. |
-| 4. Keep the leaf walk; 500 ms is declared-only | **Chosen.** VISION's 500 ms hop figure is the declared-rollup budget. Undeclared sums are allowed and slower. A miss against 500 ms on that path is not an engine pick and not a production fail. |
+| 2. Lazy last-hop measure on first undeclared use | **Rejected as catalog in #237.** Implemented as a projection cache in [#258](https://github.com/Sannrox/mikura/issues/258): first evaluate builds parent rollups; schema `sums` stays clerk-named. |
+| 3. Plan-time reject undeclared aggregates above a size | **Rejected as an SLO cutoff in #237.** [#258](https://github.com/Sannrox/mikura/issues/258) fails closed above a leaf-count budget so first-use cannot unbounded-scan. That budget is not a published SLO. |
+| 4. Keep the leaf walk; 500 ms is declared-only | **Chosen for #237.** VISION's 500 ms hop figure stays the declared-rollup budget. After #258, undeclared two-hop uses the cached rollup after first use. |
 
-No follow-up feature Issue is opened. A later Design Discussion is
-required if Chisei publishes an undeclared hop budget.
+[#258](https://github.com/Sannrox/mikura/issues/258) is the authorized
+follow-up after #237 closed. Numeric production cells stay unresolved.
 
 ## SLO table
 
@@ -85,4 +88,4 @@ spike 011 or from an 8-row Explorer seed would be a guessed SLO.
 | [ADR 0016](../decisions/0016-production-workload.md) | Amended: Chisei is the named consumer; numbers still unpublished. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) readiness | Still unresolved-evidence. |
 | [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ | Still blocked until a consumer names that envelope. |
-| Lazy undeclared measures | Out until a published undeclared budget exists. |
+| Lazy undeclared measures | [#258](https://github.com/Sannrox/mikura/issues/258): first-use cache on the sidecar; leaf budget fail-closed. |

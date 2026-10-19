@@ -694,6 +694,16 @@ fn evaluate_local(
     store: &Store,
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, ComputeError> {
+    if let Some(last) = request.hops.last() {
+        if !last.incoming
+            && last.far_kind == request.sum_kind
+            && last.join_property != request.sum_property
+        {
+            store
+                .ensure_lazy_measure(&request.namespace, &request.sum_kind, &request.sum_property)
+                .map_err(ComputeError::Load)?;
+        }
+    }
     let maps = store
         .joins(&request.namespace)
         .map_err(ComputeError::Load)?;

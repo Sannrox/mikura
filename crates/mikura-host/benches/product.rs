@@ -381,6 +381,10 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String
         ),
     ];
     for (name, request) in &queries {
+        // Undeclared sums build last-hop rollups on first use (#258).
+        // Warm that path so samples are the cached evaluate, matching the
+        // published "after first use" budget.
+        LocalCompute.evaluate(&store, request).expect(name);
         results.push(Measurement::new(
             name,
             objects,

@@ -23,7 +23,7 @@ experiments and for contributing to the kernel. Not a production hosted store.
 | Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Cluster compute |
 | Loopback ingest/evaluate host; non-loopback bind with clerk bearer ([ADR 0003](docs/decisions/0003-hosted-service.md), [ADR 0007](docs/decisions/0007-host-bearer.md)) | Multi-process hosting |
 | Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | |
-| Last-hop measures on `MKJOIN05` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
+| Last-hop measures on `MKJOIN06` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
 | Required store namespace on new logs (`MIKURAV2`, [ADR 0028](docs/decisions/0028-store-namespace.md)) | Existing-log migration |
 | Optional log encryption at rest (`MIKURAV3`, [ADR 0044](docs/decisions/0044-log-encryption.md)) | |
 | Schema-declared boolean, integer, timestamp, decimal, vector, time-series, geo, and media values as canonical UTF-8 in `props` ([ADR 0012](docs/decisions/0012-typed-values.md), [ADR 0043](docs/decisions/0043-typed-ref-values.md)) | |

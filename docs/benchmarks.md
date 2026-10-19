@@ -31,8 +31,10 @@ lower-is-better, so one rule covers the gate.
 Customer -> Order -> Shipment in one namespace, with spike 011's ratios:
 `n/100` customers, `n/10` orders, the rest shipments. Every 100th key is
 hidden. `Shipment.amount` is a declared sum on the `order_id` link.
-`Shipment.weight` is not declared, so it takes the undeclared path. Each size
-builds its fixture in a fresh temp directory unique to the process.
+`Shipment.weight` is not declared, so the first evaluate builds last-hop
+rollups ([#258](https://github.com/Sannrox/mikura/issues/258)). The suite
+warms that path so sampled rows are after first use. Each size builds
+its fixture in a fresh temp directory unique to the process.
 
 ## Measurements
 
