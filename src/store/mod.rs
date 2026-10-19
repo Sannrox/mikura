@@ -39,8 +39,11 @@ pub const SOURCE_KIND: &str = "mikura.source";
 /// Property on [`SOURCE_KIND`] holding the decimal last committed offset.
 pub const SOURCE_OFFSET: &str = "offset";
 
-/// Live identity: `(namespace, kind, key)`.
-type LiveId = (String, String, String);
+/// Live identity: interned `(namespace, kind, key)`.
+///
+/// Namespace ids live on [`Store::ns`]. Kind and key ids live in that
+/// namespace's [`JoinMaps`] intern, shared with the sidecar.
+type LiveId = (u32, u32, u32);
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectRecord {
@@ -114,8 +117,11 @@ enum ActionIdWrite {
 pub struct Store {
     log: PathBuf,
     writer: LogWriter,
+    /// Intern table for namespace strings in [`LiveId`].
+    ns: Vec<String>,
+    ns_ix: HashMap<String, u32>,
     identity: HashMap<LiveId, LiveMeta>,
-    hidden_props: HashMap<LiveId, HashMap<String, String>>,
+    hidden_props: HashMap<LiveId, Vec<(u32, u32)>>,
     joins: HashMap<String, JoinMaps>,
     dirty: HashSet<LiveId>,
     has_checkpoint: bool,
@@ -314,9 +320,17 @@ impl Store {
                 self.writer.tenant_revoked(tenant) || self.writer.tenant_withheld(tenant)
             })
         };
+        let revoked_ns: HashSet<u32> = self
+            .ns
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| revoked(name))
+            .map(|(i, _)| i as u32)
+            .collect();
         self.joins.retain(|namespace, _| !revoked(namespace));
-        self.identity.retain(|id, _| !revoked(&id.0));
-        self.hidden_props.retain(|id, _| !revoked(&id.0));
+        self.identity.retain(|id, _| !revoked_ns.contains(&id.0));
+        self.hidden_props
+            .retain(|id, _| !revoked_ns.contains(&id.0));
         self.action_commits
             .retain(|(namespace, _), _| !revoked(namespace));
         self.schema_history
@@ -333,8 +347,8 @@ impl Store {
         for namespace in self.joins.keys() {
             push(namespace);
         }
-        for (namespace, _, _) in self.identity.keys() {
-            push(namespace);
+        for id in self.identity.keys() {
+            push(self.ns_name(id.0));
         }
         for (namespace, _) in self.action_commits.keys() {
             push(namespace);
@@ -349,6 +363,8 @@ impl Store {
         let mut store = Self {
             log,
             writer,
+            ns: Vec::new(),
+            ns_ix: HashMap::new(),
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
             joins: HashMap::new(),
@@ -375,6 +391,80 @@ impl Store {
         store
     }
 
+    fn intern_ns(&mut self, namespace: &str) -> u32 {
+        if let Some(&id) = self.ns_ix.get(namespace) {
+            return id;
+        }
+        let id = u32::try_from(self.ns.len()).expect("namespace intern fits u32");
+        self.ns.push(namespace.to_string());
+        self.ns_ix.insert(namespace.to_string(), id);
+        id
+    }
+
+    fn ns_name(&self, id: u32) -> &str {
+        self.ns.get(id as usize).map(String::as_str).unwrap_or("")
+    }
+
+    fn intern_live(&mut self, namespace: &str, kind: &str, key: &str) -> LiveId {
+        let ns_id = self.intern_ns(namespace);
+        let joins = self.joins_for_write(namespace);
+        (ns_id, joins.intern(kind), joins.intern(key))
+    }
+
+    fn find_live(&self, namespace: &str, kind: &str, key: &str) -> Option<LiveId> {
+        let ns_id = *self.ns_ix.get(namespace)?;
+        let joins = self.joins.get(namespace)?;
+        Some((
+            ns_id,
+            joins.intern_existing(kind)?,
+            joins.intern_existing(key)?,
+        ))
+    }
+
+    fn rebuild_ns_ix(&mut self) {
+        self.ns_ix.clear();
+        for (i, name) in self.ns.iter().enumerate() {
+            self.ns_ix.insert(name.clone(), i as u32);
+        }
+    }
+
+    fn live_kind(&self, id: LiveId) -> Option<&str> {
+        self.joins.get(self.ns_name(id.0))?.intern_get(id.1)
+    }
+
+    fn live_key(&self, id: LiveId) -> Option<&str> {
+        self.joins.get(self.ns_name(id.0))?.intern_get(id.2)
+    }
+
+    fn live_strings(&self, id: LiveId) -> Result<(&str, &str, &str), String> {
+        let ns = self.ns_name(id.0);
+        let joins = self
+            .joins
+            .get(ns)
+            .ok_or_else(|| "missing namespace joins".to_string())?;
+        let kind = joins
+            .intern_get(id.1)
+            .ok_or_else(|| "missing intern kind".to_string())?;
+        let key = joins
+            .intern_get(id.2)
+            .ok_or_else(|| "missing intern key".to_string())?;
+        Ok((ns, kind, key))
+    }
+
+    fn materialize_owned(maps: &JoinMaps, owned: &[(u32, u32)]) -> HashMap<String, String> {
+        let mut props = HashMap::with_capacity(owned.len());
+        for &(prop_id, value_id) in owned {
+            let Some(name) = maps.intern_get(prop_id) else {
+                continue;
+            };
+            let Some(value) = maps.intern_get(value_id) else {
+                continue;
+            };
+            props.insert(name.to_string(), value.to_string());
+        }
+        props
+    }
+
     /// Use a tiny compact bound in tests so a few dirty-set frames can exceed
     /// it without writing `JOIN_DELTA_COMPACT_BYTES` of delta.
     #[cfg(test)]
@@ -391,25 +481,28 @@ impl Store {
     }
 
     fn install_live(&mut self, id: LiveId, meta: LiveMeta, props: HashMap<String, String>) {
+        let ns = self.ns_name(id.0).to_string();
         {
-            let joins = self.joins_for_write(&id.0);
-            joins.remove(&id.1, &id.2);
-            joins.intern(&id.1);
-            joins.intern(&id.2);
+            let joins = self.joins_for_write(&ns);
+            let kind = joins.intern_get(id.1).unwrap_or("").to_string();
+            let key = joins.intern_get(id.2).unwrap_or("").to_string();
+            joins.remove(&kind, &key);
         }
         let hidden = meta.hidden;
-        self.identity.insert(id.clone(), meta);
+        self.identity.insert(id, meta);
         if hidden {
-            let joins = self.joins_for_write(&id.0);
-            for (name, value) in &props {
-                joins.intern(name);
-                joins.intern(value);
-            }
-            self.hidden_props.insert(id, props);
+            let joins = self.joins_for_write(&ns);
+            let owned: Vec<(u32, u32)> = props
+                .iter()
+                .map(|(name, value)| (joins.intern(name), joins.intern(value)))
+                .collect();
+            self.hidden_props.insert(id, owned);
         } else {
             self.hidden_props.remove(&id);
-            self.joins_for_write(&id.0)
-                .index(&id.1, &id.2, false, props);
+            let joins = self.joins_for_write(&ns);
+            let kind = joins.intern_get(id.1).unwrap_or("").to_string();
+            let key = joins.intern_get(id.2).unwrap_or("").to_string();
+            joins.index(&kind, &key, false, props);
         }
     }
 
@@ -530,7 +623,13 @@ impl Store {
         let Some(expected) = expected_gen else {
             return Ok(());
         };
-        let id = live_id(namespace, kind, key);
+        let Some(id) = self.find_live(namespace, kind, key) else {
+            return if expected != 0 {
+                Err(format!("stale generation: expected {expected}, live none"))
+            } else {
+                Ok(())
+            };
+        };
         match self.identity.get(&id) {
             Some(meta) if meta.gen != expected => Err(format!(
                 "stale generation: expected {expected}, live {}",
@@ -552,7 +651,7 @@ impl Store {
         } else {
             None
         };
-        let id = live_id(&record.namespace, &record.kind, &record.key);
+        let id = self.intern_live(&record.namespace, &record.kind, &record.key);
         let action_id = record
             .action_id
             .as_deref()
@@ -560,7 +659,7 @@ impl Store {
             .map(|id| self.joins_for_write(&record.namespace).intern(id));
         let namespace = record.namespace.clone();
         self.install_live(
-            id.clone(),
+            id,
             LiveMeta {
                 gen: record.gen,
                 hidden: record.hidden,
@@ -655,7 +754,9 @@ impl Store {
         if !self.joins.contains_key(namespace) {
             return Ok(None);
         }
-        let id = live_id(namespace, kind, key);
+        let Some(id) = self.find_live(namespace, kind, key) else {
+            return Ok(None);
+        };
         let Some(meta) = self.identity.get(&id) else {
             return Ok(None);
         };
@@ -687,7 +788,7 @@ impl Store {
                 return Err(missing());
             }
         }
-        let id = live_id(namespace, kind, key);
+        let id = self.find_live(namespace, kind, key).ok_or_else(missing)?;
         let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
         let denied = acl.interned_denies(|token| maps.intern_existing(token));
@@ -798,11 +899,13 @@ impl Store {
         {
             return self.replay_overlay(committed, &patch, &action_id);
         }
-        let id = live_id(&patch.namespace, &patch.kind, &patch.key);
+        let id = self.find_live(&patch.namespace, &patch.kind, &patch.key);
         self.require_expected_gen(&patch.namespace, &patch.kind, &patch.key, expected_gen)?;
         patch.action_id = Some(action_id.clone());
-        let instance_hidden = self.identity.get(&id).is_some_and(|meta| meta.hidden);
-        let instance_exists = self.identity.contains_key(&id);
+        let instance_hidden = id
+            .and_then(|id| self.identity.get(&id))
+            .is_some_and(|meta| meta.hidden);
+        let instance_exists = id.is_some_and(|id| self.identity.contains_key(&id));
         let source = if instance_exists && !instance_hidden {
             self.load(
                 &patch.namespace,
@@ -1011,8 +1114,8 @@ impl Store {
             ));
         } else if !record.hidden {
             let was_hidden = self
-                .identity
-                .get(&live_id(&record.namespace, &record.kind, &record.key))
+                .find_live(&record.namespace, &record.kind, &record.key)
+                .and_then(|id| self.identity.get(&id))
                 .is_some_and(|meta| meta.hidden);
             let schema = self.load_reserved(
                 &record.namespace,
@@ -1071,7 +1174,7 @@ impl Store {
         } else {
             None
         };
-        let id = live_id(&record.namespace, &record.kind, &record.key);
+        let id = self.intern_live(&record.namespace, &record.kind, &record.key);
         if let Some(existing) = self.identity.get(&id) {
             record.gen = existing.gen.max(1) + 1;
         } else if record.gen == 0 {
@@ -1211,6 +1314,8 @@ impl Store {
         self.identity.clear();
         self.hidden_props.clear();
         self.joins.clear();
+        self.ns.clear();
+        self.ns_ix.clear();
         self.dirty.clear();
         self.has_checkpoint = false;
         self.delta_bytes = 0;
@@ -1560,12 +1665,15 @@ impl Store {
                 return Err(missing());
             }
         }
-        let id = live_id(namespace, kind, key);
+        let id = self.find_live(namespace, kind, key).ok_or_else(missing)?;
         let meta = self.identity.get(&id).ok_or_else(missing)?;
         let maps = self.joins_in(namespace)?;
         let _ = acl;
         let props = if meta.hidden {
-            self.hidden_props.get(&id).cloned().unwrap_or_default()
+            self.hidden_props
+                .get(&id)
+                .map(|owned| Self::materialize_owned(maps, owned))
+                .unwrap_or_default()
         } else {
             maps.row_props(kind, key)
         };
@@ -1602,7 +1710,11 @@ impl Store {
         if self.schema_history_from_checkpoint {
             return Ok(());
         }
-        if !self.identity.keys().any(|(_, kind, _)| kind == SCHEMA_KIND) {
+        if !self
+            .identity
+            .keys()
+            .any(|&id| self.live_kind(id) == Some(SCHEMA_KIND))
+        {
             return Ok(());
         }
         self.schema_history.clear();
@@ -1621,10 +1733,15 @@ impl Store {
         let ids: Vec<_> = self
             .identity
             .iter()
-            .filter(|((_, kind, _), meta)| *kind == SCHEMA_KIND && !meta.hidden)
-            .map(|(id, _)| id.clone())
+            .filter(|(&id, meta)| self.live_kind(id) == Some(SCHEMA_KIND) && !meta.hidden)
+            .map(|(&id, _)| id)
             .collect();
-        for (namespace, _, key) in ids {
+        for id in ids {
+            let Ok((namespace, _, key)) = self.live_strings(id) else {
+                continue;
+            };
+            let namespace = namespace.to_string();
+            let key = key.to_string();
             if let Ok(Some(desc)) =
                 self.load_reserved(&namespace, SCHEMA_KIND, &key, SchemaDescriptor::from_record)
             {
@@ -1652,15 +1769,23 @@ impl Store {
         let prefix = format!("{}/", next.kind);
         let mut errors = Vec::new();
         let mut out = Vec::new();
+        let ns_id = self.ns_ix.get(namespace).copied();
         let ids: Vec<_> = self
             .identity
             .keys()
-            .filter(|(ns, kind, key)| {
-                ns == namespace && kind == OVERLAY_KIND && key.starts_with(&prefix)
+            .copied()
+            .filter(|&id| {
+                Some(id.0) == ns_id
+                    && self.live_kind(id) == Some(OVERLAY_KIND)
+                    && self
+                        .live_key(id)
+                        .is_some_and(|key| key.starts_with(&prefix))
             })
-            .cloned()
             .collect();
-        for (_, _, overlay_key) in ids {
+        for id in ids {
+            let Some(overlay_key) = self.live_key(id).map(str::to_string) else {
+                continue;
+            };
             let Ok(live) = self.load_stored(
                 namespace,
                 OVERLAY_KIND,
@@ -1751,22 +1876,42 @@ impl Store {
             return Ok(());
         }
         let mut errors = Vec::new();
+        let ns_id = self.ns_ix.get(namespace).copied();
+        let kind_id = self
+            .joins
+            .get(namespace)
+            .and_then(|joins| joins.intern_existing(&next.kind));
         let ids: Vec<_> = self
             .identity
             .keys()
-            .filter(|(ns, kind, _)| ns == namespace && kind == &next.kind)
-            .cloned()
+            .copied()
+            .filter(|&id| Some(id.0) == ns_id && Some(id.1) == kind_id)
             .collect();
         for id in ids {
             let Some(meta) = self.identity.get(&id) else {
                 continue;
             };
+            let ident = self
+                .live_strings(id)
+                .map(|(ns, kind, key)| format!("{ns}/{kind}/{key}"))
+                .unwrap_or_else(|_| format!("{}/{}/{}", id.0, id.1, id.2));
             let mut props = if meta.hidden {
-                self.hidden_props.get(&id).cloned().unwrap_or_default()
+                self.hidden_props
+                    .get(&id)
+                    .and_then(|owned| {
+                        self.joins
+                            .get(namespace)
+                            .map(|joins| Self::materialize_owned(joins, owned))
+                    })
+                    .unwrap_or_default()
             } else {
                 self.joins
                     .get(namespace)
-                    .map(|joins| joins.row_props(&id.1, &id.2))
+                    .map(|joins| {
+                        let kind = joins.intern_get(id.1).unwrap_or("");
+                        let key = joins.intern_get(id.2).unwrap_or("");
+                        joins.row_props(kind, key)
+                    })
                     .unwrap_or_default()
             };
             if let Some(current) = self.current_kind_properties(namespace, &next.kind) {
@@ -1776,15 +1921,14 @@ impl Store {
                     keep.insert(from.as_str());
                     if from != to && !current.contains(to.as_str()) && props.contains_key(to) {
                         errors.push(format!(
-                            "{}/{}/{} rename destination {to} collides with a dropped property",
-                            id.0, id.1, id.2
+                            "{ident} rename destination {to} collides with a dropped property"
                         ));
                     }
                 }
                 props.retain(|name, _| keep.contains(name.as_str()));
             }
             if let Err(err) = next.migration.apply(&mut props, false) {
-                errors.push(format!("{}/{}/{} {err}", id.0, id.1, id.2));
+                errors.push(format!("{ident} {err}"));
             }
         }
         if !errors.is_empty() {
@@ -1798,22 +1942,38 @@ impl Store {
     }
 
     fn remap_kind(&mut self, namespace: &str, desc: &SchemaDescriptor) {
+        let ns_id = self.ns_ix.get(namespace).copied();
+        let kind_id = self
+            .joins
+            .get(namespace)
+            .and_then(|joins| joins.intern_existing(&desc.kind));
         let ids: Vec<_> = self
             .identity
             .keys()
-            .filter(|(ns, kind, _)| ns == namespace && kind == &desc.kind)
-            .cloned()
+            .copied()
+            .filter(|&id| Some(id.0) == ns_id && Some(id.1) == kind_id)
             .collect();
         for id in ids {
             let Some(meta) = self.identity.get(&id).cloned() else {
                 continue;
             };
             let mut props = if meta.hidden {
-                self.hidden_props.get(&id).cloned().unwrap_or_default()
+                self.hidden_props
+                    .get(&id)
+                    .and_then(|owned| {
+                        self.joins
+                            .get(namespace)
+                            .map(|joins| Self::materialize_owned(joins, owned))
+                    })
+                    .unwrap_or_default()
             } else {
                 self.joins
                     .get(namespace)
-                    .map(|joins| joins.row_props(&id.1, &id.2))
+                    .map(|joins| {
+                        let kind = joins.intern_get(id.1).unwrap_or("");
+                        let key = joins.intern_get(id.2).unwrap_or("");
+                        joins.row_props(kind, key)
+                    })
                     .unwrap_or_default()
             };
             let previous = self
@@ -1846,7 +2006,7 @@ impl Store {
                 for (name, value) in extras {
                     props.entry(name).or_insert(value);
                 }
-                self.install_live(id.clone(), meta, props);
+                self.install_live(id, meta, props);
                 self.dirty.insert(id);
             }
         }
@@ -1961,8 +2121,8 @@ impl Store {
     }
 
     fn live_schema_hidden(&self, namespace: &str, kind: &str) -> bool {
-        self.identity
-            .get(&live_id(namespace, SCHEMA_KIND, kind))
+        self.find_live(namespace, SCHEMA_KIND, kind)
+            .and_then(|id| self.identity.get(&id))
             .is_some_and(|meta| meta.hidden)
     }
 
@@ -1983,23 +2143,24 @@ impl Store {
         id: &LiveId,
         denied: &HashSet<(u32, u32)>,
     ) -> HashMap<String, String> {
-        let Some(props) = self.hidden_props.get(id) else {
+        let Some(owned) = self.hidden_props.get(id) else {
             return HashMap::new();
         };
-        if denied.is_empty() {
-            return props.clone();
-        }
-        let Some(kind_id) = maps.intern_existing(kind) else {
-            return props.clone();
-        };
-        let mut allowed = HashMap::with_capacity(props.len());
-        for (name, value) in props {
-            if let Some(prop_id) = maps.intern_existing(name) {
+        let kind_id = maps.intern_existing(kind);
+        let mut allowed = HashMap::with_capacity(owned.len());
+        for &(prop_id, value_id) in owned {
+            if let Some(kind_id) = kind_id {
                 if denied.contains(&(kind_id, prop_id)) {
                     continue;
                 }
             }
-            allowed.insert(name.clone(), value.clone());
+            let Some(name) = maps.intern_get(prop_id) else {
+                continue;
+            };
+            let Some(value) = maps.intern_get(value_id) else {
+                continue;
+            };
+            allowed.insert(name.to_string(), value.to_string());
         }
         allowed
     }
@@ -2008,6 +2169,8 @@ impl Store {
         self.identity.clear();
         self.hidden_props.clear();
         self.joins.clear();
+        self.ns.clear();
+        self.ns_ix.clear();
         self.dirty.clear();
         self.action_commits.clear();
         self.schema_history.clear();
@@ -2061,8 +2224,11 @@ impl Store {
         let mut rows: Vec<(String, String)> = self
             .identity
             .iter()
-            .filter(|((_namespace, kind, _), meta)| kind == SCHEMA_KIND && !meta.hidden)
-            .map(|((namespace, _, key), _)| (namespace.clone(), key.clone()))
+            .filter(|(&id, meta)| self.live_kind(id) == Some(SCHEMA_KIND) && !meta.hidden)
+            .filter_map(|(&id, _)| {
+                let (namespace, _, key) = self.live_strings(id).ok()?;
+                Some((namespace.to_string(), key.to_string()))
+            })
             .collect();
         rows.sort();
         for (namespace, kind) in rows {
@@ -2130,10 +2296,6 @@ impl Drop for Store {
         }
         let _ = self.maybe_persist_projection(true);
     }
-}
-
-fn live_id(namespace: &str, kind: &str, key: &str) -> LiveId {
-    (namespace.to_string(), kind.to_string(), key.to_string())
 }
 
 fn unschematized_schema_view(record: &mut ObjectRecord, as_of: Option<u32>) -> Result<(), String> {

@@ -14,8 +14,9 @@ use super::{LiveId, Store};
 
 pub(super) type ProjectionBody = (
     HashMap<String, JoinMaps>,
+    Vec<String>,
     HashMap<LiveId, LiveMeta>,
-    HashMap<LiveId, HashMap<String, String>>,
+    HashMap<LiveId, Vec<(u32, u32)>>,
 );
 
 impl Store {
@@ -150,11 +151,12 @@ impl Store {
             for value in &joins.intern {
                 write_str(body, value)?;
             }
+            let ns_id = self.ns_ix.get(&namespace).copied();
             let mut ids: Vec<_> = self
                 .identity
                 .keys()
-                .filter(|(ns, _, _)| ns == &namespace)
-                .cloned()
+                .copied()
+                .filter(|id| Some(id.0) == ns_id)
                 .collect();
             ids.sort();
             let kn = u32::try_from(ids.len()).map_err(|_| "too many identities".to_string())?;
@@ -164,18 +166,14 @@ impl Store {
                     .identity
                     .get(&id)
                     .ok_or_else(|| "missing identity".to_string())?;
-                let kind_id = joins
-                    .intern_existing(&id.1)
-                    .ok_or_else(|| "missing intern kind".to_string())?;
-                let key_id = joins
-                    .intern_existing(&id.2)
-                    .ok_or_else(|| "missing intern key".to_string())?;
+                let kind_id = id.1;
+                let key_id = id.2;
                 body.extend_from_slice(&kind_id.to_le_bytes());
                 body.extend_from_slice(&key_id.to_le_bytes());
                 body.extend_from_slice(&meta.gen.to_le_bytes());
                 body.push(u8::from(meta.hidden));
                 let owned = if meta.hidden {
-                    interned_prop_ids(joins, self.hidden_props.get(&id))?
+                    self.hidden_props.get(&id).cloned().unwrap_or_default()
                 } else {
                     joins
                         .owned
@@ -288,20 +286,24 @@ impl Store {
                 .identity
                 .get(id)
                 .ok_or_else(|| "missing dirty identity".to_string())?;
-            write_str(&mut body, &id.0)?;
-            write_str(&mut body, &id.1)?;
-            write_str(&mut body, &id.2)?;
+            let (namespace, kind, key) = self.live_strings(*id)?;
+            write_str(&mut body, namespace)?;
+            write_str(&mut body, kind)?;
+            write_str(&mut body, key)?;
             body.extend_from_slice(&meta.gen.to_le_bytes());
             body.push(u8::from(meta.hidden));
             versions.push(meta.schema_version.max(1));
             let joins = self
                 .joins
-                .get(&id.0)
+                .get(namespace)
                 .ok_or_else(|| "missing namespace joins".to_string())?;
             let props = if meta.hidden {
-                self.hidden_props.get(id).cloned().unwrap_or_default()
+                self.hidden_props
+                    .get(id)
+                    .map(|owned| Store::materialize_owned(joins, owned))
+                    .unwrap_or_default()
             } else {
-                joins.row_props(&id.1, &id.2)
+                joins.row_props(kind, key)
             };
             let cn = u32::try_from(props.len()).map_err(|_| "too many properties".to_string())?;
             body.extend_from_slice(&cn.to_le_bytes());
@@ -354,6 +356,7 @@ impl Store {
     pub(super) fn decode_projection_after_magic(cur: &mut &[u8]) -> Result<ProjectionBody, String> {
         let ns_n = read_u32(cur)? as usize;
         let mut all_joins = HashMap::with_capacity(ns_n);
+        let mut ns = Vec::with_capacity(ns_n);
         let mut identity = HashMap::new();
         let mut hidden_props = HashMap::new();
         for _ in 0..ns_n {
@@ -364,6 +367,7 @@ impl Store {
             if all_joins.contains_key(&namespace) {
                 return Err(format!("duplicate namespace {namespace}"));
             }
+            let ns_id = intern_ns_name(&mut ns, &namespace)?;
             let intern_n = read_u32(cur)? as usize;
             let mut joins = JoinMaps::default();
             joins.intern.reserve(intern_n);
@@ -380,19 +384,21 @@ impl Store {
                 let hidden = take::<1>(cur)?[0] != 0;
                 let cn = read_u32(cur)? as usize;
                 let mut owned = Vec::with_capacity(cn);
-                let kind = joins
-                    .intern
-                    .get(kind_id as usize)
-                    .ok_or_else(|| "bad intern kind".to_string())?
-                    .clone();
-                let key = joins
-                    .intern
-                    .get(key_id as usize)
-                    .ok_or_else(|| "bad intern key".to_string())?
-                    .clone();
+                if joins.intern.get(kind_id as usize).is_none() {
+                    return Err("bad intern kind".into());
+                }
+                if joins.intern.get(key_id as usize).is_none() {
+                    return Err("bad intern key".into());
+                }
                 for _ in 0..cn {
                     let prop_id = read_u32(cur)?;
                     let value_id = read_u32(cur)?;
+                    if joins.intern.get(prop_id as usize).is_none() {
+                        return Err("bad intern prop".into());
+                    }
+                    if joins.intern.get(value_id as usize).is_none() {
+                        return Err("bad intern value".into());
+                    }
                     owned.push((prop_id, value_id));
                 }
                 let action_intern = read_u32(cur)?;
@@ -404,8 +410,9 @@ impl Store {
                     }
                     Some(action_intern)
                 };
+                let id = (ns_id, kind_id, key_id);
                 identity.insert(
-                    (namespace.clone(), kind.clone(), key.clone()),
+                    id,
                     LiveMeta {
                         gen,
                         hidden,
@@ -414,10 +421,7 @@ impl Store {
                     },
                 );
                 if hidden {
-                    hidden_props.insert(
-                        (namespace.clone(), kind, key),
-                        props_from_owned(&joins, &owned)?,
-                    );
+                    hidden_props.insert(id, owned);
                 } else {
                     joins.insert_visible_ids(kind_id, key_id, owned)?;
                 }
@@ -425,7 +429,7 @@ impl Store {
             joins.read_measures(cur)?;
             all_joins.insert(namespace, joins);
         }
-        Ok((all_joins, identity, hidden_props))
+        Ok((all_joins, ns, identity, hidden_props))
     }
 
     fn load_checkpoint(path: &Path, writer: &LogWriter) -> Result<Checkpoint, String> {
@@ -438,6 +442,7 @@ impl Store {
             let mut loaded = Checkpoint {
                 pages,
                 joins: HashMap::new(),
+                ns: Vec::new(),
                 identity: HashMap::new(),
                 hidden_props: HashMap::new(),
             };
@@ -450,6 +455,7 @@ impl Store {
         let mut loaded = Checkpoint {
             pages: 0,
             joins: HashMap::new(),
+            ns: Vec::new(),
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
         };
@@ -468,9 +474,12 @@ impl Store {
         } else if loaded.pages != pages {
             return Err("tenant snapshot page mismatch".into());
         }
-        let (joins, mut identity, hidden_props) = Self::decode_projection_after_magic(&mut cur)?;
+        let (joins, ns, mut identity, hidden_props) =
+            Self::decode_projection_after_magic(&mut cur)?;
         if !cur.is_empty() {
             Store::apply_instance_schema_versions(
+                &joins,
+                &ns,
                 &mut identity,
                 Store::decode_instance_schema_versions(&mut cur)?,
             );
@@ -484,8 +493,7 @@ impl Store {
             }
             loaded.joins.insert(namespace, maps);
         }
-        loaded.identity.extend(identity);
-        loaded.hidden_props.extend(hidden_props);
+        loaded.merge_live(ns, identity, hidden_props);
         Ok(())
     }
 
@@ -530,8 +538,9 @@ impl Store {
             let schema_namespace = row.namespace.clone();
             let schema_kind = row.kind.clone();
             let schema_key = row.key.clone();
+            let id = self.intern_live(&row.namespace, &row.kind, &row.key);
             self.install_live(
-                super::live_id(&row.namespace, &row.kind, &row.key),
+                id,
                 LiveMeta {
                     gen: row.gen,
                     hidden: row.hidden,
@@ -605,6 +614,8 @@ impl Store {
 
     pub(super) fn adopt_checkpoint(&mut self, loaded: Checkpoint) -> Result<(), String> {
         self.joins = loaded.joins;
+        self.ns = loaded.ns;
+        self.rebuild_ns_ix();
         self.identity = loaded.identity;
         self.hidden_props = loaded.hidden_props;
         self.has_checkpoint = true;
@@ -737,48 +748,11 @@ fn read_delta_rows(cur: &mut &[u8], versioned: bool) -> Result<(u32, Vec<DeltaRo
     Ok((pages, rows))
 }
 
-fn interned_prop_ids(
-    joins: &JoinMaps,
-    props: Option<&HashMap<String, String>>,
-) -> Result<Vec<(u32, u32)>, String> {
-    let Some(props) = props else {
-        return Ok(Vec::new());
-    };
-    let mut owned = Vec::with_capacity(props.len());
-    let mut names: Vec<_> = props.keys().cloned().collect();
-    names.sort();
-    for name in names {
-        let prop_id = joins
-            .intern_existing(&name)
-            .ok_or_else(|| "missing intern prop".to_string())?;
-        let value = props
-            .get(&name)
-            .ok_or_else(|| "missing intern value".to_string())?;
-        let value_id = joins
-            .intern_existing(value)
-            .ok_or_else(|| "missing intern value".to_string())?;
-        owned.push((prop_id, value_id));
+fn intern_ns_name(ns: &mut Vec<String>, name: &str) -> Result<u32, String> {
+    if let Some(i) = ns.iter().position(|existing| existing == name) {
+        return Ok(i as u32);
     }
-    Ok(owned)
-}
-
-fn props_from_owned(
-    joins: &JoinMaps,
-    owned: &[(u32, u32)],
-) -> Result<HashMap<String, String>, String> {
-    let mut props = HashMap::with_capacity(owned.len());
-    for &(prop_id, value_id) in owned {
-        let prop = joins
-            .intern
-            .get(prop_id as usize)
-            .ok_or_else(|| "bad intern prop".to_string())?
-            .clone();
-        let value = joins
-            .intern
-            .get(value_id as usize)
-            .ok_or_else(|| "bad intern value".to_string())?
-            .clone();
-        props.insert(prop, value);
-    }
-    Ok(props)
+    let id = u32::try_from(ns.len()).map_err(|_| "too many namespaces".to_string())?;
+    ns.push(name.to_string());
+    Ok(id)
 }

@@ -15,7 +15,7 @@ use super::{ActionCommit, LiveId, SetMember, Store};
 
 type ActionCatalog = HashMap<(String, String), ActionCommit>;
 type SchemaHistory = HashMap<(String, String), Vec<SchemaDescriptor>>;
-type InstanceSchemaVersions = HashMap<LiveId, u32>;
+type InstanceSchemaVersions = HashMap<(String, String, String), u32>;
 type LoadedLogCheckpoint = (
     Checkpoint,
     ActionCatalog,
@@ -95,7 +95,9 @@ impl Store {
         let mut history_keys: Vec<_> = self.schema_history.keys().cloned().collect();
         history_keys.sort();
         for (namespace, kind) in history_keys {
-            schema_live.insert((namespace.clone(), SCHEMA_KIND.to_string(), kind.clone()));
+            if let Some(id) = self.find_live(&namespace, SCHEMA_KIND, &kind) {
+                schema_live.insert(id);
+            }
             let rows = self
                 .schema_history
                 .get(&(namespace.clone(), kind.clone()))
@@ -125,7 +127,11 @@ impl Store {
                     continue;
                 }
             }
-            records.push(self.load_stored(&id.0, &id.1, &id.2, &PropertyAcl::allow_all())?);
+            let (namespace, kind, key) = {
+                let (namespace, kind, key) = self.live_strings(id)?;
+                (namespace.to_string(), kind.to_string(), key.to_string())
+            };
+            records.push(self.load_stored(&namespace, &kind, &key, &PropertyAcl::allow_all())?);
         }
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -196,7 +202,12 @@ impl Store {
                         self.schema_history_from_checkpoint = true;
                     }
                     if let Some(versions) = versions {
-                        raise_instance_schema_versions(&mut self.identity, versions);
+                        raise_instance_schema_versions(
+                            &self.joins,
+                            &self.ns,
+                            &mut self.identity,
+                            versions,
+                        );
                     }
                     self.action_commits_from_log = true;
                     if loaded.pages < pages {
@@ -442,16 +453,19 @@ impl Store {
         let mut rows: Vec<_> = self
             .identity
             .iter()
-            .filter(|(id, meta)| meta.schema_version > 1 && matches_tenant(&id.0, tenant))
-            .map(|(id, meta)| (id.clone(), meta.schema_version))
+            .filter(|(id, meta)| {
+                meta.schema_version > 1 && matches_tenant(self.ns_name(id.0), tenant)
+            })
+            .map(|(id, meta)| (*id, meta.schema_version))
             .collect();
-        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.sort_by_key(|a| a.0);
         let n = u32::try_from(rows.len()).map_err(|_| "too many identities".to_string())?;
         body.extend_from_slice(&n.to_le_bytes());
-        for ((namespace, kind, key), version) in rows {
-            write_str(body, &namespace)?;
-            write_str(body, &kind)?;
-            write_str(body, &key)?;
+        for (id, version) in rows {
+            let (namespace, kind, key) = self.live_strings(id)?;
+            write_str(body, namespace)?;
+            write_str(body, kind)?;
+            write_str(body, key)?;
             body.extend_from_slice(&version.to_le_bytes());
         }
         Ok(())
@@ -497,6 +511,7 @@ fn load_log_checkpoint(path: &Path, writer: &LogWriter) -> Result<LoadedLogCheck
         let mut loaded = Checkpoint {
             pages,
             joins: HashMap::new(),
+            ns: Vec::new(),
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
         };
@@ -523,7 +538,12 @@ fn load_log_checkpoint(path: &Path, writer: &LogWriter) -> Result<LoadedLogCheck
             Some(versions)
         };
         if let Some(versions) = versions.as_ref() {
-            set_instance_schema_versions(&mut loaded.identity, versions.clone());
+            set_instance_schema_versions(
+                &loaded.joins,
+                &loaded.ns,
+                &mut loaded.identity,
+                versions.clone(),
+            );
         }
         return Ok((loaded, actions, history, versions));
     }
@@ -556,8 +576,7 @@ fn merge_checkpoint_body(
         }
         loaded.joins.insert(namespace, maps);
     }
-    loaded.identity.extend(slice.identity);
-    loaded.hidden_props.extend(slice.hidden_props);
+    loaded.merge_live(slice.ns, slice.identity, slice.hidden_props);
     actions.extend(slice_actions);
     if let Some(rows) = slice_history {
         history.extend(rows);
@@ -574,7 +593,7 @@ fn parse_checkpoint_body(body: &[u8]) -> Result<LoadedLogCheckpoint, String> {
     }
     let mut cur = &body[8..];
     let pages = read_u32(&mut cur)?;
-    let (joins, mut identity, hidden_props) = Store::decode_projection_after_magic(&mut cur)?;
+    let (joins, ns, mut identity, hidden_props) = Store::decode_projection_after_magic(&mut cur)?;
     let actions = decode_action_commits(&mut cur)?;
     let history = if cur.is_empty() {
         None
@@ -587,7 +606,7 @@ fn parse_checkpoint_body(body: &[u8]) -> Result<LoadedLogCheckpoint, String> {
         Some(Store::decode_instance_schema_versions(&mut cur)?)
     };
     if let Some(versions) = versions.as_ref() {
-        set_instance_schema_versions(&mut identity, versions.clone());
+        Store::apply_instance_schema_versions(&joins, &ns, &mut identity, versions.clone());
     }
     if !cur.is_empty() {
         return Err("trailing checkpoint bytes".into());
@@ -596,6 +615,7 @@ fn parse_checkpoint_body(body: &[u8]) -> Result<LoadedLogCheckpoint, String> {
         Checkpoint {
             pages,
             joins,
+            ns,
             identity,
             hidden_props,
         },
@@ -613,10 +633,12 @@ impl Store {
     }
 
     pub(super) fn apply_instance_schema_versions(
+        joins: &HashMap<String, JoinMaps>,
+        ns: &[String],
         identity: &mut HashMap<LiveId, LiveMeta>,
         versions: InstanceSchemaVersions,
     ) {
-        set_instance_schema_versions(identity, versions);
+        set_instance_schema_versions(joins, ns, identity, versions);
     }
 }
 
@@ -636,11 +658,32 @@ fn read_instance_schema_versions(cur: &mut &[u8]) -> Result<InstanceSchemaVersio
     Ok(out)
 }
 
+fn resolve_version_id(
+    joins: &HashMap<String, JoinMaps>,
+    ns: &[String],
+    namespace: &str,
+    kind: &str,
+    key: &str,
+) -> Option<LiveId> {
+    let ns_id = ns.iter().position(|name| name == namespace)? as u32;
+    let maps = joins.get(namespace)?;
+    Some((
+        ns_id,
+        maps.intern_existing(kind)?,
+        maps.intern_existing(key)?,
+    ))
+}
+
 fn set_instance_schema_versions(
+    joins: &HashMap<String, JoinMaps>,
+    ns: &[String],
     identity: &mut HashMap<LiveId, LiveMeta>,
     versions: InstanceSchemaVersions,
 ) {
-    for (id, version) in versions {
+    for ((namespace, kind, key), version) in versions {
+        let Some(id) = resolve_version_id(joins, ns, &namespace, &kind, &key) else {
+            continue;
+        };
         if let Some(meta) = identity.get_mut(&id) {
             meta.schema_version = version;
         }
@@ -651,10 +694,15 @@ fn set_instance_schema_versions(
 /// projection is already loaded and may hold later generations; an
 /// instance's schema version only grows, so the higher value is current.
 fn raise_instance_schema_versions(
+    joins: &HashMap<String, JoinMaps>,
+    ns: &[String],
     identity: &mut HashMap<LiveId, LiveMeta>,
     versions: InstanceSchemaVersions,
 ) {
-    for (id, version) in versions {
+    for ((namespace, kind, key), version) in versions {
+        let Some(id) = resolve_version_id(joins, ns, &namespace, &kind, &key) else {
+            continue;
+        };
         if let Some(meta) = identity.get_mut(&id) {
             meta.schema_version = meta.schema_version.max(version);
         }

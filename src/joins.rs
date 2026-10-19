@@ -1468,6 +1468,34 @@ pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
 pub(crate) struct Checkpoint {
     pub(crate) pages: u32,
     pub(crate) joins: HashMap<String, JoinMaps>,
-    pub(crate) identity: HashMap<(String, String, String), LiveMeta>,
-    pub(crate) hidden_props: HashMap<(String, String, String), HashMap<String, String>>,
+    pub(crate) ns: Vec<String>,
+    pub(crate) identity: HashMap<(u32, u32, u32), LiveMeta>,
+    pub(crate) hidden_props: HashMap<(u32, u32, u32), Vec<(u32, u32)>>,
+}
+
+impl Checkpoint {
+    fn intern_ns(&mut self, name: &str) -> u32 {
+        if let Some(i) = self.ns.iter().position(|existing| existing == name) {
+            return i as u32;
+        }
+        let id = u32::try_from(self.ns.len()).expect("namespace intern fits u32");
+        self.ns.push(name.to_string());
+        id
+    }
+
+    pub(crate) fn merge_live(
+        &mut self,
+        src_ns: Vec<String>,
+        identity: HashMap<(u32, u32, u32), LiveMeta>,
+        hidden_props: HashMap<(u32, u32, u32), Vec<(u32, u32)>>,
+    ) {
+        let remap: Vec<u32> = src_ns.iter().map(|name| self.intern_ns(name)).collect();
+        for ((ns, kind, key), meta) in identity {
+            self.identity.insert((remap[ns as usize], kind, key), meta);
+        }
+        for ((ns, kind, key), owned) in hidden_props {
+            self.hidden_props
+                .insert((remap[ns as usize], kind, key), owned);
+        }
+    }
 }
