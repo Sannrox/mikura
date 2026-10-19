@@ -10,7 +10,7 @@ name = "mikura"
 # - Run `cargo update -w` so Cargo.lock matches.
 # - Move CHANGELOG.md [Unreleased] to the new version, upgrade notes first.
 # - Squash-merge the release PR, then create the "v0.x.y" git tag on it.
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 publish = false
 description = "Object database: durable object log, object-set evaluate, property ACLs, and Action writeback."

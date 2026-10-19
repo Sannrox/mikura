@@ -309,6 +309,68 @@ fn filter_ids(
     Ok(kept)
 }
 
+fn declared_indexes(
+    store: &Store,
+    namespace: &str,
+    kind: &str,
+) -> Result<HashSet<String>, ComputeError> {
+    match store.schema(namespace, kind) {
+        Ok(Some(schema)) => Ok(schema.indexes.iter().cloned().collect()),
+        Ok(None) => Ok(HashSet::new()),
+        Err(err) => Err(ComputeError::Load(err)),
+    }
+}
+
+/// Eq/range/and/or on schema-named indexes. Other operators stay a scan so
+/// undeclared names stay observable.
+fn pred_is_index_tree(pred: &Predicate, indexed: &HashSet<String>) -> bool {
+    match pred {
+        Predicate::Eq { property, .. } | Predicate::Range { property, .. } => {
+            indexed.contains(property.as_str())
+        }
+        Predicate::And(args) | Predicate::Or(args) => {
+            !args.is_empty() && args.iter().all(|arg| pred_is_index_tree(arg, indexed))
+        }
+        _ => false,
+    }
+}
+
+fn index_ids(
+    store: &Store,
+    maps: &JoinMaps,
+    namespace: &str,
+    kind: &str,
+    pred: &Predicate,
+) -> Result<HashSet<u32>, ComputeError> {
+    match pred {
+        Predicate::Eq { property, value } => Ok(maps.matching_root_ids(kind, property, value)),
+        Predicate::Range { property, min, max } => {
+            let ty = property_type(store, namespace, kind, property)?;
+            maps.matching_range_ids(kind, property, ty, min.as_deref(), max.as_deref())
+                .map_err(ComputeError::Predicate)
+        }
+        Predicate::And(args) => {
+            let mut acc: Option<HashSet<u32>> = None;
+            for arg in args {
+                let next = index_ids(store, maps, namespace, kind, arg)?;
+                acc = Some(match acc {
+                    None => next,
+                    Some(cur) => cur.intersection(&next).copied().collect(),
+                });
+            }
+            Ok(acc.unwrap_or_default())
+        }
+        Predicate::Or(args) => {
+            let mut acc = HashSet::new();
+            for arg in args {
+                acc.extend(index_ids(store, maps, namespace, kind, arg)?);
+            }
+            Ok(acc)
+        }
+        _ => filter_ids(store, namespace, kind, maps.visible_ids(kind), pred),
+    }
+}
+
 fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, ComputeError> {
     if request.filter.is_some() && request.predicate.is_some() {
         return Err(ComputeError::Predicate(
@@ -318,6 +380,13 @@ fn root_ids(store: &Store, request: &EvaluateRequest) -> Result<HashSet<u32>, Co
     let maps = store
         .joins(&request.namespace)
         .map_err(ComputeError::Load)?;
+    if let Some(pred) = &request.predicate {
+        let indexed = declared_indexes(store, &request.namespace, &request.root_kind)?;
+        if pred_is_index_tree(pred, &indexed) {
+            let ids = index_ids(store, maps, &request.namespace, &request.root_kind, pred)?;
+            return Ok(visible_in_view(store, request, &request.root_kind, ids));
+        }
+    }
     let ids = if let Some(filter) = &request.filter {
         if store.omits_current_property(&request.namespace, &request.root_kind, &filter.property) {
             HashSet::new()
@@ -384,14 +453,20 @@ fn surviving_paths<'r>(
             frontier_kind = hop.far_kind.as_str();
             continue;
         }
-        for (root, parent) in &paths {
-            for child in maps.hop_targets(
-                frontier_kind,
-                *parent,
-                &hop.far_kind,
-                &hop.join_property,
-                hop.incoming,
-            ) {
+        let pushdown = match &hop.predicate {
+            Some(pred) => {
+                let indexed = declared_indexes(store, &request.namespace, &hop.far_kind)?;
+                pred_is_index_tree(pred, &indexed)
+            }
+            None => false,
+        };
+        if let (Some(pred), true) = (&hop.predicate, pushdown) {
+            let candidates = index_ids(store, maps, &request.namespace, &hop.far_kind, pred)?;
+            let mut by_parent: HashMap<u32, Vec<u32>> = HashMap::new();
+            for &(root, parent) in &paths {
+                by_parent.entry(parent).or_default().push(root);
+            }
+            for child in candidates {
                 if request.acl.hides_objects() {
                     let Some(key) = maps.intern_get(child) else {
                         continue;
@@ -403,12 +478,53 @@ fn surviving_paths<'r>(
                         continue;
                     }
                 }
-                if let Some(pred) = &hop.predicate {
-                    if !matches_predicate(store, &request.namespace, &hop.far_kind, child, pred)? {
-                        continue;
+                for parent in maps.join_parents(
+                    frontier_kind,
+                    &hop.far_kind,
+                    &hop.join_property,
+                    hop.incoming,
+                    child,
+                ) {
+                    if let Some(roots) = by_parent.get(&parent) {
+                        for &root in roots {
+                            next.push((root, child));
+                        }
                     }
                 }
-                next.push((*root, child));
+            }
+        } else {
+            for (root, parent) in &paths {
+                for child in maps.hop_targets(
+                    frontier_kind,
+                    *parent,
+                    &hop.far_kind,
+                    &hop.join_property,
+                    hop.incoming,
+                ) {
+                    if request.acl.hides_objects() {
+                        let Some(key) = maps.intern_get(child) else {
+                            continue;
+                        };
+                        let far = hop.far_kind.as_str();
+                        if !request.acl.object_visible(far, key, |property| {
+                            query_prop(store, maps, &request.namespace, far, key, property)
+                        }) {
+                            continue;
+                        }
+                    }
+                    if let Some(pred) = &hop.predicate {
+                        if !matches_predicate(
+                            store,
+                            &request.namespace,
+                            &hop.far_kind,
+                            child,
+                            pred,
+                        )? {
+                            continue;
+                        }
+                    }
+                    next.push((*root, child));
+                }
             }
         }
         paths = next;

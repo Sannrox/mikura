@@ -2,7 +2,8 @@
 //!
 //! Descriptors persist as ordinary objects of kind [`SCHEMA_KIND`] with key
 //! equal to the described kind. Values stay UTF-8 strings. Optional [`SCHEMA_SUMS`]
-//! names last-hop measure properties. Optional [`SCHEMA_CONFLICT`] selects
+//! names last-hop measure properties. Optional [`SCHEMA_INDEXES`] names
+//! properties evaluate may look up instead of scanning. Optional [`SCHEMA_CONFLICT`] selects
 //! overlay merge strategy. A store with no visible schema row for
 //! a kind accepts unvalidated string records. A later visible descriptor is
 //! a new schema version: additive changes commit as before; recast, rename,
@@ -27,6 +28,10 @@ pub const SCHEMA_LINKS: &str = "links";
 
 /// Comma-separated property names that are last-hop sum measures. Absent means none.
 pub const SCHEMA_SUMS: &str = "sums";
+
+/// Comma-separated property names evaluate may look up as secondary indexes.
+/// Absent means scan. Names must already be in [`SCHEMA_PROPERTIES`].
+pub const SCHEMA_INDEXES: &str = "indexes";
 
 /// Comma-separated `name:type` logical types (`boolean`, `integer`,
 /// `timestamp`, `string`, `decimal:<scale>`, `vector:<dim>`, `tsref`,
@@ -148,6 +153,9 @@ pub struct SchemaDescriptor {
     pub required: Vec<String>,
     pub links: Vec<SchemaLink>,
     pub sums: Vec<String>,
+    /// Declared secondary-index properties. Evaluate may look these up
+    /// instead of scanning. Empty means scan every identity.
+    pub indexes: Vec<String>,
     /// Declared non-default types. Omitted names are [`PropertyType::String`].
     pub types: Vec<(String, PropertyType)>,
     /// Kind-wide overlay merge strategy. `None` is implicit user-wins with no audit row.
@@ -255,6 +263,7 @@ impl SchemaDescriptor {
             required: optional_csv(record, SCHEMA_REQUIRED)?,
             links: parse_links(optional_csv(record, SCHEMA_LINKS)?)?,
             sums: optional_csv(record, SCHEMA_SUMS)?,
+            indexes: optional_csv(record, SCHEMA_INDEXES)?,
             types: parse_types(optional_csv(record, SCHEMA_TYPES)?)?,
             conflict: optional_conflict(record)?,
             conflict_properties: parse_conflict_properties(optional_csv(
@@ -276,6 +285,7 @@ impl SchemaDescriptor {
                 && name != SCHEMA_REQUIRED
                 && name != SCHEMA_LINKS
                 && name != SCHEMA_SUMS
+                && name != SCHEMA_INDEXES
                 && name != SCHEMA_TYPES
                 && name != SCHEMA_CONFLICT
                 && name != SCHEMA_CONFLICT_PROPERTIES
@@ -317,6 +327,9 @@ impl SchemaDescriptor {
         }
         if !self.sums.is_empty() {
             props.insert(SCHEMA_SUMS.to_string(), join_csv(&sorted(&self.sums)));
+        }
+        if !self.indexes.is_empty() {
+            props.insert(SCHEMA_INDEXES.to_string(), join_csv(&sorted(&self.indexes)));
         }
         if !self.types.is_empty() {
             let mut encoded: Vec<String> = self
@@ -471,7 +484,7 @@ impl SchemaDescriptor {
     /// covering migration, or when the version is not previous+1 (ADR 0035).
     ///
     /// Additive optional/required properties, shrinking `required`, new typed
-    /// names, incoming-link and `sums` edits pass without migrate keys.
+    /// names, incoming-link, `sums`, and `indexes` edits pass without migrate keys.
     pub fn check_replacement(&self, next: &Self) -> Result<Self, String> {
         if self.kind != next.kind {
             return Err(format!("schema {} cannot replace {}", next.kind, self.kind));
@@ -697,6 +710,16 @@ impl SchemaDescriptor {
             }
             if !sums.insert(name.as_str()) {
                 return Err(format!("duplicate sum property {name}"));
+            }
+        }
+        let mut indexes = HashSet::new();
+        for name in &self.indexes {
+            token(name, "index")?;
+            if !properties.contains(name.as_str()) {
+                return Err(format!("index property {name} is not declared"));
+            }
+            if !indexes.insert(name.as_str()) {
+                return Err(format!("duplicate index property {name}"));
             }
         }
         let mut types = HashSet::new();
@@ -1103,6 +1126,30 @@ mod tests {
         let err = schema.to_record("ns").unwrap_err();
         assert!(
             err.contains("sum property missing is not declared"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn indexes_roundtrip_and_historical_rows_load() {
+        let mut schema = descriptor();
+        schema.indexes = vec!["name".into()];
+        let record = schema.to_record("ns").unwrap();
+        assert_eq!(
+            record.props.get(SCHEMA_INDEXES).map(String::as_str),
+            Some("name")
+        );
+        assert_eq!(SchemaDescriptor::from_record(&record).unwrap(), schema);
+
+        let mut historical = descriptor().to_record("ns").unwrap();
+        historical.props.remove(SCHEMA_INDEXES);
+        let loaded = SchemaDescriptor::from_record(&historical).unwrap();
+        assert!(loaded.indexes.is_empty());
+
+        schema.indexes = vec!["missing".into()];
+        let err = schema.to_record("ns").unwrap_err();
+        assert!(
+            err.contains("index property missing is not declared"),
             "{err}"
         );
     }
