@@ -319,3 +319,112 @@ fn old_join_sidecar_magic_fails_closed() {
     assert!(recovered.joins(NS).unwrap().is_visible("Customer", "c1"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn isolated_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "mikura-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("objects.mikura");
+    (dir, log)
+}
+
+fn seed_checkpoint(store: &mut Store) -> u32 {
+    for record in generic_records() {
+        store.append_uncommitted(record).unwrap();
+    }
+    store.commit().unwrap();
+    let pages = store.committed_pages();
+    assert_eq!(store.sidecar_stamp_pages(), pages);
+    store.set_sidecar_persist(u32::MAX, std::time::Duration::from_secs(3600));
+    pages
+}
+
+fn append_second_shipment(store: &mut Store) {
+    store
+        .append(rec(
+            "Shipment",
+            "s2",
+            false,
+            &[("order_id", "o1"), ("amount", "5")],
+        ))
+        .unwrap();
+}
+
+/// Log commit is durable even when sidecar persist is skipped. Forget is the
+/// crash: Drop would persist.
+#[test]
+fn kill_between_log_commit_and_sidecar_persist_reopens_from_log() {
+    let (dir, log) = isolated_log("sidecar-crash");
+    let mut store = Store::create(&log).unwrap();
+    let checkpoint_pages = seed_checkpoint(&mut store);
+    append_second_shipment(&mut store);
+    let committed = store.committed_pages();
+    assert!(committed > checkpoint_pages);
+    assert_eq!(store.sidecar_stamp_pages(), checkpoint_pages);
+    assert!(
+        !Store::join_delta_path(&log).exists(),
+        "sidecar must lag the log until persist"
+    );
+    std::mem::forget(store);
+
+    let reopened = Store::open(&log).unwrap();
+    let oss = ObjectSet::new(LocalCompute);
+    let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 15);
+    drop(reopened);
+
+    std::fs::remove_file(Store::join_map_path(&log)).unwrap();
+    let _ = std::fs::remove_file(Store::join_delta_path(&log));
+    let replayed = Store::open(&log).unwrap();
+    let from_log = oss.evaluate(&replayed, &fixture_request()).unwrap();
+    assert_eq!(from_log.two_hop_count, 1);
+    assert_eq!(from_log.sum_amount, 15);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deferred_sidecar_persist_runs_on_close() {
+    let (dir, log) = isolated_log("sidecar-close");
+    let mut store = Store::create(&log).unwrap();
+    let checkpoint_pages = seed_checkpoint(&mut store);
+    append_second_shipment(&mut store);
+    assert_eq!(store.sidecar_stamp_pages(), checkpoint_pages);
+    assert!(!Store::join_delta_path(&log).exists());
+    drop(store);
+    assert!(
+        Store::join_delta_path(&log).is_file(),
+        "close must persist the lagging dirty set"
+    );
+
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(reopened.sidecar_stamp_pages(), reopened.committed_pages());
+    let oss = ObjectSet::new(LocalCompute);
+    let response = oss.evaluate(&reopened, &fixture_request()).unwrap();
+    assert_eq!(response.two_hop_count, 1);
+    assert_eq!(response.sum_amount, 15);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sidecar_persist_after_n_commits() {
+    let (dir, log) = isolated_log("sidecar-n-commits");
+    let mut store = Store::create(&log).unwrap();
+    let checkpoint_pages = seed_checkpoint(&mut store);
+    store.set_sidecar_persist(2, std::time::Duration::from_secs(3600));
+    append_second_shipment(&mut store);
+    assert_eq!(store.sidecar_stamp_pages(), checkpoint_pages);
+    assert!(!Store::join_delta_path(&log).exists());
+    store
+        .append(rec("Customer", "c2", false, &[("region", "eu")]))
+        .unwrap();
+    assert!(Store::join_delta_path(&log).is_file());
+    assert_eq!(store.sidecar_stamp_pages(), store.committed_pages());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::acl::PropertyAcl;
 use crate::actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
@@ -24,6 +25,13 @@ pub use history::{AsOf, ObjectVersion, VersionOrigin};
 /// file exceeds this many bytes. Compact still also runs when there is no
 /// checkpoint or dirty rows exceed a quarter of identity.
 pub const JOIN_DELTA_COMPACT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Persist the join sidecar after this many log commits when it is already
+/// present. The log stays authority; a lagging sidecar is caught up on open.
+const SIDECAR_PERSIST_COMMITS: u32 = 32;
+
+/// Persist the join sidecar at least this often while commits keep landing.
+const SIDECAR_PERSIST_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Reserved kind for the last committed offset of a named `StreamApply` source.
 pub const SOURCE_KIND: &str = "mikura.source";
@@ -115,6 +123,13 @@ pub struct Store {
     delta_compact_bytes: u64,
     sidecar_checkpoint_stamp: u32,
     sidecar_delta_stamp: Option<u32>,
+    sidecar_commits_since_persist: u32,
+    sidecar_last_persist: Instant,
+    sidecar_persist_commits: u32,
+    sidecar_persist_interval: Duration,
+    /// False until create/open finishes so a failed open cannot persist an
+    /// empty checkpoint over a live log.
+    ready: bool,
     action_commits: HashMap<(String, String), ActionCommit>,
     action_commits_from_log: bool,
     /// Visible schema rows by (namespace, kind), oldest version first.
@@ -177,7 +192,9 @@ impl Store {
         let _ = std::fs::remove_file(Self::checkpoint_path(log));
         let _ = std::fs::remove_file(Self::checkpoint_prev_path(log));
         let _ = std::fs::remove_file(Self::checkpoint_tmp_path(log));
-        Ok(Self::empty(log.to_path_buf(), writer))
+        let mut store = Self::empty(log.to_path_buf(), writer);
+        store.ready = true;
+        Ok(store)
     }
 
     /// Explicit log-format step for a pre-namespace `MIKURAV1` log (ADR 0030).
@@ -284,6 +301,7 @@ impl Store {
         store.install_projection()?;
         store.drop_revoked_tenants();
         store.ensure_schema_history()?;
+        store.ready = true;
         Ok(store)
     }
 
@@ -328,7 +346,7 @@ impl Store {
     }
 
     fn empty(log: PathBuf, writer: LogWriter) -> Self {
-        Self {
+        let mut store = Self {
             log,
             writer,
             identity: HashMap::new(),
@@ -340,11 +358,21 @@ impl Store {
             delta_compact_bytes: JOIN_DELTA_COMPACT_BYTES,
             sidecar_checkpoint_stamp: 0,
             sidecar_delta_stamp: None,
+            sidecar_commits_since_persist: 0,
+            sidecar_last_persist: Instant::now(),
+            sidecar_persist_commits: SIDECAR_PERSIST_COMMITS,
+            sidecar_persist_interval: SIDECAR_PERSIST_INTERVAL,
+            ready: false,
             action_commits: HashMap::new(),
             action_commits_from_log: true,
             schema_history: HashMap::new(),
             schema_history_from_checkpoint: false,
+        };
+        if cfg!(test) {
+            store.sidecar_persist_commits = 1;
+            store.sidecar_persist_interval = Duration::ZERO;
         }
+        store
     }
 
     /// Use a tiny compact bound in tests so a few dirty-set frames can exceed
@@ -352,6 +380,14 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn set_join_delta_compact_bytes(&mut self, bytes: u64) {
         self.delta_compact_bytes = bytes;
+    }
+
+    /// Defer or force sidecar persist in tests. `u32::MAX` plus a long
+    /// interval leaves the sidecar stale until close.
+    #[cfg(test)]
+    pub(crate) fn set_sidecar_persist(&mut self, commits: u32, interval: Duration) {
+        self.sidecar_persist_commits = commits;
+        self.sidecar_persist_interval = interval;
     }
 
     fn install_live(&mut self, id: LiveId, meta: LiveMeta, props: HashMap<String, String>) {
@@ -1088,10 +1124,13 @@ impl Store {
         Ok(())
     }
 
-    /// Group-commit the current writer pages and persist the sidecar.
+    /// Group-commit the current writer pages. The join sidecar is persisted
+    /// every 32 commits, every 100 ms, on close, or when no sidecar exists yet.
+    /// The log stays authority; a stale sidecar is caught up on open.
     pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
-        self.persist_projection()
+        self.sidecar_commits_since_persist = self.sidecar_commits_since_persist.saturating_add(1);
+        self.maybe_persist_projection(false)
     }
 
     /// While held, sealed pages do not advance the superblock. Stream apply
@@ -1122,7 +1161,8 @@ impl Store {
     /// A rollback that itself fails has the same effect, so a half-rebuilt
     /// projection is never committed as a checkpoint.
     ///
-    /// Once the log commit succeeded the batch is durable. A failure to
+    /// Once the log commit succeeded the batch is durable. Sidecar persist
+    /// may wait for later commits, an interval, or close. A failure to
     /// persist the derived sidecar after that is reported as such and must not
     /// be retried as a failed batch; the next open rebuilds the sidecar.
     pub fn append_batch(&mut self, records: Vec<ObjectRecord>) -> Result<(), String> {
@@ -1158,7 +1198,8 @@ impl Store {
                 }
             });
         }
-        self.persist_projection().map_err(|error| {
+        self.sidecar_commits_since_persist = self.sidecar_commits_since_persist.saturating_add(1);
+        self.maybe_persist_projection(false).map_err(|error| {
             format!("committed to the log; projection sidecar not persisted: {error}")
         })
     }
@@ -1180,6 +1221,8 @@ impl Store {
         self.install_projection()?;
         self.drop_revoked_tenants();
         self.ensure_schema_history()?;
+        self.sidecar_commits_since_persist = 0;
+        self.sidecar_last_persist = Instant::now();
         Ok(())
     }
 
@@ -2060,6 +2103,15 @@ impl Store {
         } else {
             Err(format!("unknown namespace {namespace}"))
         }
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        if std::thread::panicking() || self.writer.is_failed() || !self.ready {
+            return;
+        }
+        let _ = self.maybe_persist_projection(true);
     }
 }
 

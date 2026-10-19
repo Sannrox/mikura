@@ -8,6 +8,13 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
+### Changed
+
+- `Store::commit` flushes the object log on every call and persists the
+  join sidecar every 32 commits, every 100 ms, or on close. A crash
+  between log commit and sidecar persist still reopens from the log
+  ([#256](https://github.com/Sannrox/mikura/issues/256)).
+
 ### Added
 
 - Object logs encrypt at rest with caller-supplied keys (`Store::create_with_keys` / `open_with_keys`, `Host::open_with_keys`). Encrypted logs write `MIKURAV3`. Per-tenant DEKs wrap through `sekai-keys`; a revoked tenant is omitted from the projection and its writes are refused. Backup copies the superblock catalog. Compaction mints new DEKs ([#282](https://github.com/Sannrox/mikura/issues/282), [ADR 0044](docs/decisions/0044-log-encryption.md)).
