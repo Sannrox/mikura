@@ -35,3 +35,9 @@ mikura-ingest = { path = "crates/mikura-ingest" }
 
 [lib]
 path = "src/lib.rs"
+
+# Dependencies build without debug info in dev and test builds: backtraces
+# and debuggers keep full detail for workspace crates, and build directories
+# stay a fraction of the size.
+[profile.dev.package."*"]
+debug = false
