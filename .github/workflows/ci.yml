@@ -9,6 +9,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 
+# A new push to a pull request cancels its previous run; other events run
+# every commit. The workflow name keeps workflows from cancelling each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rustfmt:
     name: Rustfmt
