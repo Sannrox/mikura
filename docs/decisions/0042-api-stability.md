@@ -72,8 +72,8 @@ The 1.0 crate cut itself is a later authorized release, not this record.
 
 ## Validation
 
-- `tests/stability.rs` compiles the listed types and checks that a new
-  log writes `LOG_FORMAT`.
+- `crates/mikura-ingest/tests/stability.rs` compiles the listed types and
+  checks that a new log writes `LOG_FORMAT`.
 - The Semver CI job runs on pull requests.
 - The Release workflow creates a GitHub Release from CHANGELOG for a `v*`
   tag. It must not invoke `cargo publish`.

@@ -32,7 +32,8 @@ tracked. Do not treat that directory as gitignored.
 | `src/actions.rs` | Action writeback → new generation |
 | `src/compute.rs` | `LocalCompute`; `SparkCompute` fails closed |
 | `crates/mikura-ingest/examples/` | Runnable examples (`quickstart`) |
-| `tests/integration.rs` | Public-API integration suite (`mikura` + `mikura-ingest`) |
+| `crates/mikura-ingest/tests/integration.rs` | Public-API integration suite (`mikura` + `mikura-ingest`) |
+| `crates/mikura-ingest/tests/stability.rs` | 1.0 surface compile-lock |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs, plans |
 | `scripts/` | `gh-verified-push.sh` for GitHub-signed PR tips |
@@ -65,7 +66,7 @@ configuration in this repo.
 
 ## Independence
 
-- Do not add a control-plane crate as a dependency. `mikura-ingest` depends on `mikura` only.
+- Do not add a control-plane crate as a dependency. `mikura-ingest` depends on `mikura` only. `mikura` does not depend on ingest, including as a dev-dependency.
 - Do not vendor this tree into another product.
 - Do not use SQL or `sekai --db` as the object log.
 - A consumer may later depend on a published mikura tag. That cutover is not
@@ -107,7 +108,8 @@ to edition 2024 without renaming `gen`.
 
 Add focused deterministic tests. **Unit / crate tests** sit next to the
 changed module or in `src/crate_tests/`. The named **integration** suite
-is `tests/integration.rs` (`cargo test --test integration --locked`); it
+is `crates/mikura-ingest/tests/integration.rs`
+(`cargo test -p mikura-ingest --test integration --locked`); it
 uses only public APIs of `mikura` and `mikura-ingest` and is the
 public/multi-component check. Temp directories for logs. No network,
 Postgres, or Spark in the default suite. Host-process **e2e** is

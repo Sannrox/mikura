@@ -52,11 +52,12 @@ The default suite has three layers. All stay offline and fail closed.
 - **Unit / crate tests** live next to the changed module, in
   `src/crate_tests/`, or in a crate's `src/tests.rs`. They may use
   crate-private helpers.
-- **Integration** is the named public-API suite in `tests/integration.rs`.
-  Run it with `cargo test --test integration --locked`, or as part of
-  `cargo test --workspace --locked`. It covers write → log → projection →
-  evaluate → reopen through `mikura` and `mikura-ingest` only. It does not
-  spawn `mikura-host`.
+- **Integration** is the named public-API suite in
+  `crates/mikura-ingest/tests/integration.rs`.
+  Run it with `cargo test -p mikura-ingest --test integration --locked`,
+  or as part of `cargo test --workspace --locked`. It covers write → log →
+  projection → evaluate → reopen through `mikura` and `mikura-ingest` only.
+  It does not spawn `mikura-host`.
 - **e2e** is the named host-process suite in
   `crates/mikura-host/tests/e2e.rs`. Run it with
   `cargo test -p mikura-host --test e2e --locked`, or as part of

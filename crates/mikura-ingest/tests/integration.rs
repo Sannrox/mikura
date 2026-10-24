@@ -1,7 +1,8 @@
 //! Public-API integration suite for `mikura` and `mikura-ingest`.
 //!
-//! Run with `cargo test --test integration --locked`. Also included in
-//! `cargo test --workspace --locked`. These tests do not spawn `mikura-host`.
+//! Run with `cargo test -p mikura-ingest --test integration --locked`.
+//! Also included in `cargo test --workspace --locked`. These tests do not
+//! spawn `mikura-host`.
 
 use mikura::{
     AclError, Action, Aggregate, ComputeError, ConflictStrategy, EvaluateRequest, ExactMatch, Hop,

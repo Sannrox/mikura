@@ -23,6 +23,24 @@ git-describe image; `./build/release.sh` pushes that tag. There is no
 compose stack and no cluster compute in that wrap. The destination object-set is filter, load, hop, and aggregate;
 today evaluate is hop + count/sum + optional bounded objects, with a composed predicate tree on the current kind and optional snapshot pages (ADR 0015).
 
+## Crate graph
+
+Dependents sit above what they use:
+
+```
+mikura-host  →  mikura-ingest  →  mikura
+```
+
+`mikura` owns the object log, live maps, schema, overlay, ACL, backup, and
+evaluate. Those modules change together and share the interned identity
+types, so they stay one crate. Encryption (`aes-gcm`, `sekai-keys`) lives
+here because `LogWriter` and the sidecar call it. `mikura-ingest` is the
+write orchestrator and depends on `mikura` only. `mikura-host` speaks JSON
+lines and wires `Store` plus ingest. Public-API integration and the 1.0
+surface lock live on `mikura-ingest`, so a `mikura` test build does not
+compile ingest. Split log, store, joins, or evaluate into another crate
+only after a measured incremental compile miss; they are one subsystem.
+
 ## Object model
 
 `ObjectRecord` is the unit of identity:
