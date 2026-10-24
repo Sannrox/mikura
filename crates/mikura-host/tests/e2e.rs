@@ -1,7 +1,8 @@
 //! Host-process e2e suite. Spawns `mikura-host`; not same-thread `serve_one`.
 //!
 //! Run with `cargo test -p mikura-host --test e2e --locked`. Also included in
-//! `cargo test --workspace --locked`. Distinct from `tests/integration.rs`.
+//! `cargo test --workspace --locked`. Distinct from
+//! `crates/mikura-ingest/tests/integration.rs`.
 
 use mikura::{
     Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,

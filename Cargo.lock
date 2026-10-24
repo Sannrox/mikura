@@ -155,7 +155,6 @@ version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "crc32fast",
- "mikura-ingest",
  "rand",
  "sekai-keys",
  "serde",

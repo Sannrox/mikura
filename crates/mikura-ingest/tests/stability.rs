@@ -1,5 +1,7 @@
 //! Compile-lock and on-disk check for the listed 1.0 surface
 //! (`docs/plans/1.0-surface.md`, ADR 0042).
+//!
+//! Run with `cargo test -p mikura-ingest --test stability --locked`.
 use std::collections::HashMap;
 use std::io::Read;
 

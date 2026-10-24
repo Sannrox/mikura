@@ -23,15 +23,12 @@ categories = ["database-implementations"]
 
 [dependencies]
 crc32fast = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 # Git pin until sekai-keys is on crates.io.
 sekai-keys = { git = "https://github.com/Sannrox/sekai-chisei.git", rev = "1b2e12789a2b360759a087252367cf4bc633caf0" }
-aes-gcm = "0.10"
-rand = { version = "0.8", features = ["std"] }
-
-[dev-dependencies]
-mikura-ingest = { path = "crates/mikura-ingest" }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 
 [lib]
 path = "src/lib.rs"

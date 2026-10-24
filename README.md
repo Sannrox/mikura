@@ -109,7 +109,7 @@ cursor binds the restriction, query, and live writer stamp.
 src/                      mikura library (log, store, evaluate)
 crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append / ordered apply)
 crates/mikura-host/       ingest/evaluate/load host, process binary, product-loop example
-tests/integration.rs      public-API integration suite (unit tests stay in-crate)
+crates/mikura-ingest/tests/integration.rs  public-API integration suite (unit tests stay in-crate)
 crates/mikura-host/tests/e2e.rs  host-process e2e suite
 docs/                     architecture, glossary, ADRs, plans
 spikes/              historical measurements; not the store
