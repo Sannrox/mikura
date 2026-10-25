@@ -893,6 +893,29 @@ impl JoinMaps {
             .unwrap_or(false)
     }
 
+    /// Parent keys a declared last-hop table for `leaf_kind`.`sum_property`
+    /// would hold (one entry per join-property value that is also a visible
+    /// identity). Used by the tuning advisor's memory estimate.
+    pub(crate) fn measure_cache_parents(&self, leaf_kind: &str, sum_property: &str) -> u64 {
+        let Some(&kind_id) = self.intern_ix.get(leaf_kind) else {
+            return 0;
+        };
+        let sum_id = self.intern_ix.get(sum_property).copied();
+        let mut n = 0u64;
+        for ((kind, join_id), by_val) in &self.by_prop {
+            if *kind != kind_id || sum_id == Some(*join_id) {
+                continue;
+            }
+            for (parent_id, children) in by_val {
+                if children.is_empty() || !self.key_is_visible(*parent_id) {
+                    continue;
+                }
+                n = n.saturating_add(1);
+            }
+        }
+        n
+    }
+
     fn sum_ids(&self, leaf_kind: &str, sum_property: &str) -> Option<(u32, u32)> {
         Some((
             *self.intern_ix.get(leaf_kind)?,

@@ -6,18 +6,19 @@ use std::collections::HashMap;
 use std::io::Read;
 
 use mikura::{
-    backup, AclError, Action, Aggregate, AsOf, Breakdown, ChangeSet, ComputeError, ConflictAudit,
-    ConflictPlan, ConflictStrategy, Edit, EvaluateRequest, EvaluateResponse, ExactMatch, Group,
-    Hop, JoinMaps, LocalCompute, ObjectRecord, ObjectSet, ObjectVersion, OverlayPatch, Predicate,
-    PropertyAcl, PropertyType, PropertyValue, SchemaDescriptor, SchemaLink, SchemaMigration, Sort,
-    SparkCompute, Store, VersionOrigin, CHANGE_SET_BOUND, CHANGE_SET_KIND, CHECKPOINT_FORMAT,
-    HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND, JOIN_DELTA_COMPACT_BYTES, JOIN_DELTA_FORMAT,
-    JOIN_DELTA_FORMAT_V5, JOIN_FORMAT, JOIN_FORMAT_V5, LOG_FORMAT, MAX_GROUPS, OVERLAY_AT,
-    OVERLAY_CLEARED, OVERLAY_CONFLICT, OVERLAY_KIND, OVERLAY_LOST_PREFIX, SCHEMA_CONFLICT,
-    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS,
-    SCHEMA_MIGRATE_CAST, SCHEMA_MIGRATE_DROP, SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET,
-    SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION, SOURCE_KIND,
-    SOURCE_OFFSET,
+    backup, AclError, Action, Aggregate, AppliedChange, AsOf, Breakdown, ChangeSet, ComputeError,
+    ConflictAudit, ConflictPlan, ConflictStrategy, Edit, EvaluateRequest, EvaluateResponse,
+    ExactMatch, Group, Hop, JoinMaps, LocalCompute, MemoryBudget, ObjectRecord, ObjectSet,
+    ObjectVersion, OverlayPatch, Predicate, PropertyAcl, PropertyType, PropertyValue, QueryCost,
+    QueryRecorder, QuerySample, QueryShape, SchemaDescriptor, SchemaLink, SchemaMigration, Sort,
+    SparkCompute, Store, Suggestion, SuggestionKind, VersionOrigin, CHANGE_SET_BOUND,
+    CHANGE_SET_KIND, CHECKPOINT_FORMAT, DENORMALIZE_BYTES, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND,
+    JOIN_DELTA_COMPACT_BYTES, JOIN_DELTA_FORMAT, JOIN_DELTA_FORMAT_V5, JOIN_FORMAT, JOIN_FORMAT_V5,
+    LOG_FORMAT, MAX_GROUPS, MEASURE_CACHE_BYTES, OVERLAY_AT, OVERLAY_CLEARED, OVERLAY_CONFLICT,
+    OVERLAY_KIND, OVERLAY_LOST_PREFIX, SCHEMA_CONFLICT, SCHEMA_CONFLICT_PROPERTIES,
+    SCHEMA_CONFLICT_TIME, SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_MIGRATE_CAST,
+    SCHEMA_MIGRATE_DROP, SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET, SCHEMA_PROPERTIES,
+    SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION, SOURCE_KIND, SOURCE_OFFSET,
 };
 use mikura_ingest::{
     snapshot_changelog, ApplyStatus, BatchIngest, ChangelogIngest, MergeIngest, StreamApply,
@@ -58,6 +59,14 @@ fn listed_mikura_types_are_public() {
     let _ = std::any::type_name::<PropertyType>();
     let _ = std::any::type_name::<PropertyValue>();
     let _ = std::any::type_name::<JoinMaps>();
+    let _ = std::any::type_name::<QueryRecorder>();
+    let _ = std::any::type_name::<QueryShape>();
+    let _ = std::any::type_name::<QueryCost>();
+    let _ = std::any::type_name::<QuerySample>();
+    let _ = std::any::type_name::<Suggestion>();
+    let _ = std::any::type_name::<SuggestionKind>();
+    let _ = std::any::type_name::<MemoryBudget>();
+    let _ = std::any::type_name::<AppliedChange>();
     let _ = std::any::type_name::<backup::RestorePoint>();
     let _ = std::any::type_name::<backup::VerifyReport>();
     let _ = (
@@ -69,6 +78,25 @@ fn listed_mikura_types_are_public() {
         backup::restore_point_at
             as fn(&std::path::Path, u32) -> Result<backup::RestorePoint, String>,
         mikura::tenant_namespace as fn(&str, &str) -> Result<String, String>,
+        mikura::inspect_cost as fn(&Store, &EvaluateRequest) -> Result<QueryCost, String>,
+        mikura::suggest as fn(&Store, &QueryRecorder) -> Result<Vec<Suggestion>, String>,
+        mikura::apply as fn(&mut Store, &Suggestion) -> Result<(), String>,
+        mikura::rollback as fn(&mut Store, &Suggestion) -> Result<(), String>,
+        mikura::apply_measured
+            as fn(
+                &mut Store,
+                &ObjectSet<LocalCompute>,
+                &Suggestion,
+                &EvaluateRequest,
+            ) -> Result<AppliedChange, ComputeError>,
+        mikura::auto_apply
+            as fn(
+                &mut Store,
+                &ObjectSet<LocalCompute>,
+                &QueryRecorder,
+                &[Suggestion],
+                MemoryBudget,
+            ) -> Result<Vec<AppliedChange>, ComputeError>,
         MAX_GROUPS,
         CHANGE_SET_BOUND,
         CHANGE_SET_KIND,
@@ -97,6 +125,8 @@ fn listed_mikura_types_are_public() {
         SCHEMA_VERSION,
         SOURCE_KIND,
         SOURCE_OFFSET,
+        MEASURE_CACHE_BYTES,
+        DENORMALIZE_BYTES,
         LOG_FORMAT,
         JOIN_FORMAT,
         JOIN_FORMAT_V5,
