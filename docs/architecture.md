@@ -31,9 +31,9 @@ Dependents sit above what they use:
 mikura-host  →  mikura-ingest  →  mikura
 ```
 
-`mikura` owns the object log, live maps, schema, overlay, ACL, backup, and
-evaluate. Those modules change together and share the interned identity
-types, so they stay one crate. Encryption (`aes-gcm`, `sekai-keys`) lives
+`mikura` owns the object log, live maps, schema, overlay, ACL, backup,
+evaluate, and the query-tuning advisor. Those modules change together
+and share the interned identity types, so they stay one crate. Encryption (`aes-gcm`, `sekai-keys`) lives
 here because `LogWriter` and the sidecar call it. `mikura-ingest` is the
 write orchestrator and depends on `mikura` only. `mikura-host` speaks JSON
 lines and wires `Store` plus ingest. Public-API integration and the 1.0
@@ -346,6 +346,18 @@ Before that, it checks `request.acl` on `(sum_kind, sum_property)` and, when
 a filter or predicate is present, on every predicate property of that kind,
 and on a sort property of the result kind. Denied predicate or sort
 properties fail closed. Denied properties on returned objects are omitted.
+
+A clerk may record those evaluates with `QueryRecorder`
+and call `suggest` for catalog changes: add or drop schema `indexes`,
+declare or drop schema `sums`, or a reviewable denormalized hop copy
+([ADR 0045](decisions/0045-self-tuning-store.md),
+[#264](https://github.com/Sannrox/mikura/issues/264)). Apply appends a new
+schema generation. Auto-apply stays inside a memory budget; denormalize
+is clerk-applied because it rewrites instance properties. Probe evaluate
+before and after; add-index and cache-measure roll back when the probe
+still scans or still misses the cache. Declaring an index costs no extra
+projection bytes (`by_prop` already exists). Declaring `sums` charges
+each parent-rollup entry 16 bytes.
 
 `Aggregate` is `CountAndSum`. An optional `Breakdown` groups surviving
 roots by up to two root properties and reports per group count, sum,

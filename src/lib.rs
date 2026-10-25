@@ -23,6 +23,8 @@
 //! migration ([`Store::load_at_schema`] names an earlier version).
 //! Optional `sums` on that descriptor persist last-hop parent rollups.
 //! Optional `indexes` name properties evaluate may look up instead of scanning.
+//! [`QueryRecorder`] records evaluate shapes; [`suggest`] proposes index,
+//! measure-cache, and denormalized-link changes (ADR 0045).
 //! Optional `types` declare boolean, integer, timestamp, decimal, vector,
 //! time-series, geo, and media values stored as canonical UTF-8 in `props`
 //! ([`PropertyType`]).
@@ -51,6 +53,7 @@ mod overlay;
 mod page;
 mod schema;
 mod store;
+mod tuning;
 mod value;
 
 /// Superblock magic this crate writes and opens for plaintext logs (`MIKURAV2`).
@@ -93,6 +96,11 @@ pub use schema::{
 pub use store::{
     tenant_namespace, AsOf, ObjectRecord, ObjectVersion, Store, VersionOrigin,
     JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
+};
+pub use tuning::{
+    apply, apply_measured, auto_apply, inspect_cost, rollback, suggest, AppliedChange,
+    MemoryBudget, QueryCost, QueryRecorder, QuerySample, QueryShape, Suggestion, SuggestionKind,
+    DENORMALIZE_BYTES, MEASURE_CACHE_BYTES,
 };
 pub use value::{PropertyType, PropertyValue, VECTOR_DIM_MAX};
 
