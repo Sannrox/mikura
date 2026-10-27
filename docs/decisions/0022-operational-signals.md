@@ -1,4 +1,4 @@
-# ADR 0022: Operational signals for the accepted workload
+# ADR 0022: Host JSON health; process-local RPC counts
 
 - Status: accepted
 - Date: 2026-09-20

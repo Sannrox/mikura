@@ -1,4 +1,4 @@
-# ADR 0040: Concurrent host readers with a single writer
+# ADR 0040: Concurrent snapshot readers; exclusive writer; namespace fair share
 
 - Status: accepted
 - Date: 2026-10-16

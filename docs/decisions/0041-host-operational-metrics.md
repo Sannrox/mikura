@@ -1,4 +1,4 @@
-# ADR 0041: Host operational metrics
+# ADR 0041: Prometheus metrics scrape; health stays the process-serving signal
 
 - Status: accepted
 - Date: 2026-10-16

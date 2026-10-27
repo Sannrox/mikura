@@ -1,4 +1,4 @@
-# ADR 0023: Retain one-process availability
+# ADR 0023: Retain one-process availability; no replication without a published miss (amended by #244)
 
 - Status: accepted
 - Date: 2026-09-20

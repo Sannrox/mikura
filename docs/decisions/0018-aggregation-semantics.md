@@ -1,4 +1,4 @@
-# ADR 0018: Aggregation semantics for the expanded workflow
+# ADR 0018: Count+sum only; no extra aggregate without a fixture
 
 - Status: accepted
 - Date: 2026-09-20

@@ -1,4 +1,4 @@
-# ADR 0044: Object log encryption at rest
+# ADR 0044: Object log encryption at rest (`MIKURAV3`)
 
 - Status: accepted
 - Date: 2026-10-18

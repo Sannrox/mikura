@@ -1,4 +1,4 @@
-# ADR 0004: Slim interned join maps
+# ADR 0004: Slim interned join maps (now `MKJOIN04` via 0010)
 
 - Status: accepted
 - Date: 2026-09-16
