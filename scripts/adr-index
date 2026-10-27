@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Generate the decision record index in docs/decisions/README.md.
+
+Each row comes from one record: the number from the file name, the title from
+the `# ADR NNNN: Title` heading, and the status from the `- Status:` header
+line, with links to other records shortened to their number. The table lives
+between the adr-index markers; prose outside them is hand-written.
+
+    scripts/adr-index          rewrite the index
+    scripts/adr-index --check  exit 1 with a diff when the index is stale
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DECISIONS = ROOT / "docs" / "decisions"
+README = DECISIONS / "README.md"
+START = "<!-- adr-index:start -->"
+END = "<!-- adr-index:end -->"
+
+RECORD = re.compile(r"^(\d{4})-.+\.md$")
+TITLE = re.compile(r"^# ADR (\d{4}): (.+)$")
+STATUS = re.compile(r"^- Status: (.+)$")
+RECORD_LINK = re.compile(r"\[[^\]]*\]\((\d{4})-[^)]*\.md\)")
+
+
+def row(path: Path) -> str:
+    number = RECORD.match(path.name)[1]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    title = TITLE.match(lines[0]) if lines else None
+    if not title or title[1] != number:
+        raise SystemExit(f"{path.name}: first line must be '# ADR {number}: Title'")
+    status = next((m for line in lines if (m := STATUS.match(line))), None)
+    if not status:
+        raise SystemExit(f"{path.name}: missing '- Status:' header line")
+    cells = [title[2], RECORD_LINK.sub(r"\1", status[1])]
+    if any("|" in cell for cell in cells):
+        raise SystemExit(f"{path.name}: title or status contains '|'")
+    return f"| [{number}]({path.name}) | {cells[0]} | {cells[1]} |"
+
+
+def render(readme: str) -> str:
+    head, start, rest = readme.partition(START + "\n")
+    _, end, tail = rest.partition(END)
+    if not start or not end:
+        raise SystemExit(f"{README.name}: missing {START} / {END} markers")
+    # 0000-template.md is the template, not a record.
+    records = sorted(
+        p for p in DECISIONS.iterdir() if RECORD.match(p.name) and not p.name.startswith("0000-")
+    )
+    table = ["| ADR | Title | Status |", "| --- | --- | --- |"]
+    table += [row(p) for p in records]
+    return head + start + "\n".join(table) + "\n" + end + tail
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--check", action="store_true", help="fail when the index is stale")
+    args = parser.parse_args()
+
+    current = README.read_text(encoding="utf-8")
+    generated = render(current)
+    if generated == current:
+        return 0
+    if args.check:
+        sys.stdout.writelines(
+            difflib.unified_diff(
+                current.splitlines(keepends=True),
+                generated.splitlines(keepends=True),
+                "docs/decisions/README.md",
+                "docs/decisions/README.md (generated)",
+            )
+        )
+        print("decision index is stale; run scripts/adr-index", file=sys.stderr)
+        return 1
+    README.write_text(generated, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

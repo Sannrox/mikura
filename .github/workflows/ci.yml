@@ -25,6 +25,8 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+      - name: Decision index is current
+        run: python3 scripts/adr-index --check
 
   clippy:
     name: Clippy

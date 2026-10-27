@@ -1,4 +1,4 @@
-# ADR 0019: Overlay retry and mutation boundaries
+# ADR 0019: Overlay Action-id replay; no multi-object atomic edit
 
 - Status: accepted
 - Date: 2026-09-20

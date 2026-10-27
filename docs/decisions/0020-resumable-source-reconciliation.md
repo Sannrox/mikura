@@ -1,4 +1,4 @@
-# ADR 0020: Resumable source reconciliation
+# ADR 0020: Clerk-owned source offsets; changelog/stream replay
 
 - Status: accepted
 - Date: 2026-09-20

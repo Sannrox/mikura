@@ -1,4 +1,4 @@
-# ADR 0027: A new overlay keeps rematerializing the instance
+# ADR 0027: A new overlay keeps rematerializing the instance; no patch-only path without a measured miss
 
 - Status: accepted
 - Date: 2026-09-21

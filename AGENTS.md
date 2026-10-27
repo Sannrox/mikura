@@ -82,7 +82,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 | --- | --- |
 | `verify-change` | After implementation. Gates: fmt-check, `cargo test --workspace --locked`, clippy `-D warnings`, `cargo run -p mikura-ingest --example quickstart` when examples or the public API changed. |
 | `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
-| `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, update `docs/decisions/README.md`. |
+| `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, run `scripts/adr-index` (never edit the index by hand). |
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
 | `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |

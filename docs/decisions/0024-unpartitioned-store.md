@@ -1,4 +1,4 @@
-# ADR 0024: Retain one unpartitioned store
+# ADR 0024: Retain one unpartitioned store; no split without a published capacity miss
 
 - Status: accepted
 - Date: 2026-09-20

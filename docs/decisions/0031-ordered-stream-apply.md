@@ -1,4 +1,4 @@
-# ADR 0031: Ordered streaming apply with a source offset cursor
+# ADR 0031: Ordered stream apply; last committed offset on the log
 
 - Status: accepted
 - Date: 2026-10-11

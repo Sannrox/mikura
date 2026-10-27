@@ -1,4 +1,4 @@
-# ADR 0021: Bounded host execution
+# ADR 0021: One RPC at a time; no invented mixed-load SLO (amended by 0040)
 
 - Status: accepted
 - Date: 2026-09-20

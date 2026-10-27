@@ -1,4 +1,4 @@
-# ADR 0017: Editable many-to-many relationship semantics
+# ADR 0017: Editable many-to-many via association objects
 
 - Status: accepted
 - Date: 2026-09-20

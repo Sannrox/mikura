@@ -1,4 +1,4 @@
-# ADR 0028: Required namespace on new object logs
+# ADR 0028: Required namespace on new object logs (`MIKURAV2`)
 
 - Status: accepted
 - Date: 2026-10-11

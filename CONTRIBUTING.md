@@ -21,7 +21,8 @@ Agent instructions: [AGENTS.md](AGENTS.md).
   or the product boundary. Use the Bug, Feature, Refactoring, or Research
   form.
 - Capture accepted durable choices as an ADR. Copy
-  [docs/decisions/0000-template.md](docs/decisions/0000-template.md) and update
+  [docs/decisions/0000-template.md](docs/decisions/0000-template.md) and run
+  `scripts/adr-index` to regenerate
   [docs/decisions/README.md](docs/decisions/README.md).
 
 ## Development setup

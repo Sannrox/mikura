@@ -1,4 +1,4 @@
-# ADR 0045: Self-tuning store
+# ADR 0045: Query-shape recording and a reviewable tuning advisor
 
 - Status: accepted
 - Date: 2026-10-25

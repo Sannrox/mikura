@@ -1,8 +1,12 @@
 # Decisions
 
 Architecture Decision Records. Copy [0000-template.md](0000-template.md) for
-a new ADR. Allocate the next number and list it here.
+a new ADR and allocate the next number. The table below is generated from each
+record's heading and `- Status:` line by `scripts/adr-index`; run it after
+adding or changing a record and do not edit the table by hand. CI runs
+`scripts/adr-index --check`.
 
+<!-- adr-index:start -->
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0001](0001-paged-log.md) | Paged object log with group commit | accepted |
@@ -50,6 +54,7 @@ a new ADR. Allocate the next number and list it here.
 | [0043](0043-typed-ref-values.md) | Vector, time-series, geo, and media reference types | accepted |
 | [0044](0044-log-encryption.md) | Object log encryption at rest (`MIKURAV3`) | accepted |
 | [0045](0045-self-tuning-store.md) | Query-shape recording and a reviewable tuning advisor | accepted |
+<!-- adr-index:end -->
 
 Implementation truth for the current crate is
 [architecture.md](../architecture.md). ADRs record choices that should
