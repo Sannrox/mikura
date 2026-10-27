@@ -2,9 +2,9 @@
 
 Architecture Decision Records. Copy [0000-template.md](0000-template.md) for
 a new ADR and allocate the next number. The table below is generated from each
-record's heading and `- Status:` line by `scripts/adr-index`; run it after
-adding or changing a record and do not edit the table by hand. CI runs
-`scripts/adr-index --check`.
+record's heading and `- Status:` line by `python3 scripts/adr-index`; run it
+after adding or changing a record and do not edit the table by hand. CI runs
+`python3 scripts/adr-index --check`.
 
 <!-- adr-index:start -->
 | ADR | Title | Status |

@@ -6,8 +6,8 @@ the `# ADR NNNN: Title` heading, and the status from the `- Status:` header
 line, with links to other records shortened to their number. The table lives
 between the adr-index markers; prose outside them is hand-written.
 
-    scripts/adr-index          rewrite the index
-    scripts/adr-index --check  exit 1 with a diff when the index is stale
+    python3 scripts/adr-index          rewrite the index
+    python3 scripts/adr-index --check  exit 1 with a diff when the index is stale
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ def main() -> int:
                 "docs/decisions/README.md (generated)",
             )
         )
-        print("decision index is stale; run scripts/adr-index", file=sys.stderr)
+        print("decision index is stale; run python3 scripts/adr-index", file=sys.stderr)
         return 1
     README.write_text(generated, encoding="utf-8")
     return 0
