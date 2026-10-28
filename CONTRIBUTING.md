@@ -99,17 +99,14 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 
 Open a pull request against `main`. Do not invent issue numbers.
 
-Publish the PR branch tip with `bash scripts/gh-verified-push.sh` so GitHub shows
-**Verified**. Land with squash:
+Contributors without a claimed Issue push their topic branch with
+`git push` and the maintainer squash-merges it. A delivery lane for a claimed
+Issue (branch `<type>/<issue>`, see `AGENTS.md`) publishes with the shared
+agent-kit lane script so GitHub shows **Verified**, then lands with squash:
 
 ```bash
-# new branch
-bash scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local
-
-# existing PR branch
-bash scripts/gh-verified-push.sh --branch <topic> --sync-local
-
-gh pr merge --squash --delete-branch
+bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}/skills/deliver-ready-issue/scripts/issue-lane.sh" push <issue>
+bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}/skills/deliver-ready-issue/scripts/issue-lane.sh" land <issue> --pr <pr>
 ```
 
 Do not use GitHub rebase-merge when Verified history matters. Never pass

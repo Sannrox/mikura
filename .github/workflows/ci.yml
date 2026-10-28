@@ -28,6 +28,16 @@ jobs:
       - name: Decision index is current
         run: python3 scripts/adr-index --check
 
+  workflow-skills:
+    name: Workflow Skills
+    runs-on: ubuntu-latest
+    # Runs agent-kit main by design (no pin); keep the token read-only.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: bash scripts/validate-workflow-skills.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
