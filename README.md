@@ -42,11 +42,11 @@ git clone https://github.com/Sannrox/mikura.git
 cd mikura
 cargo test --workspace --locked
 cargo run -p mikura-ingest --example quickstart
-./build/release-images.sh
+bash build/release-images.sh
 ```
 
-`./build/release-images.sh` wraps `mikura-host` (`git describe` tag; dirty
-trees refused). `./build/release.sh` pushes that tag to `DOCKER_REGISTRY`.
+`bash build/release-images.sh` wraps `mikura-host` (`git describe` tag; dirty
+trees refused). `bash build/release.sh` pushes that tag to `DOCKER_REGISTRY`.
 There is no compose stack.
 
 The example writes a temp log, ingests Customer → Order → Shipment records,

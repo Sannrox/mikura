@@ -51,11 +51,11 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p mikura-ingest --example quickstart
 cargo bench -p mikura-host --bench product
-./build/release-images.sh
+bash build/release-images.sh
 ```
 
-`./build/release-images.sh` wraps `mikura-host`. Dirty trees are refused.
-`./build/release.sh` pushes the git-describe tag to `DOCKER_REGISTRY`.
+`bash build/release-images.sh` wraps `mikura-host`. Dirty trees are refused.
+`bash build/release.sh` pushes the git-describe tag to `DOCKER_REGISTRY`.
 
 `cargo test` is the short loop. Spike crates are separate packages under
 `spikes/<nnn>-*/`; run them only when measuring, from that directory, and
@@ -86,7 +86,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
 | `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
-| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `scripts/gh-verified-push.sh`. Land with squash. Next work is [ROADMAP.md](ROADMAP.md). |
+| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `bash scripts/gh-verified-push.sh`. Land with squash. Next work is [ROADMAP.md](ROADMAP.md). |
 | `prepare-release` | GitHub tags are allowed. `publish = false` until crates.io is explicitly authorized. 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md). |
 
 ## Ontology
@@ -127,14 +127,14 @@ Prefer publishing PR branch tips with GitHub-signed commits so GitHub shows
 **Verified**:
 
 1. Implement and commit locally as usual (`commit.gpgsign` may still apply).
-2. Publish the branch tip with `scripts/gh-verified-push.sh` instead of a plain
+2. Publish the branch tip with `bash scripts/gh-verified-push.sh` instead of a plain
    `git push` when you want the hosted commit Verified (GraphQL
    `createCommitOnBranch`). That path creates one server-side commit with the
    local `HEAD` tree; committer is typically **GitHub**.
 3. New branch:  
-   `scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local`
+   `bash scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local`
 4. Existing PR branch:  
-   `scripts/gh-verified-push.sh --branch <topic> --sync-local`  
+   `bash scripts/gh-verified-push.sh --branch <topic> --sync-local`  
    (uses the current remote tip as `expectedHeadOid`).
 5. Never pass `--no-gpg-sign` for local commits; if GPG fails, stop and fix it.
 6. After publish, confirm `verification.verified=true` (the script prints this).
