@@ -36,9 +36,9 @@ tracked. Do not treat that directory as gitignored.
 | `crates/mikura-ingest/tests/stability.rs` | 1.0 surface compile-lock |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs, plans |
-| `scripts/` | `gh-verified-push.sh` for GitHub-signed PR tips |
+| `scripts/` | ADR index, changelog draft, crates.io publish check, vendored `validate-workflow-skills.sh` |
 | `.github/` | CI, issue templates, pull request template |
-| `.agents/skills/` | Copied from sekai-chisei; apply as below |
+| `.agents/skills/` | Generated agent-kit stubs (see `## Shared agent skills`) |
 
 Runtime object logs belong under gitignored `data/` or a temp dir.
 
@@ -72,28 +72,99 @@ configuration in this repo.
 - A consumer may later depend on a published mikura tag. That cutover is not
   work in this repository.
 
-## Skills
+## Shared agent skills
 
-Copied from sekai-chisei, then adapted. `verify-change` and
-`assess-change-impact` use mikura paths and gates. Other skills keep the
-same procedure; substitute VISION/ROADMAP/architecture and this file.
+The workflow Skills (`advance-issue-frontier`, `assess-change-impact`,
+`capture-project-decision`, `deliver-ready-issue`, `prepare-release`,
+`refactor-docs`, `shape-work-item`, `technical-documentation`, `verify-change`)
+and the opt-in `sekai-ontology` Skill are canonical in
+[Sannrox/agent-kit](https://github.com/Sannrox/agent-kit). There is no pin:
+this repository always uses the latest `main`. `.agents/skills/<name>/` holds
+only a generated stub that points to the shared skill; read the installed skill
+under `~/.agents/agent-kit/` (or `$AGENT_KIT_HOME`). Run
+`bash scripts/validate-workflow-skills.sh` to clone or update it; CI runs the
+same check.
 
-| Skill | Use in mikura |
+- Repository-specific facts the shared Skills need come from this file: the
+  structure, commands, independence, parallel-lane, and test sections, plus
+  `## Agent skill profile` below for anything they do not already say. Edit
+  this file, not the stubs.
+- Never edit stubs or the vendored `scripts/validate-workflow-skills.sh` here;
+  change them upstream in agent-kit, then run
+  `bash scripts/validate-workflow-skills.sh --render` here when CI reports
+  drift.
+- Repository-only Skills live next to the stubs as full folders and stay local
+  (add them to the `.gitignore` allowlist).
+
+## Agent skill profile
+
+Facts the shared agent-kit skills read that the sections above do not already
+state. Frame and assess work against VISION.md, ROADMAP.md,
+`docs/architecture.md`, and the ADRs. GitHub Issues are planning truth: next
+work is the open `status:ready` Issues, and ROADMAP.md gives direction.
+Documentation work covers README, VISION, ROADMAP, `docs/` (architecture and
+glossary), AGENTS, CONTRIBUTING, and spike `NOTES.md`; delivery status stays in
+Issues and pull requests. ADRs follow `docs/decisions/README.md` and the index
+is regenerated with `python3 scripts/adr-index`.
+
+Feature: a new observable library, host, or integration outcome.
+
+### Compatibility and failure obligations
+
+Fresh logs; reopen after a crash (committed pages only); a missing sidecar or
+stale pages-stamp rebuilds from the log, while a checksum mismatch, truncation,
+or bad magic fails closed (deleting the sidecar recovers); old `MKJOIN01` to
+`MKJOIN03` checkpoints fail closed; the public Rust API on the
+[1.0 surface](docs/plans/1.0-surface.md) (breaking changes need a minor bump
+and a CHANGELOG Upgrade note; CI runs semver checks); rollback impact.
+
+### Additional impact boundaries
+
+- object log (store of record) versus rebuildable projections (join
+  checkpoint and delta sidecars);
+- `mikura` (log / store / evaluate) versus `mikura-ingest` (batch / changelog /
+  merge / stream);
+- fail-closed ACL: load omits denied properties; evaluate of a denied
+  `(sum_kind, sum_property)` returns `AclError::Denied`;
+- on-disk log and sidecar formats versus in-memory maps;
+- in-process library versus loopback host (`mikura-host`, ADR 0003);
+  non-loopback bind requires a clerk bearer, and tokens are not principals.
+
+### Verification matrix
+
+Rows beyond `## Style and tests`:
+
+| Surface | Required evidence |
 | --- | --- |
-| `verify-change` | After implementation. Gates: fmt-check, `cargo test --workspace --locked`, clippy `-D warnings`, `cargo run -p mikura-ingest --example quickstart` when examples or the public API changed. |
-| `assess-change-impact` | Boundaries: log vs projection, fail-closed ACL, independence. Use `docs/architecture.md` plus VISION/ROADMAP/ADRs. |
-| `capture-project-decision` | Copy `docs/decisions/0000-template.md`, next number, run `python3 scripts/adr-index` (never edit the index by hand). |
-| `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
-| `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
-| `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
-| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `bash scripts/gh-verified-push.sh`. Land with squash. Next work is the open `status:ready` Issues; [ROADMAP.md](ROADMAP.md) gives direction. |
-| `prepare-release` | GitHub tags are allowed. `publish = false` until crates.io is explicitly authorized. 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md). |
+| public or multi-component behavior | `cargo test -p mikura-ingest --test integration --locked` plus `cargo test --workspace --locked` |
+| host process | `cargo test -p mikura-host --test e2e --locked` (spawned process, not same-thread `serve_one`) |
+| examples or public API | `cargo run -p mikura-ingest --example quickstart` |
+| object log / sidecar | reopen, dual-read (delete sidecar), checksum/truncate fail closed |
+| ingest | `BatchIngest` / `StreamIngest` commit versus uncommitted tail |
+| ACL | load omits denied properties; deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
+| ADRs | `python3 scripts/adr-index --check` |
+| Skills / `AGENTS.md` | `bash scripts/validate-workflow-skills.sh` |
+
+Unit tests do not establish spike envelopes; measure in the spike and record
+the result in its `NOTES.md`.
+
+### Release audit
+
+- GitHub tags are allowed; crates.io stays `publish = false` until explicitly
+  authorized (`bash scripts/publish-crates.sh` checks);
+- 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md);
+- CHANGELOG section drafted with `bash scripts/changelog-draft.sh`; upgrade
+  notes first;
+- on-disk format changes and their ADR;
+- container image (`bash build/release-images.sh`).
 
 ## Ontology
 
 If a portable ontology is used, follow the `sekai-ontology` skill. Validate
 before relying on it. State absence rather than inferring. Do not use the
-mikura object log or a control-plane database as that file.
+mikura object log or a control-plane database as that file. This repository
+has no product vocabulary pack: do not import another product's pack, and
+state absence rather than answering its vocabulary from memory.
 
 ## Style and tests
 
@@ -121,32 +192,40 @@ Postgres, or Spark in the default suite. Host-process **e2e** is
 Short imperative subjects (`feat: persist join maps in Store`). Keep commits
 narrow. Hosted repo: `https://github.com/Sannrox/mikura`.
 
+## Parallel delivery lanes
+
+Each delivered Issue is one lane: one claim branch `<type>/<issue>` on GitHub,
+one worktree at `.worktrees/issue-<issue>` (or a dedicated clone on another
+machine), one pull request, one owner, at most three lanes at a time. Claim with
+`bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}"/skills/deliver-ready-issue/scripts/issue-lane.sh claim <issue>`
+before implementing. Agents never switch, reset, or stash the primary checkout,
+and each lane builds into its own worktree's `target/`.
+
+Collision surfaces: the on-disk log and sidecar formats (`src/log.rs`,
+`src/joins.rs`, `src/store/`), the 1.0 surface lock
+(`crates/mikura-ingest/tests/stability.rs`), the next ADR number, and the same
+crate. Lanes that would both change one run in sequence. Pull requests do not
+edit `CHANGELOG.md`; release prep drafts it.
+
 ### Verified commits on GitHub
 
-Prefer publishing PR branch tips with GitHub-signed commits so GitHub shows
-**Verified**:
+Publish and land lanes with the shared agent-kit lane script so hosted commits
+are GitHub-signed (**Verified**) and `main` stays linear:
 
-1. Implement and commit locally as usual (`commit.gpgsign` may still apply).
-2. Publish the branch tip with `bash scripts/gh-verified-push.sh` instead of a plain
-   `git push` when you want the hosted commit Verified (GraphQL
-   `createCommitOnBranch`). That path creates one server-side commit with the
-   local `HEAD` tree; committer is typically **GitHub**.
-3. New branch:  
-   `bash scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local`
-4. Existing PR branch:  
-   `bash scripts/gh-verified-push.sh --branch <topic> --sync-local`  
-   (uses the current remote tip as `expectedHeadOid`).
-5. Never pass `--no-gpg-sign` for local commits; if GPG fails, stop and fix it.
-6. After publish, confirm `verification.verified=true` (the script prints this).
+1. Commit locally as usual. Never pass `--no-gpg-sign`; if GPG fails, stop and
+   fix it.
+2. Publish the claim branch from the lane worktree with
+   `bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}/skills/deliver-ready-issue/scripts/issue-lane.sh" push <issue>`.
+   It prints the Verified commit and resets the worktree to it, so local `HEAD`
+   is the pull request head.
+3. Land with `bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}/skills/deliver-ready-issue/scripts/issue-lane.sh" land <issue> --pr <pr>`.
+   It squash-merges the reviewed head once the required checks pass.
 
-When merging PRs, prefer **squash** (`gh pr merge --squash --delete-branch`) so
-the land commit on `main` is also GitHub-signed/Verified and history stays
-linear. Use `gh pr merge --merge` only when multi-commit history must be kept
-(original SHAs preserved). Avoid GitHub **rebase** merges when Verified history
-matters: rebase-merge rewrites commits and drops signatures. Do not rewrite
-protected `main` after merging unless the user explicitly approves; if
-protection is temporarily relaxed, restore force-push and status-check settings
-immediately after the correction.
+Avoid GitHub **rebase** merges when Verified history matters: rebase-merge
+rewrites commits and drops signatures. Do not rewrite protected `main` after
+merging unless the user explicitly approves; if protection is temporarily
+relaxed, restore force-push and status-check settings immediately after the
+correction.
 
 ## Always / Ask first / Never
 
