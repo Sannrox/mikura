@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::codec::{read_str, take, write_str};
@@ -60,13 +61,41 @@ pub struct LogWriter {
     fsync_count: u64,
     hold_commits: bool,
     synced: u32,
-    failed: bool,
+    /// Atomic so [`Self::write_staged`] can fail closed through `&self`.
+    failed: AtomicBool,
     keys: Option<Arc<LogKeys>>,
     catalog: BTreeMap<String, WrappedDek>,
     deks: HashMap<String, Dek>,
     revoked: HashSet<String>,
     withheld: HashSet<String>,
     page_tenant: Option<String>,
+    #[cfg(test)]
+    stage_hook: Option<StageHook>,
+}
+
+/// Where [`LogWriter::write_staged`] is when a test hook runs.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommitStage {
+    /// Pages are written past the commit point but not synced.
+    PagesWritten,
+    /// Half of the new superblock is written: its checksum does not match.
+    SuperblockTorn,
+    /// Pages and superblock are synced: the commit is durable.
+    Durable,
+}
+
+#[cfg(test)]
+pub(crate) type StageHook = Arc<dyn Fn(CommitStage) + Send + Sync>;
+
+/// Sealed pages and superblock for one commit, built by [`LogWriter::stage`]
+/// through `&self` so the live projection keeps serving readers while
+/// [`LogWriter::write_staged`] writes and syncs them (#261, ADR 0040).
+pub(crate) struct StagedCommit {
+    pages: Vec<Vec<u8>>,
+    superblock: Vec<u8>,
+    committed: u32,
+    fsyncs: u64,
 }
 
 impl LogWriter {
@@ -111,13 +140,15 @@ impl LogWriter {
             fsync_count: 0,
             hold_commits: false,
             synced: committed,
-            failed: false,
+            failed: AtomicBool::new(false),
             keys: None,
             catalog: BTreeMap::new(),
             deks: HashMap::new(),
             revoked: HashSet::new(),
             withheld: HashSet::new(),
             page_tenant: None,
+            #[cfg(test)]
+            stage_hook: None,
         }
     }
 
@@ -335,16 +366,16 @@ impl LogWriter {
     /// True after a superblock write failed and left the commit point unknown,
     /// or after a rollback failed and left the live projection unreliable.
     pub fn is_failed(&self) -> bool {
-        self.failed
+        self.failed.load(Ordering::Relaxed)
     }
 
     /// Refuse every further write until the log is reopened.
     pub fn poison(&mut self) {
-        self.failed = true;
+        self.failed.store(true, Ordering::Relaxed);
     }
 
     pub(crate) fn ensure_usable(&self) -> Result<(), String> {
-        if self.failed {
+        if self.is_failed() {
             return Err(UNCERTAIN_COMMIT.into());
         }
         Ok(())
@@ -396,50 +427,288 @@ impl LogWriter {
 
     /// Fail closed when `record` cannot fit on a 4 KiB page.
     pub(crate) fn check_record_fits(&self, record: &ObjectRecord) -> Result<(), String> {
-        let framed = framed_record(&encode_body(record)?)?;
-        let tenant = if self.keys.is_some() {
-            Some(tenant_of_namespace(&record.namespace)?)
-        } else {
-            None
-        };
-        if framed.len() > self.page_capacity(tenant) {
-            return Err("record larger than a page".into());
-        }
-        Ok(())
+        self.frame(record).map(drop)
     }
 
-    pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
-        self.ensure_usable()?;
+    /// Framed bytes and, on an encrypted log, the page tenant of `record`.
+    /// Fails closed when the record cannot fit on one page.
+    fn frame(&self, record: &ObjectRecord) -> Result<(Vec<u8>, Option<String>), String> {
         let framed = framed_record(&encode_body(record)?)?;
         let tenant = if self.keys.is_some() {
             Some(tenant_of_namespace(&record.namespace)?.to_string())
         } else {
             None
         };
-        if let Some(tenant) = tenant.as_deref() {
-            self.ensure_tenant_dek(tenant)?;
-        }
         if framed.len() > self.page_capacity(tenant.as_deref()) {
             return Err("record larger than a page".into());
         }
+        Ok((framed, tenant))
+    }
+
+    /// A record of `len` framed bytes for `tenant` cannot join a page that
+    /// already holds `used` bytes for `page_tenant`: an encrypted page holds
+    /// one tenant, and every page holds at most its capacity.
+    fn starts_new_page(
+        &self,
+        used: usize,
+        page_tenant: Option<&str>,
+        len: usize,
+        tenant: Option<&str>,
+    ) -> bool {
+        used > 0
+            && ((tenant.is_some() && page_tenant != tenant)
+                || used + len > self.page_capacity(tenant))
+    }
+
+    pub fn append_record(&mut self, record: &ObjectRecord) -> Result<(), String> {
+        self.ensure_usable()?;
+        let (framed, tenant) = self.frame(record)?;
         if let Some(tenant) = tenant.as_deref() {
-            if self.used > 0 && self.page_tenant.as_deref() != Some(tenant) {
-                self.flush_page()?;
-            }
-            if self.used == 0 {
-                self.page_tenant = Some(tenant.to_string());
-            }
+            self.ensure_tenant_dek(tenant)?;
         }
-        if self.used + framed.len() > self.page_capacity(self.page_tenant.as_deref()) {
+        if self.starts_new_page(
+            self.used,
+            self.page_tenant.as_deref(),
+            framed.len(),
+            tenant.as_deref(),
+        ) {
             self.flush_page()?;
-            if let Some(tenant) = tenant {
-                self.page_tenant = Some(tenant);
-            }
+        }
+        if self.used == 0 {
+            self.page_tenant = tenant;
         }
         let start = PAGE_HDR + self.used;
         self.page[start..start + framed.len()].copy_from_slice(&framed);
         self.used += framed.len();
         Ok(())
+    }
+
+    /// True when [`Self::revalidate_catalog`] would change nothing, so a
+    /// commit staged through `&self` sees the same key state as one that
+    /// revalidates first. An unwrap error counts as a change.
+    fn catalog_is_current(&self) -> bool {
+        let Some(keys) = self.keys.as_ref() else {
+            return true;
+        };
+        self.catalog.iter().all(|(tenant, wrapped)| {
+            let name = if tenant.is_empty() {
+                STORE_KEY_TENANT
+            } else {
+                tenant.as_str()
+            };
+            match keys.unwrap_status(wrapped) {
+                Ok(DekStatus::Ready(_)) => true,
+                Ok(DekStatus::Withheld) => {
+                    self.withheld.contains(name) && !self.deks.contains_key(name)
+                }
+                Ok(DekStatus::Shredded) => {
+                    name != STORE_KEY_TENANT
+                        && self.revoked.contains(name)
+                        && !self.deks.contains_key(name)
+                }
+                Err(_) => false,
+            }
+        })
+    }
+
+    /// Seal `records` into the pages and superblock of one commit after the
+    /// current commit point, without changing the writer.
+    ///
+    /// `None` means the commit needs the exclusive path: the writer has
+    /// pending or held pages, a key would be minted, or revalidating the key
+    /// catalog would change it. Records must already be admitted by the store.
+    pub(crate) fn stage(&self, records: &[ObjectRecord]) -> Option<StagedCommit> {
+        if self.ensure_usable().is_err()
+            || self.has_pending()
+            || self.hold_commits
+            || records.is_empty()
+            || !self.catalog_is_current()
+        {
+            return None;
+        }
+        let mut pages = Vec::new();
+        let mut page = vec![0u8; PAGE];
+        let mut used = 0;
+        let mut page_tenant: Option<String> = None;
+        for record in records {
+            let (framed, tenant) = self.frame(record).ok()?;
+            if let Some(tenant) = tenant.as_deref() {
+                let ready = self.deks.contains_key(tenant)
+                    && !self.revoked.contains(tenant)
+                    && !self.withheld.contains(tenant);
+                if !ready {
+                    return None;
+                }
+            }
+            if self.starts_new_page(
+                used,
+                page_tenant.as_deref(),
+                framed.len(),
+                tenant.as_deref(),
+            ) {
+                let page_no = self.written + 1 + pages.len() as u32;
+                pages.push(
+                    self.seal_page_bytes(&mut page, used, page_tenant.as_deref(), page_no)
+                        .ok()?,
+                );
+                page = vec![0u8; PAGE];
+                used = 0;
+            }
+            if used == 0 {
+                page_tenant = tenant;
+            }
+            page[PAGE_HDR + used..PAGE_HDR + used + framed.len()].copy_from_slice(&framed);
+            used += framed.len();
+        }
+        let page_no = self.written + 1 + pages.len() as u32;
+        pages.push(
+            self.seal_page_bytes(&mut page, used, page_tenant.as_deref(), page_no)
+                .ok()?,
+        );
+        let committed = self.written + pages.len() as u32;
+        let superblock = self.superblock_bytes(committed).ok()?;
+        Some(StagedCommit {
+            pages,
+            superblock,
+            committed,
+            fsyncs: 0,
+        })
+    }
+
+    /// Write and sync a staged commit through `&self`, with the group-sync
+    /// steps of a held [`Self::flush`]: pages, a data sync, then the
+    /// superblock and its sync. Only the caller that holds the store's
+    /// single-writer lock may call this, and the writer state stays at the
+    /// old commit point until [`Self::adopt_staged`].
+    ///
+    /// A failure before the superblock write truncates the new pages, so the
+    /// log is unchanged. A failed superblock write leaves the commit point
+    /// unknown and poisons the writer, as [`Self::flush`] does.
+    pub(crate) fn write_staged(&self, staged: &mut StagedCommit) -> Result<(), String> {
+        self.ensure_usable()?;
+        let mut file = &self.file;
+        let start = PAGE as u64 * u64::from(1 + self.written);
+        let mut fsyncs = 0;
+        let pages = (|| -> std::io::Result<()> {
+            file.seek(SeekFrom::Start(start))?;
+            let mut written = self.written;
+            let mut synced = self.committed;
+            for page in &staged.pages {
+                file.write_all(page)?;
+                written += 1;
+                if self.sync.durable() && written - synced >= self.sync.group_size() {
+                    file.sync_data()?;
+                    fsyncs += 1;
+                    synced = written;
+                }
+            }
+            #[cfg(test)]
+            self.run_stage_hook(CommitStage::PagesWritten);
+            if self.sync.durable() {
+                file.sync_data()?;
+                fsyncs += 1;
+            }
+            Ok(())
+        })();
+        if let Err(error) = pages {
+            let truncated = file
+                .set_len(start)
+                .and_then(|()| file.seek(SeekFrom::Start(start)).map(drop));
+            if let Err(truncate) = truncated {
+                self.failed.store(true, Ordering::Relaxed);
+                return Err(format!("{UNCERTAIN_COMMIT}: {error}; {truncate}"));
+            }
+            return Err(error.to_string());
+        }
+        let end = PAGE as u64 * u64::from(1 + staged.committed);
+        let superblock = (|| -> std::io::Result<()> {
+            file.seek(SeekFrom::Start(0))?;
+            // Half a superblock on disk, as a short write would leave it.
+            let (head, tail) = staged.superblock.split_at(PAGE / 2);
+            file.write_all(head)?;
+            #[cfg(test)]
+            self.run_stage_hook(CommitStage::SuperblockTorn);
+            file.write_all(tail)?;
+            if self.sync.durable() {
+                file.sync_data()?;
+                fsyncs += 1;
+            }
+            file.seek(SeekFrom::Start(end)).map(drop)
+        })();
+        if let Err(error) = superblock {
+            self.failed.store(true, Ordering::Relaxed);
+            return Err(format!("{UNCERTAIN_COMMIT}: {error}"));
+        }
+        staged.fsyncs = fsyncs;
+        #[cfg(test)]
+        self.run_stage_hook(CommitStage::Durable);
+        Ok(())
+    }
+
+    /// Committed records on pages `1..=committed_pages` of the log at `path`
+    /// that `keep` accepts, with the page that holds each, in log order
+    /// (ADR 0036). Every commit ends on a page boundary, so a page that a
+    /// commit returned as `committed_pages` is an exact commit point.
+    ///
+    /// The commit point, format, and tenant keys come from this writer, not
+    /// from the superblock on disk. A split commit may be rewriting that
+    /// superblock while a reader holds the store; pages up to the applied
+    /// commit point never change, so this read never sees a torn superblock
+    /// or a commit that is not yet applied (#261). A tenant whose key is no
+    /// longer usable is skipped, as a fresh catalog unwrap would.
+    pub(crate) fn read_applied_pages(
+        &self,
+        path: &Path,
+        mut keep: impl FnMut(&ObjectRecord) -> bool,
+    ) -> Result<Vec<(u32, ObjectRecord)>, String> {
+        let deks = self.keys.is_some().then(|| {
+            self.deks
+                .iter()
+                .filter(|(tenant, _)| self.tenant_key_usable(tenant))
+                .map(|(tenant, dek)| (tenant.clone(), dek.clone()))
+                .collect::<HashMap<_, _>>()
+        });
+        let mut file = File::open(path).map_err(|e| e.to_string())?;
+        let needed = PAGE as u64 * u64::from(1 + self.committed);
+        if file.metadata().map_err(|e| e.to_string())?.len() < needed {
+            return Err("committed pages missing".into());
+        }
+        let mut paged = Vec::new();
+        visit_pages(
+            &mut file,
+            None,
+            0..=self.committed,
+            deks.as_ref(),
+            |index, records| {
+                paged.extend(
+                    records
+                        .into_iter()
+                        .filter(|record| keep(record))
+                        .map(|record| (index, record)),
+                );
+            },
+        )?;
+        Ok(paged)
+    }
+
+    /// Move the writer to a commit [`Self::write_staged`] made durable.
+    pub(crate) fn adopt_staged(&mut self, staged: &StagedCommit) {
+        self.written = staged.committed;
+        self.committed = staged.committed;
+        self.synced = staged.committed;
+        self.fsync_count += staged.fsyncs;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_stage_hook(&mut self, hook: Option<StageHook>) {
+        self.stage_hook = hook;
+    }
+
+    #[cfg(test)]
+    fn run_stage_hook(&self, stage: CommitStage) {
+        if let Some(hook) = &self.stage_hook {
+            hook(stage);
+        }
     }
 
     pub fn flush(&mut self) -> Result<(), String> {
@@ -453,15 +722,15 @@ impl LogWriter {
         if self.used == 0 {
             return Ok(());
         }
-        self.page[CRC_LEN..PAGE_HDR].copy_from_slice(&(self.used as u16).to_le_bytes());
-        let disk = if self.keys.is_some() {
-            self.seal_current_page()?
-        } else {
-            let mut disk = self.page.clone();
-            seal_page(&mut disk);
-            disk
-        };
-        self.file.write_all(&disk).map_err(|e| e.to_string())?;
+        let mut page = std::mem::take(&mut self.page);
+        let sealed = self.seal_page_bytes(
+            &mut page,
+            self.used,
+            self.page_tenant.as_deref(),
+            self.written + 1,
+        );
+        self.page = page;
+        self.file.write_all(&sealed?).map_err(|e| e.to_string())?;
         self.written += 1;
         self.page = vec![0u8; PAGE];
         self.used = 0;
@@ -499,16 +768,27 @@ impl LogWriter {
     /// whatever the disk holds.
     fn write_superblock(&mut self) -> Result<(), String> {
         self.write_superblock_body().map_err(|error| {
-            self.failed = true;
+            self.failed.store(true, Ordering::Relaxed);
             format!("{UNCERTAIN_COMMIT}: {error}")
         })
     }
 
-    fn seal_current_page(&self) -> Result<Vec<u8>, String> {
-        let tenant = self
-            .page_tenant
-            .as_deref()
-            .ok_or_else(|| "encrypted page is missing tenant".to_string())?;
+    /// Disk bytes of data page `page_no` holding `used` bytes of `page`.
+    /// An encrypted page seals for `tenant`.
+    fn seal_page_bytes(
+        &self,
+        page: &mut [u8],
+        used: usize,
+        tenant: Option<&str>,
+        page_no: u32,
+    ) -> Result<Vec<u8>, String> {
+        page[CRC_LEN..PAGE_HDR].copy_from_slice(&(used as u16).to_le_bytes());
+        if self.keys.is_none() {
+            let mut disk = page.to_vec();
+            seal_page(&mut disk);
+            return Ok(disk);
+        }
+        let tenant = tenant.ok_or_else(|| "encrypted page is missing tenant".to_string())?;
         let dek = self
             .deks
             .get(tenant)
@@ -517,10 +797,9 @@ impl LogWriter {
             .checked_sub(CRC_LEN + encrypted_overhead(tenant.len()))
             .ok_or_else(|| "encrypted page overhead exceeds page".to_string())?;
         let mut inner = vec![0u8; inner_len];
-        inner[..USED_LEN].copy_from_slice(&self.page[CRC_LEN..PAGE_HDR]);
-        inner[USED_LEN..USED_LEN + self.used]
-            .copy_from_slice(&self.page[PAGE_HDR..PAGE_HDR + self.used]);
-        let sealed = seal_page_body(dek, tenant, self.written + 1, &inner)?;
+        inner[..USED_LEN].copy_from_slice(&page[CRC_LEN..PAGE_HDR]);
+        inner[USED_LEN..USED_LEN + used].copy_from_slice(&page[PAGE_HDR..PAGE_HDR + used]);
+        let sealed = seal_page_body(dek, tenant, page_no, &inner)?;
         if CRC_LEN + sealed.len() > PAGE {
             return Err("encrypted page overflow".into());
         }
@@ -530,12 +809,16 @@ impl LogWriter {
         Ok(disk)
     }
 
-    fn write_superblock_body(&mut self) -> Result<(), String> {
-        let superblock = if self.keys.is_some() {
-            superblock_page_v3(self.committed, &self.catalog)?
+    fn superblock_bytes(&self, committed: u32) -> Result<Vec<u8>, String> {
+        if self.keys.is_some() {
+            superblock_page_v3(committed, &self.catalog)
         } else {
-            superblock_page(self.committed)
-        };
+            Ok(superblock_page(committed))
+        }
+    }
+
+    fn write_superblock_body(&mut self) -> Result<(), String> {
+        let superblock = self.superblock_bytes(self.committed)?;
         let pos = self.file.stream_position().map_err(|e| e.to_string())?;
         self.file
             .seek(SeekFrom::Start(0))
@@ -586,26 +869,6 @@ pub(crate) fn read_records_after_with_keys(
     read_committed_records(path, None, after_page, keys)
 }
 
-/// Committed records that `keep` accepts, with the page that holds each, in
-/// log order (ADR 0036). Every commit ends on a page boundary, so a page that a
-/// commit returned as `committed_pages` is an exact commit point.
-pub(crate) fn read_records_with_pages_keys(
-    path: &Path,
-    keys: Option<&LogKeys>,
-    mut keep: impl FnMut(&ObjectRecord) -> bool,
-) -> Result<Vec<(u32, ObjectRecord)>, String> {
-    let mut paged = Vec::new();
-    visit_committed_pages(path, None, 0, keys, |index, records| {
-        paged.extend(
-            records
-                .into_iter()
-                .filter(|record| keep(record))
-                .map(|record| (index, record)),
-        );
-    })?;
-    Ok(paged)
-}
-
 /// Committed records of a pre-namespace `MIKURAV1` log, each assigned the
 /// caller's `namespace` (ADR 0030). Any other magic fails closed.
 pub fn read_v1_records(path: &Path, namespace: &str) -> Result<Vec<ObjectRecord>, String> {
@@ -637,7 +900,7 @@ fn visit_committed_pages(
     v1_namespace: Option<&str>,
     after_page: u32,
     keys: Option<&LogKeys>,
-    mut visit: impl FnMut(u32, Vec<ObjectRecord>),
+    visit: impl FnMut(u32, Vec<ObjectRecord>),
 ) -> Result<(), String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut superblock = vec![0u8; PAGE];
@@ -671,24 +934,44 @@ fn visit_committed_pages(
     if after_page > committed {
         return Err("checkpoint page is past committed_pages".into());
     }
-    if after_page < committed {
-        let start = PAGE as u64 * u64::from(after_page + 1);
-        file.seek(SeekFrom::Start(start))
-            .map_err(|e| e.to_string())?;
-        let mut page = vec![0u8; PAGE];
-        for index in (after_page + 1)..=committed {
-            file.read_exact(&mut page)
-                .map_err(|_| format!("committed page {index}: short read"))?;
-            verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
-            let mut records = Vec::new();
-            if let Some(deks) = deks.as_ref() {
-                decode_encrypted_page(&page, index, deks, &mut records)
-                    .map_err(|e| format!("committed page {index}: {e}"))?;
-            } else {
-                decode_data_page(&page, v1_namespace, &mut records)?;
-            }
-            visit(index, records);
+    visit_pages(
+        &mut file,
+        v1_namespace,
+        after_page..=committed,
+        deks.as_ref(),
+        visit,
+    )
+}
+
+/// Decode data pages `pages` (page 0 is the superblock and is never in the
+/// range) of an open log. `deks` decrypts an encrypted log.
+fn visit_pages(
+    file: &mut File,
+    v1_namespace: Option<&str>,
+    pages: std::ops::RangeInclusive<u32>,
+    deks: Option<&HashMap<String, Dek>>,
+    mut visit: impl FnMut(u32, Vec<ObjectRecord>),
+) -> Result<(), String> {
+    let (after_page, committed) = pages.into_inner();
+    if after_page >= committed {
+        return Ok(());
+    }
+    let start = PAGE as u64 * u64::from(after_page + 1);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| e.to_string())?;
+    let mut page = vec![0u8; PAGE];
+    for index in (after_page + 1)..=committed {
+        file.read_exact(&mut page)
+            .map_err(|_| format!("committed page {index}: short read"))?;
+        verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
+        let mut records = Vec::new();
+        if let Some(deks) = deks {
+            decode_encrypted_page(&page, index, deks, &mut records)
+                .map_err(|e| format!("committed page {index}: {e}"))?;
+        } else {
+            decode_data_page(&page, v1_namespace, &mut records)?;
         }
+        visit(index, records);
     }
     Ok(())
 }

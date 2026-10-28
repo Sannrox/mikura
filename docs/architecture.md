@@ -467,9 +467,15 @@ rule or a hard-delete.
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
 The crate ships a `mikura-host` binary that binds loopback and serves one
-JSON line per connection. Concurrent snapshot readers share the store; one
-writer runs exclusively, with per-namespace fair share
-([ADR 0040](decisions/0040-concurrent-host-readers.md)). `--request-bound` and
+JSON line per connection. Concurrent snapshot readers share the store, with
+per-namespace fair share; one writer runs at a time
+([ADR 0040](decisions/0040-concurrent-host-readers.md)). `ingest_batch` takes
+the split commit of `SharedStore`: it admits and seals the batch under shared
+access, writes and syncs the log while readers continue, and holds readers
+out only to apply the durable records with the recovery replay step. Readers
+see a batch whole or not at all, and never before it is durable. Other
+writes, and batches the split path does not cover, run exclusively
+(ADR 0040 amendment, [#261](https://github.com/Sannrox/mikura/issues/261)). `--request-bound` and
 `--request-timeout-ms` bound line assembly only; after a complete line,
 evaluate and ingest run to completion
 ([ADR 0021](decisions/0021-bounded-host-execution.md)). Line-delimited JSON envelope `{ v, token?, op, … }`. Responses always

@@ -94,8 +94,8 @@ pub use schema::{
     SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION,
 };
 pub use store::{
-    tenant_namespace, AsOf, ObjectRecord, ObjectVersion, Store, VersionOrigin,
-    JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
+    tenant_namespace, AsOf, BatchWrite, ObjectRecord, ObjectVersion, SharedStore, Store,
+    StoreWriteGuard, VersionOrigin, JOIN_DELTA_COMPACT_BYTES, SOURCE_KIND, SOURCE_OFFSET,
 };
 pub use tuning::{
     apply, apply_measured, auto_apply, inspect_cost, rollback, suggest, AppliedChange,
