@@ -18,8 +18,8 @@ a first consumer; `publish = false` until crates.io is authorized
 and bump rules are [1.0-surface.md](plans/1.0-surface.md)
 ([ADR 0042](decisions/0042-api-stability.md)). A control plane maps
 datasets and admitted edits to `ObjectRecord`s; it does not live in this
-repository. `./build/release-images.sh` wraps `mikura-host` in a
-git-describe image; `./build/release.sh` pushes that tag. There is no
+repository. `bash build/release-images.sh` wraps `mikura-host` in a
+git-describe image; `bash build/release.sh` pushes that tag. There is no
 compose stack and no cluster compute in that wrap. The destination object-set is filter, load, hop, and aggregate;
 today evaluate is hop + count/sum + optional bounded objects, with a composed predicate tree on the current kind and optional snapshot pages (ADR 0015).
 

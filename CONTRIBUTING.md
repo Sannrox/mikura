@@ -94,15 +94,15 @@ A spike miss is a note in `NOTES.md`, not a reason to add a new engine.
 
 Open a pull request against `main`. Do not invent issue numbers.
 
-Publish the PR branch tip with `scripts/gh-verified-push.sh` so GitHub shows
+Publish the PR branch tip with `bash scripts/gh-verified-push.sh` so GitHub shows
 **Verified**. Land with squash:
 
 ```bash
 # new branch
-scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local
+bash scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local
 
 # existing PR branch
-scripts/gh-verified-push.sh --branch <topic> --sync-local
+bash scripts/gh-verified-push.sh --branch <topic> --sync-local
 
 gh pr merge --squash --delete-branch
 ```
