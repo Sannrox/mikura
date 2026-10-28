@@ -25,6 +25,7 @@ mod restriction;
 mod row_filter;
 mod schema;
 mod schema_migrate;
+mod split_commit;
 mod stability;
 mod top_page;
 mod tuning;

@@ -116,3 +116,91 @@ The implementation Issue must prove:
 
 Revisit if the consumer publishes simultaneous-client or mixed-load
 targets, or a measurement shows the in-flight cap is insufficient.
+
+## Amendment 2026-10-28: split commit for ingest batches
+
+Related: [#261](https://github.com/Sannrox/mikura/issues/261).
+
+### Context
+
+Under the decision above a writer holds the exclusive lock through
+`Store::commit`, and the live maps change in `append_uncommitted` before
+that, so every reader waits out the writer's group-commit sync. At 10^6
+objects the product bench measured a host point read under concurrent
+100-record batches at p50 14.9 ms and p99 136 ms, against microseconds
+without writes.
+
+### Decision
+
+**A batch commit is split. The writer admits and seals the batch under
+shared access, writes and syncs the log while readers continue, and takes
+the exclusive lock only to apply the durable records to the live maps.
+Readers keep observing applied, committed state only.**
+
+`SharedStore` owns the reader/writer lock and a separate single-writer
+lock. Every write takes the writer lock first. `ingest_batch` runs:
+
+1. Writer lock, then shared access: admit every record against the live
+   projection (overlay merge, schema canonicalize and validate, Action id,
+   generation) and seal its pages and superblock. Nothing changes.
+2. Still shared: write the pages, sync them in group steps, write the
+   superblock, sync it. The in-memory commit point does not move.
+3. Exclusive: move the writer to the new commit point and apply each
+   record with the step that recovery replay uses. Then acknowledge.
+4. When the sidecar is due, the dirty-set frame is written under shared
+   access and recorded under exclusive access.
+
+The split path covers source records of distinct non-reserved identities
+with a new or no Action id, whose overlay merge logs no conflict audit and
+whose hide copies no overlay, on a writer with nothing pending or held, and
+on an encrypted log only when every tenant already has a usable key and
+revalidating the catalog would change nothing. Every other batch, an
+admission error, and every other write (`apply_action`, `apply_change_set`,
+`apply_overlay`, `hide`, stream push and flush) runs on the exclusive path
+unchanged. Checkpoint rewrites and encrypted sidecars keep the exclusive
+persist.
+
+### Invariants
+
+- One writer at a time. Two writers never admit against the same state.
+  Nothing changes the store between admission and apply, because every
+  write holds the writer lock across both.
+- A batch is acknowledged only after its pages and superblock are synced
+  and the records are applied to the live maps. Group commit and its sync
+  steps are unchanged.
+- A reader sees all of a batch or none of it, and never a record that is
+  not durable. The applied commit point bounds history reads, so a reader
+  does not read a commit still being applied.
+- A crash before the superblock sync loses only the unacknowledged batch.
+  A crash after it and before the apply recovers the batch on open by
+  replaying the log, once: the sidecar stays stamped at the applied commit
+  point, and the replay step is the apply step.
+- A failed write before the superblock truncates the new pages and leaves
+  log and projection unchanged. A failed superblock write, or a batch that
+  is durable but cannot be applied, poisons the writer until a reopen.
+- Encryption: pages seal with the tenant key the exclusive path would use.
+  A key revoke or withhold sends the next batch to the exclusive path,
+  which revalidates and refuses as before.
+
+Stream push keeps the visibility of the decision above: a later RPC on the
+same process sees uncommitted pushes. This amendment does not change it.
+
+### Alternatives considered
+
+| Option | Why not |
+| --- | --- |
+| Readers see applied but unsynced records for one commit window | Changes visibility: a reader could act on a record a crash then loses. |
+| Immutable or versioned live maps, readers keep the previous generation | A second generation of the projection costs memory at 10^6 and touches every map; larger than the problem. |
+| Split every write op at once | Action, overlay, change set, and hide admission interleave reads and writes of the projection. Batches carry the bulk load; the rest can follow with evidence. |
+
+### Consequences
+
+- No log, sidecar, or wire format change. Logs written by either version
+  open in the other.
+- Point reads no longer wait for a batch's log sync. They still wait for
+  the in-memory apply and for any exclusive write.
+- The scheduler's write permit is held by exclusive writes only. A split
+  batch is not counted as an active writer in queue depth.
+- The mixed-load bench runs eight readers and one writer and reports the
+  single-client write as `host_write_alone`. The numbers stay bench
+  evidence, not an SLO ([ADR 0016](0016-production-workload.md)).

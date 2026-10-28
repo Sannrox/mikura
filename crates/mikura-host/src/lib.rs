@@ -14,16 +14,18 @@
 //! `require_bearer` is called. Non-loopback bind requires a clerk-owned
 //! bearer (ADR 0007). The CLI applies `--bearer` on any bind, including
 //! loopback.
-//! Concurrent snapshot readers share the store; one writer runs exclusively
-//! with per-namespace fair share (ADR 0040). This crate does not know
-//! tenants, policy, receipts, or principals.
+//! Concurrent snapshot readers share the store with per-namespace fair
+//! share; one writer at a time. An `ingest_batch` writes and syncs the log
+//! while readers continue and holds them out only to apply the batch; other
+//! writes run exclusively (ADR 0040). This crate does not know tenants,
+//! policy, receipts, or principals.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,7 +37,7 @@ use metrics::{Metrics, ProcessSnapshot};
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
     Hop, LocalCompute, LogKeys, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl,
-    Sort, Store,
+    SharedStore, Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -339,7 +341,7 @@ pub struct EvaluateWire {
 }
 
 struct HostInner {
-    store: RwLock<Store>,
+    store: SharedStore,
     stream: Mutex<StreamIngest>,
     bearer: Mutex<Option<String>>,
     request_bound: AtomicUsize,
@@ -380,7 +382,7 @@ impl Host {
         let log_bytes_at_open = std::fs::metadata(log).map(|meta| meta.len()).unwrap_or(0);
         Ok(Self {
             inner: Arc::new(HostInner {
-                store: RwLock::new(store),
+                store: SharedStore::new(store),
                 stream: Mutex::new(StreamIngest::new(stream_bound)?),
                 bearer: Mutex::new(None),
                 request_bound: AtomicUsize::new(DEFAULT_REQUEST_BOUND),
@@ -496,9 +498,21 @@ impl Host {
         };
         let store = match self.inner.store.read() {
             Ok(guard) => guard,
-            Err(_) => return fail("store lock poisoned"),
+            Err(error) => return fail(error),
         };
         f(&store)
+    }
+
+    /// Split commit for a batch (ADR 0040 amendment): readers continue while
+    /// the log is written and synced and wait only for the apply. A batch
+    /// the split path does not cover runs on the exclusive path.
+    fn ingest_batch(&self, records: Vec<ObjectRecord>) -> HostResponse {
+        match self.inner.store.append_batch(records) {
+            mikura::BatchWrite::Done(result) => ack(result),
+            mikura::BatchWrite::Exclusive(records) => {
+                self.with_write(|store, _stream| ack(BatchIngest::run(store, records)))
+            }
+        }
     }
 
     fn with_write(
@@ -511,7 +525,7 @@ impl Host {
         };
         let mut store = match self.inner.store.write() {
             Ok(guard) => guard,
-            Err(_) => return fail("store lock poisoned"),
+            Err(error) => return fail(error),
         };
         let mut stream = match self.inner.stream.lock() {
             Ok(guard) => guard,
@@ -522,9 +536,7 @@ impl Host {
 
     fn dispatch(&self, request: HostRequest) -> HostResponse {
         match request {
-            HostRequest::IngestBatch { records } => {
-                self.with_write(|store, _stream| ack(BatchIngest::run(store, records)))
-            }
+            HostRequest::IngestBatch { records } => self.ingest_batch(records),
             HostRequest::IngestStreamPush { record } => {
                 self.with_write(|store, stream| ack(stream.push(store, record)))
             }

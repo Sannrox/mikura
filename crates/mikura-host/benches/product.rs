@@ -38,7 +38,8 @@ const REGRESSION_LIMIT: f64 = 1.20;
 const MIN_SAMPLES: usize = 5;
 const MAX_SAMPLES: usize = 2_000;
 const SAMPLE_BUDGET: Duration = Duration::from_secs(3);
-const HOST_READERS: usize = 4;
+/// Mixed host load: this many point-read threads against one writer (#261).
+const HOST_READERS: usize = 8;
 /// Writes add records, so they take a fixed count: compared runs then
 /// measure the same database size whatever their speed.
 const FIXED_WRITES: usize = 100;
@@ -429,7 +430,17 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String
         }),
     ));
 
-    let (reads, writes) = host_mixed(&fixture.log, &scale)?;
+    let MixedSamples {
+        alone,
+        reads,
+        writes,
+    } = host_mixed(&fixture.log, &scale)?;
+    results.push(Measurement::new(
+        "host_write_alone",
+        objects,
+        "ns/op",
+        alone,
+    ));
     results.push(Measurement::new(
         "host_read_under_writes",
         objects,
@@ -457,12 +468,34 @@ fn remove_projections(log: &Path) {
     }
 }
 
-/// Reader threads load shipments while the caller ingests 100-record batches
-/// through the same `Host`. Returns (read samples, write samples).
-fn host_mixed(log: &Path, scale: &Scale) -> Result<(Vec<u64>, Vec<u64>), String> {
+/// Nanosecond samples of one host mixed-load run.
+struct MixedSamples {
+    /// 100-record `ingest_batch` with no other client.
+    alone: Vec<u64>,
+    /// `load` while the host ingests.
+    reads: Vec<u64>,
+    /// 100-record `ingest_batch` while `HOST_READERS` threads load.
+    writes: Vec<u64>,
+}
+
+/// The host ingests 100-record batches, first with no other client (the
+/// single-client write baseline), then while `HOST_READERS` threads load
+/// shipments.
+fn host_mixed(log: &Path, scale: &Scale) -> Result<MixedSamples, String> {
     let host = Host::open(log, 1_024)?;
     let stop = AtomicBool::new(false);
     let mut next = scale.shipments * 2;
+    let mut write = || {
+        let records: Vec<_> = (next..next + 100).map(|id| shipment(id, scale)).collect();
+        next += 100;
+        timed(|| {
+            assert!(
+                host.handle(HostRequest::IngestBatch { records }).ok,
+                "host ingest"
+            )
+        })
+    };
+    let alone = fixed(FIXED_WRITES, &mut write);
     std::thread::scope(|scope| {
         let readers: Vec<_> = (0..HOST_READERS)
             .map(|reader| {
@@ -488,22 +521,17 @@ fn host_mixed(log: &Path, scale: &Scale) -> Result<(Vec<u64>, Vec<u64>), String>
                 })
             })
             .collect();
-        let writes = fixed(FIXED_WRITES, || {
-            let records: Vec<_> = (next..next + 100).map(|id| shipment(id, scale)).collect();
-            next += 100;
-            timed(|| {
-                assert!(
-                    host.handle(HostRequest::IngestBatch { records }).ok,
-                    "host ingest"
-                )
-            })
-        });
+        let writes = fixed(FIXED_WRITES, &mut write);
         stop.store(true, Ordering::Relaxed);
         let reads = readers
             .into_iter()
             .flat_map(|reader| reader.join().expect("reader thread"))
             .collect();
-        Ok((reads, writes))
+        Ok(MixedSamples {
+            alone,
+            reads,
+            writes,
+        })
     })
 }
 

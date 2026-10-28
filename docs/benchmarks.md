@@ -54,18 +54,21 @@ its fixture in a fresh temp directory unique to the process.
 | `one_hop_sum_*` | Order -> Shipment count and sum, declared (`amount`) or undeclared (`weight`) |
 | `two_hop_sum_*` | Customer -> Order -> Shipment count and sum, declared or undeclared |
 | `open_with_sidecar` / `open_without_sidecar` | `Store::open` with the join sidecar and checkpoint present, or deleted so the log replays |
-| `host_read_under_writes` | One host `load` while the host ingests 100-record batches |
-| `host_write_under_reads` | One host 100-record `ingest_batch` while four threads load |
+| `host_write_alone` | One host 100-record `ingest_batch` with no other client (single-client write baseline) |
+| `host_read_under_writes` | One host `load` by one of eight threads while the host ingests 100-record batches |
+| `host_write_under_reads` | One host 100-record `ingest_batch` while eight threads load |
 
 Reads, queries and opens take at least 5 samples, then more until 2000
-samples or 3 seconds. Writes (`append_commit`, `host_write_under_reads`)
-take exactly 100, so every run measures the same database size. Slow 10^6 queries therefore have few samples, so their p95 and
+samples or 3 seconds. Writes (`append_commit`, `host_write_alone`,
+`host_write_under_reads`) take exactly 100, so every run measures the same database size. Slow 10^6 queries therefore have few samples, so their p95 and
 p99 are close to the maximum.
 
 ## Baseline
 
 Apple M2 Pro, 10 CPUs, macOS arm64, `cargo bench` release profile,
-2026-10-18:
+2026-10-18. The host rows ran four reader threads; since
+[#261](https://github.com/Sannrox/mikura/issues/261) they run eight (see
+below):
 
 | Measurement | Unit | 10^4 p50 / p95 / p99 | 10^6 p50 / p95 / p99 |
 | --- | --- | ---: | ---: |
@@ -92,7 +95,7 @@ Readings:
   They are inside the 500 ms envelope there, and the declared sum is
   about 10% faster than the undeclared one.
 - Reopening with the sidecar is 3x faster than replaying the log at 10^6.
-- A host read waits for a concurrent write to commit: reads under writes
+- Before #261, a host read waited for a concurrent write to commit: reads under writes
   have a p95 near one commit at 10^4, and a p50 above 10 ms at 10^6.
 
 ## Paged sorts without ranking every result
@@ -122,6 +125,44 @@ because it ran under the heaviest load (p50 550 ms).
 On the same machine without competing load, one `list_filter` evaluate is
 about 12 ms, of which about 8 ms is the count and sum over every match that
 the response must carry.
+
+## Batch commits that do not hold readers out
+
+[#261](https://github.com/Sannrox/mikura/issues/261), ADR 0040 amendment.
+Before, a host `ingest_batch` held the store's exclusive lock through the
+log write and sync, so every concurrent read waited out the sync. Now the
+batch is admitted and sealed under shared access, written and synced while
+readers continue, and applied to the live maps under a short exclusive
+lock. Targets on the mixed load (eight readers, one writer, 10^6): point
+read p99 at most 1 ms, write p50 within 20% of `host_write_alone`.
+
+10-CPU arm64 laptop, macOS, `cargo bench` release profile, 10^6,
+2026-10-28. The machine was shared with other builds (load average 5 to
+53 across runs), so p95 and p99 carry scheduler noise. Before and after
+ran the same bench binary source; only the store and host changed.
+
+| Run | Load avg | `host_read_under_writes` p50 / p95 / p99 | `host_write_under_reads` p50 | `host_write_alone` p50 |
+| --- | ---: | --- | ---: | ---: |
+| before 1 | 53 | 6.5 µs / 152 µs / 26.0 ms | 9.86 ms | 9.05 ms |
+| before 2 | 29 | 7.9 µs / 9.43 ms / 23.9 ms | 9.83 ms | 9.00 ms |
+| before 3 | 20 | 7.4 µs / 9.40 ms / 25.8 ms | 9.02 ms | 8.99 ms |
+| before 4 | 10 | 9.1 µs / 8.99 ms / 37.8 ms | 9.19 ms | 9.94 ms |
+| before 5 | 19 | 9.1 µs / 77.9 µs / 18.0 ms | 9.00 ms | 8.96 ms |
+| after 1 | 5 | 7.7 µs / 50.9 µs / 78.1 µs | 9.03 ms | 9.87 ms |
+| after 2 | 5 | 9.0 µs / 95.8 µs / 222 µs | 8.98 ms | 11.0 ms |
+| after 3 | 10 | 4.5 µs / 83.8 µs / 343 µs | 11.9 ms | 10.9 ms |
+
+Readings:
+
+- Point read p99 under writes drops from 18 to 38 ms to 0.08 to 0.34 ms,
+  inside the 1 ms target. The remaining tail is the in-memory apply of a
+  100-record batch and scheduler noise.
+- Write p50 under eight readers is 0.82x to 1.09x the single-client p50.
+- At 10^4 after the change: read p99 0.20 ms, write under reads p50
+  8.99 ms against 9.04 ms alone.
+- Writes other than `ingest_batch`, a batch outside the split path, a
+  checkpoint rewrite, and an encrypted sidecar persist still hold readers
+  out for their sync. This bench does not exercise them.
 
 ## Nightly gate
 

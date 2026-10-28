@@ -15,11 +15,13 @@ use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod checkpoint;
 mod history;
+mod shared;
 
 pub(crate) use checkpoint::checkpoint_stamp;
 mod sidecar;
 
 pub use history::{AsOf, ObjectVersion, VersionOrigin};
+pub use shared::{BatchWrite, SharedStore, StoreWriteGuard};
 
 /// Rewrite `{log}.joins` and delete `{log}.joins.delta` when the dirty-set
 /// file exceeds this many bytes. Compact still also runs when there is no
@@ -1123,40 +1125,7 @@ impl Store {
                 "{CHANGE_SET_KIND} is written only by apply_change_set"
             ));
         } else if !record.hidden {
-            let was_hidden = self
-                .find_live(&record.namespace, &record.kind, &record.key)
-                .and_then(|id| self.identity.get(&id))
-                .is_some_and(|meta| meta.hidden);
-            let schema = self.load_reserved(
-                &record.namespace,
-                SCHEMA_KIND,
-                &record.kind,
-                SchemaDescriptor::from_record,
-            )?;
-            if !was_hidden && merge_overlay {
-                if let Some(overlay) = self.load_reserved(
-                    &record.namespace,
-                    OVERLAY_KIND,
-                    &OverlayPatch::identity_key(&record.kind, &record.key),
-                    OverlayPatch::from_record,
-                )? {
-                    let plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
-                    let (merged, audit) =
-                        overlay.apply_with(std::mem::take(&mut record.props), plan.as_ref())?;
-                    record.props = merged;
-                    if record.action_id.is_none() {
-                        record.action_id = overlay.action_id.clone();
-                    }
-                    if let Some(audit) = audit {
-                        overlay_audit = Some((overlay, audit));
-                    }
-                }
-            }
-            if let Some(schema) = schema {
-                record.schema_version = schema.effective_version();
-                schema.canonicalize_instance(&mut record)?;
-                schema.validate(&record)?;
-            }
+            overlay_audit = self.resolve_instance(&mut record, merge_overlay)?;
         }
         if let Some(id) = claim_id.as_deref() {
             if matches!(
@@ -1184,12 +1153,7 @@ impl Store {
         } else {
             None
         };
-        let id = self.intern_live(&record.namespace, &record.kind, &record.key);
-        if let Some(existing) = self.identity.get(&id) {
-            record.gen = existing.gen.max(1) + 1;
-        } else if record.gen == 0 {
-            record.gen = 1;
-        }
+        self.assign_gen(&mut record);
         self.writer.check_record_fits(&record)?;
         for overlay in &migrated_overlays {
             self.writer.check_record_fits(overlay)?;
@@ -1235,6 +1199,67 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    /// Merge a visible overlay into a visible, non-reserved source `record`
+    /// and canonicalize and validate it against its kind's schema. Returns
+    /// the overlay and its conflict audit when the merge must log one. Reads
+    /// the live projection only, so the split commit path can admit records
+    /// under shared access (#261).
+    fn resolve_instance(
+        &self,
+        record: &mut ObjectRecord,
+        merge_overlay: bool,
+    ) -> Result<Option<(OverlayPatch, ConflictAudit)>, String> {
+        let was_hidden = self
+            .find_live(&record.namespace, &record.kind, &record.key)
+            .and_then(|id| self.identity.get(&id))
+            .is_some_and(|meta| meta.hidden);
+        let schema = self.load_reserved(
+            &record.namespace,
+            SCHEMA_KIND,
+            &record.kind,
+            SchemaDescriptor::from_record,
+        )?;
+        let mut overlay_audit = None;
+        if !was_hidden && merge_overlay {
+            if let Some(overlay) = self.load_reserved(
+                &record.namespace,
+                OVERLAY_KIND,
+                &OverlayPatch::identity_key(&record.kind, &record.key),
+                OverlayPatch::from_record,
+            )? {
+                let plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
+                let (merged, audit) =
+                    overlay.apply_with(std::mem::take(&mut record.props), plan.as_ref())?;
+                record.props = merged;
+                if record.action_id.is_none() {
+                    record.action_id = overlay.action_id.clone();
+                }
+                if let Some(audit) = audit {
+                    overlay_audit = Some((overlay, audit));
+                }
+            }
+        }
+        if let Some(schema) = schema {
+            record.schema_version = schema.effective_version();
+            schema.canonicalize_instance(record)?;
+            schema.validate(record)?;
+        }
+        Ok(overlay_audit)
+    }
+
+    /// Next generation of `record`'s identity: one past the live generation,
+    /// or the record's own (at least 1) for a new identity.
+    fn assign_gen(&self, record: &mut ObjectRecord) {
+        let live = self
+            .find_live(&record.namespace, &record.kind, &record.key)
+            .and_then(|id| self.identity.get(&id));
+        if let Some(existing) = live {
+            record.gen = existing.gen.max(1) + 1;
+        } else if record.gen == 0 {
+            record.gen = 1;
+        }
     }
 
     /// Group-commit the current writer pages. The join sidecar is persisted
@@ -2180,14 +2205,22 @@ impl Store {
 
     fn replay_tail(&mut self, after_page: u32) -> Result<(), String> {
         for record in read_records_after_with_keys(&self.log, after_page, self.writer.keys())? {
-            let schema_namespace = record.namespace.clone();
-            let schema_kind = record.kind.clone();
-            let schema_key = record.key.clone();
-            self.apply_record(record);
-            self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
+            self.apply_logged(record)?;
         }
         self.dirty.clear();
         Ok(())
+    }
+
+    /// Apply one record that is already on the log to the live projection.
+    /// Recovery replay and the split commit path share this step, so a
+    /// commit applied after its fsync equals the same commit replayed after
+    /// a crash (#261).
+    fn apply_logged(&mut self, record: ObjectRecord) -> Result<(), String> {
+        let schema_namespace = record.namespace.clone();
+        let schema_kind = record.kind.clone();
+        let schema_key = record.key.clone();
+        self.apply_record(record);
+        self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)
     }
 
     fn maybe_refresh_schema(

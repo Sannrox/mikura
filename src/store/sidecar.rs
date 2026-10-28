@@ -47,21 +47,30 @@ impl Store {
             self.finish_projection_persist();
             return Ok(());
         }
-        // Measures live on the checkpoint, not on delta frames. First-use
-        // lazy rollups must rewrite the checkpoint or they vanish on reopen.
-        if self.joins.values().any(JoinMaps::has_unpersisted_lazy) {
+        if self.needs_checkpoint_rewrite() {
             self.rewrite_checkpoint(pages)?;
             self.finish_projection_persist();
             return Ok(());
         }
-        let compact =
-            !self.has_checkpoint || self.dirty.len().saturating_mul(4) > self.identity.len().max(1);
-        if compact {
-            self.rewrite_checkpoint(pages)?;
-            self.finish_projection_persist();
-            return Ok(());
-        }
-        self.persist_delta(pages)?;
+        let bytes = self.write_delta(pages)?;
+        self.adopt_delta(pages, bytes)
+    }
+
+    /// An unencrypted persist that cannot append a delta frame. Measures
+    /// live on the checkpoint, not on delta frames: first-use lazy rollups
+    /// must rewrite the checkpoint or they vanish on reopen. A missing
+    /// checkpoint or a dirty set above a quarter of the identities compacts.
+    pub(super) fn needs_checkpoint_rewrite(&self) -> bool {
+        self.joins.values().any(JoinMaps::has_unpersisted_lazy)
+            || !self.has_checkpoint
+            || self.dirty.len().saturating_mul(4) > self.identity.len().max(1)
+    }
+
+    /// Record a delta frame [`Self::write_delta`] appended at `pages`, then
+    /// compact when the delta has grown past its bound.
+    pub(super) fn adopt_delta(&mut self, pages: u32, bytes: u64) -> Result<(), String> {
+        self.delta_bytes = bytes;
+        self.sidecar_delta_stamp = Some(pages);
         self.dirty.clear();
         if self.delta_bytes > self.delta_compact_bytes {
             self.rewrite_checkpoint(pages)?;
@@ -83,7 +92,7 @@ impl Store {
         self.persist_projection()
     }
 
-    fn projection_persist_due(&self, force: bool) -> bool {
+    pub(super) fn projection_persist_due(&self, force: bool) -> bool {
         if self.joins.values().any(JoinMaps::has_unpersisted_lazy) {
             return true;
         }
@@ -272,7 +281,10 @@ impl Store {
         Ok((stamp, opened))
     }
 
-    fn persist_delta(&mut self, pages: u32) -> Result<(), String> {
+    /// Append the dirty set as one delta frame stamped `pages` and return
+    /// the delta file length. Reads the projection only, so the split commit
+    /// path writes it while readers continue (#261).
+    pub(super) fn write_delta(&self, pages: u32) -> Result<u64, String> {
         let mut body = Vec::new();
         body.extend_from_slice(JOIN_DELTA_MAGIC);
         body.extend_from_slice(&pages.to_le_bytes());
@@ -344,13 +356,11 @@ impl Store {
                 file.set_len(self.delta_bytes).map_err(|e| e.to_string())?;
                 file.sync_data().map_err(|e| e.to_string())?;
             }
-        } else {
-            self.delta_bytes = 0;
         }
         append_checksummed(&path, &body)?;
-        self.delta_bytes = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-        self.sidecar_delta_stamp = Some(pages);
-        Ok(())
+        std::fs::metadata(&path)
+            .map(|meta| meta.len())
+            .map_err(|e| e.to_string())
     }
 
     pub(super) fn decode_projection_after_magic(cur: &mut &[u8]) -> Result<ProjectionBody, String> {
