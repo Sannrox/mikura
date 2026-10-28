@@ -37,9 +37,11 @@ Build an evidence-backed impact map before implementation or review.
    measuring envelopes.
    No network, Postgres, or Spark in the default suite. Complete when every
    material risk has a proposed check or an explicit residual uncertainty.
-5. Determine durable artifacts that must change: `docs/architecture.md`,
-   VISION/ROADMAP, an ADR, examples, CHANGELOG, or a repository Skill.
-   Complete when no artifact is proposed merely to record temporary planning.
+5. Determine durable artifacts that must change: `docs/architecture.md` or
+   the glossary when the architecture or a term changes, VISION/ROADMAP when
+   direction changes, an ADR, examples, CHANGELOG, or a repository Skill.
+   Delivery status stays in the Issue and pull request. Complete when no
+   artifact is proposed merely to record temporary planning or status.
 
 ## Output
 
