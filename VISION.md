@@ -61,63 +61,30 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 | Property ACLs | Fail closed: denied properties are absent, not guessed |
 | Action writeback | Governed edits become new generations on the log |
 
-## Stages
+## Decided boundaries
 
-**v0 (done):** spikes 001–010. See [`spikes/README.md`](spikes/README.md).
+Each stage so far settled a boundary that still holds. Delivery status lives
+in issues and pull requests; [ROADMAP.md](ROADMAP.md) gives direction.
 
-**v1 (done):** in-process store, ingest, object-set evaluate, property
-deny-list, Action append. Paged log ([ADR 0001](docs/decisions/0001-paged-log.md)).
-
-**v2 (done):** persist join maps in `Store` ([#1](https://github.com/Sannrox/mikura/issues/1)); group commit, ingest crate, merge, changelog; slim interned sidecar ([#15](https://github.com/Sannrox/mikura/issues/15), [ADR 0004](docs/decisions/0004-slim-join-maps.md)). After slim maps, 10⁷ query was a **2.6 s miss** ([#31](https://github.com/Sannrox/mikura/issues/31)). After hop scratch, intern-id checkpoint load, and intern-once ([#29](https://github.com/Sannrox/mikura/issues/29), [#28](https://github.com/Sannrox/mikura/issues/28), [#27](https://github.com/Sannrox/mikura/issues/27)), 10⁷ query was a **1012 ms miss** ([#43](https://github.com/Sannrox/mikura/issues/43)). Dual-read holds.
-
-**v3 (done):** bounded `StreamIngest` ([#4](https://github.com/Sannrox/mikura/issues/4)); hosted shape in [ADR 0003](docs/decisions/0003-hosted-service.md) ([#5](https://github.com/Sannrox/mikura/issues/5)); loopback ingest/evaluate and process e2e ([#18](https://github.com/Sannrox/mikura/issues/18), [#33](https://github.com/Sannrox/mikura/issues/33)). 10⁸ ingest later finished after bounded persist ([#137](https://github.com/Sannrox/mikura/issues/137)).
-
-**v4 (done):** hop count/sum without materializing every leaf path ([#59](https://github.com/Sannrox/mikura/issues/59)). After that fold, 10⁷ query was an **878 ms miss** vs 500 ms. After last-hop measures, the same query is a **40 ms hold** ([#152](https://github.com/Sannrox/mikura/issues/152)). Dual-read holds. Compute stays closed; a miss is not an engine pick.
-
-**v5 (done):** exact-match filter on evaluate (question 4) ([#45](https://github.com/Sannrox/mikura/issues/45)); load by primary key ([#44](https://github.com/Sannrox/mikura/issues/44), [ADR 0005](docs/decisions/0005-current-object-load.md)). No query language.
-
-**v6 (done for questions 3 and 5):** store which Action produced a generation
-([ADR 0006](docs/decisions/0006-action-provenance.md), [#64](https://github.com/Sannrox/mikura/issues/64)).
-Apply the request deny list when loading properties ([#47](https://github.com/Sannrox/mikura/issues/47)).
-Principal and policy stay in the clerk.
-
-**v7 (done):** non-loopback bind only with a clerk-owned bearer
-([ADR 0007](docs/decisions/0007-host-bearer.md), [#48](https://github.com/Sannrox/mikura/issues/48),
-[#69](https://github.com/Sannrox/mikura/issues/69)).
-Tokens are equality-checked process secrets, not principals. Still one
-process, one `Store`.
-
-**v8 (incoming hop done):** hop either from parent key to pointing children or
-follow a join property to `far_kind` ([#50](https://github.com/Sannrox/mikura/issues/50)).
-Count+sum stays the evaluate aggregate; extra aggregates wait for a named
-consumer and fixture ([#51](https://github.com/Sannrox/mikura/issues/51),
-[ADR 0018](docs/decisions/0018-aggregation-semantics.md)).
-Host JSON `load` and evaluate filter answer VISION questions 1 and 4 on the
-wire ([#52](https://github.com/Sannrox/mikura/issues/52)).
-
-**v9 (log checkpoints):** a checksummed `{log}.ckpt` snapshots live identity
-at a committed page so `Store::open` replays only the tail
-([#238](https://github.com/Sannrox/mikura/issues/238),
-[ADR 0034](docs/decisions/0034-log-checkpoints.md)). Default keeps full
-history; compact is opt-in. 10⁸ ingest finished after bounded persist
-([#137](https://github.com/Sannrox/mikura/issues/137)).
-10⁹ closed without a billion-object ingest ([#54](https://github.com/Sannrox/mikura/issues/54)).
-10¹⁰ waits for a named consumer envelope ([#55](https://github.com/Sannrox/mikura/issues/55)).
-Compute backend only after a published in-process miss.
-
-**v10 (one process):** one process remains the hosted form
-([#56](https://github.com/Sannrox/mikura/issues/56), [#190](https://github.com/Sannrox/mikura/issues/190),
-[#244](https://github.com/Sannrox/mikura/issues/244),
-[ADR 0003](docs/decisions/0003-hosted-service.md),
-[ADR 0023](docs/decisions/0023-single-process-availability.md)).
-A git tag is enough for a consumer to depend on this crate
-([#57](https://github.com/Sannrox/mikura/issues/57)). Cut it with prepare-release.
-The listed 1.0 surface and bump rules are
-[docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
-([#242](https://github.com/Sannrox/mikura/issues/242), [ADR 0042](docs/decisions/0042-api-stability.md)).
-crates.io stays ask-first (`publish = false`).
-
-See [ROADMAP.md](ROADMAP.md) for the ordered work list.
+- The object log is authority: a paged, checksummed log
+  ([ADR 0001](docs/decisions/0001-paged-log.md)), with checkpoints so open
+  replays only the tail ([ADR 0034](docs/decisions/0034-log-checkpoints.md)).
+- Evaluate is filter, load, hop and count+sum. No query language; another
+  aggregate waits for a named consumer and fixture
+  ([ADR 0018](docs/decisions/0018-aggregation-semantics.md)).
+- The clerk owns principals and policy. This crate applies the request's
+  deny list and records which Action produced a generation
+  ([ADR 0006](docs/decisions/0006-action-provenance.md)).
+- A non-loopback host needs a clerk-owned bearer. Tokens are process
+  secrets, not principals ([ADR 0007](docs/decisions/0007-host-bearer.md)).
+- One process remains the hosted form
+  ([ADR 0003](docs/decisions/0003-hosted-service.md),
+  [ADR 0023](docs/decisions/0023-single-process-availability.md)).
+- Compute stays in-process until a published envelope misses in-process.
+- A git tag is enough for a consumer. The 1.0 surface and bump rules are
+  [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
+  ([ADR 0042](docs/decisions/0042-api-stability.md)). crates.io stays
+  ask-first (`publish = false`).
 
 ## Product boundary
 

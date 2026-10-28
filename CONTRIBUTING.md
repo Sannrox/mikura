@@ -20,6 +20,11 @@ Agent instructions: [AGENTS.md](AGENTS.md).
 - Open an issue before changing the on-disk log format, the public Rust API,
   or the product boundary. Use the Bug, Feature, Refactoring, or Research
   form.
+- Keep delivery status (done, in progress, next) in the issue and the pull
+  request. `ROADMAP.md` and `VISION.md` change only when direction changes;
+  `docs/architecture.md` and `docs/glossary.md` change only when the
+  architecture or a term changes. A pull request does not restate itself in
+  them.
 - Capture accepted durable choices as an ADR. Copy
   [docs/decisions/0000-template.md](docs/decisions/0000-template.md) and run
   `python3 scripts/adr-index` to regenerate

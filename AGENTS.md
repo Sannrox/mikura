@@ -86,7 +86,7 @@ same procedure; substitute VISION/ROADMAP/architecture and this file.
 | `technical-documentation` / `refactor-docs` | README, VISION, ROADMAP, `docs/`, AGENTS, CONTRIBUTING, spike NOTES. |
 | `sekai-ontology` | Optional portable CLI ontology. Never the object log. This repo has no product vocabulary pack. |
 | `shape-work-item` | Draft against `.github/ISSUE_TEMPLATE/`. Publish only when the user authorizes GitHub. Repo: `Sannrox/mikura`. |
-| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `bash scripts/gh-verified-push.sh`. Land with squash. Next work is [ROADMAP.md](ROADMAP.md). |
+| `deliver-ready-issue` / `advance-issue-frontier` | GitHub Issues are planning truth. Publish PR tips with `bash scripts/gh-verified-push.sh`. Land with squash. Next work is the open `status:ready` Issues; [ROADMAP.md](ROADMAP.md) gives direction. |
 | `prepare-release` | GitHub tags are allowed. `publish = false` until crates.io is explicitly authorized. 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md). |
 
 ## Ontology
@@ -153,7 +153,8 @@ immediately after the correction.
 **Always**
 
 - Treat VISION.md and ROADMAP.md as product truth, architecture.md as
-  implementation truth.
+  implementation truth. Keep delivery status in Issues and pull requests,
+  not in those documents.
 - Keep the object log as authority.
 - Fail closed on CRC mismatch, missing committed pages, and ACL denial.
 - Isolate from unrelated dirty trees.
