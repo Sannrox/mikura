@@ -336,7 +336,14 @@ brokers stay out.
    pages, current page used). A later write, including an uncommitted stream
    append, a different restriction, or a different query fails closed. Reopen
    on the same committed head with an empty uncommitted page keeps a cursor
-   valid. Set union / intersection /
+   valid. A paged single-key sort does not rank every result: when the
+   sort property has no more distinct values than there are results, it
+   walks that property's in-memory equality index in value order and stops
+   once the page and one look-ahead row are found; otherwise it keeps a
+   bounded top `page_size + 1` in one pass. Multi-key, nearest, and unpaged
+   sorts, and any stored value or cursor that fails to parse, take the full
+   ranking, so order, cursors, and errors are the same either way
+   ([#316](https://github.com/Sannrox/mikura/issues/316)). Set union / intersection /
    difference, prefix, and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
