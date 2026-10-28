@@ -535,6 +535,16 @@ impl JoinMaps {
         hops: &[(&str, &str, bool)],
         filter: Option<(&str, &str)>,
     ) -> Vec<String> {
+        self.sorted_keys(self.result_ids(root_kind, hops, filter))
+    }
+
+    /// Interned ids behind [`Self::result_keys`], distinct and unordered.
+    pub(crate) fn result_ids(
+        &self,
+        root_kind: &str,
+        hops: &[(&str, &str, bool)],
+        filter: Option<(&str, &str)>,
+    ) -> Vec<u32> {
         let roots = match filter {
             None => {
                 let Some(&root_kind_id) = self.intern_ix.get(root_kind) else {
@@ -547,20 +557,17 @@ impl JoinMaps {
             }
             Some((property, value)) => self.matching_root_ids(root_kind, property, value),
         };
-        if roots.is_empty() {
-            return Vec::new();
-        }
-        COUNT_SCRATCH.with(|scratch| {
-            let ids = scratch
-                .borrow_mut()
-                .collect_leaves(self, &roots, hops, root_kind);
-            let mut keys: Vec<String> = ids
-                .into_iter()
-                .filter_map(|id| self.intern_get(id).map(str::to_string))
-                .collect();
-            keys.sort();
-            keys
-        })
+        self.result_ids_from_roots(root_kind, &roots, hops)
+    }
+
+    /// Interned key strings of `ids`, byte-sorted.
+    pub(crate) fn sorted_keys(&self, ids: Vec<u32>) -> Vec<String> {
+        let mut keys: Vec<String> = ids
+            .into_iter()
+            .filter_map(|id| self.intern_get(id).map(str::to_string))
+            .collect();
+        keys.sort();
+        keys
     }
 
     pub(crate) fn intern(&mut self, value: &str) -> u32 {
@@ -706,26 +713,38 @@ impl JoinMaps {
         })
     }
 
-    pub(crate) fn result_keys_from_roots(
+    /// Distinct leaf ids reached from `roots` over `hops`, unordered.
+    pub(crate) fn result_ids_from_roots(
         &self,
         root_kind: &str,
         roots: &HashSet<u32>,
         hops: &[(&str, &str, bool)],
-    ) -> Vec<String> {
-        if roots.is_empty() {
-            return Vec::new();
+    ) -> Vec<u32> {
+        if hops.is_empty() {
+            return roots.iter().copied().collect();
         }
         COUNT_SCRATCH.with(|scratch| {
-            let ids = scratch
+            scratch
                 .borrow_mut()
-                .collect_leaves(self, roots, hops, root_kind);
-            let mut keys: Vec<String> = ids
-                .into_iter()
-                .filter_map(|id| self.intern_get(id).map(str::to_string))
-                .collect();
-            keys.sort();
-            keys
+                .collect_leaves(self, roots, hops, root_kind)
         })
+    }
+
+    /// Value id -> visible key ids of `kind_id` holding `prop_id`: the
+    /// equality index that filters and hops read.
+    pub(crate) fn value_index(
+        &self,
+        kind_id: u32,
+        prop_id: u32,
+    ) -> Option<&HashMap<u32, Vec<u32>>> {
+        self.by_prop.get(&(kind_id, prop_id))
+    }
+
+    /// [`Self::prop`] by interned ids.
+    pub(crate) fn owned_value(&self, kind_id: u32, key_id: u32, prop_id: u32) -> Option<&str> {
+        let owned = self.owned.get(&(kind_id, key_id))?;
+        let (_, value_id) = owned.iter().find(|(pid, _)| *pid == prop_id)?;
+        self.intern_get(*value_id)
     }
 
     pub(crate) fn intern_existing(&self, value: &str) -> Option<u32> {

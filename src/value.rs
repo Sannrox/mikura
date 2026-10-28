@@ -164,7 +164,11 @@ impl PropertyType {
         self.cmp_values(&self.parse_canonical(left)?, &self.parse_canonical(right)?)
     }
 
-    fn cmp_values(self, left: &PropertyValue, right: &PropertyValue) -> Result<Ordering, String> {
+    pub(crate) fn cmp_values(
+        self,
+        left: &PropertyValue,
+        right: &PropertyValue,
+    ) -> Result<Ordering, String> {
         match (self, left, right) {
             (Self::String, PropertyValue::String(a), PropertyValue::String(b))
             | (Self::Timestamp, PropertyValue::Timestamp(a), PropertyValue::Timestamp(b)) => {

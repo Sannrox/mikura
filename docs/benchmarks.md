@@ -95,6 +95,34 @@ Readings:
 - A host read waits for a concurrent write to commit: reads under writes
   have a p95 near one commit at 10^4, and a p50 above 10 ms at 10^6.
 
+## Paged sorts without ranking every result
+
+[#316](https://github.com/Sannrox/mikura/issues/316). Before, a sorted page
+turned every result id into a string, sorted those, parsed and ranked every
+result, then cut 100 rows. At 10^6, `list_filter` has about 126k matches:
+the count and sum took about 8 ms, building and sorting the key strings about
+25 ms, and ranking the rest. A paged single-key sort now walks the sort
+property's equality index in value order and stops at the page, or keeps a
+bounded top-k when the property has more distinct values than there are
+results. Count-only evaluates (`object_bound == 0`) no longer collect result
+keys at all, which is most of what the hop sums were spending.
+
+Apple M2 Pro, 10 CPUs, macOS arm64, `cargo bench` release profile, 10^6,
+2026-10-28. The machine was shared with other builds (load average 15 to
+67), so p95 carries scheduler noise. One run of the old path is left out
+because it ran under the heaviest load (p50 550 ms).
+
+| Measurement | Before p50 / p95, per run | After p50 / p95, per run |
+| --- | --- | --- |
+| `list_filter` | 222 / 228 ms, 234 / 238 ms | 19.8 / 44.2 ms, 15.2 / 36.3 ms, 25.1 / 53.4 ms, 16.6 / 39.6 ms |
+| `list` | 1.94 / 1.96 s, 4.06 / 8.51 s | 53.0 / 107 ms, 31.3 / 52.3 ms, 39.2 / 61.0 ms, 36.5 / 90.0 ms |
+| `one_hop_sum_declared` | 244 / 257 ms, 327 / 443 ms | 1.5 / 13.7 ms, 1.3 / 8.5 ms, 1.3 / 15.5 ms, 1.4 / 9.0 ms |
+| `two_hop_sum_undeclared` | 255 / 263 ms, 400 / 438 ms | 1.4 / 5.4 ms, 1.3 / 6.3 ms, 1.4 / 15.7 ms, 1.4 / 9.9 ms |
+
+On the same machine without competing load, one `list_filter` evaluate is
+about 12 ms, of which about 8 ms is the count and sum over every match that
+the response must carry.
+
 ## Nightly gate
 
 `.github/workflows/bench.yml` runs 10^4 and 10^6 every night on
