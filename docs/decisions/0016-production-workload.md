@@ -96,8 +96,9 @@ ADR does not change the log, the public API, or host `v=1`.
   unpartitioned ([ADR 0024](0024-unpartitioned-store.md)).
 - 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) closed: ingest
   is a disk miss. Query still holds 500 ms at 10⁷ on declared rollups.
-  That synthetic ceiling is not a consumer SLO. Scale-out is
-  [#248](https://github.com/Sannrox/mikura/issues/248).
+  That synthetic ceiling is not a consumer SLO. Scale-out closed
+  no-action ([#248](https://github.com/Sannrox/mikura/issues/248),
+  [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)).
 
 ## Validation
 

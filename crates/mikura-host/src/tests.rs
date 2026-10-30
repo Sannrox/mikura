@@ -1303,6 +1303,10 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         page.contains("[#55]") && page.contains("**Closed.**") && page.contains("disk"),
         "10¹⁰ closed as an ingest disk miss, not a production SLO"
     );
+    assert!(
+        page.contains("[#248]") && page.contains("Closed no-action"),
+        "scale-out after the synthetic ceiling closes no-action"
+    );
 }
 
 #[test]
@@ -1350,6 +1354,18 @@ fn capacity_decision_keeps_one_store() {
     assert!(
         collapsed.contains("#193") && collapsed.contains("closed no-action"),
         "partition semantics close no-action while the store is unpartitioned"
+    );
+    assert!(
+        collapsed.contains("#248") && collapsed.contains("closed no-action"),
+        "scale-out after the synthetic ceiling closes no-action"
+    );
+    let adr46 =
+        include_str!("../../../docs/decisions/0046-unpartitioned-store-after-synthetic-ceiling.md");
+    let collapsed46: String = adr46.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        collapsed46.contains("Keep one unpartitioned store.")
+            && collapsed46.contains("Open no scale-out follow-ups."),
+        "scale-out ADR must keep one store and close follow-ups"
     );
 }
 

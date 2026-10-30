@@ -35,7 +35,9 @@ Synthetic envelopes do not set its SLOs.
 Scale and the log remain gated research. 10¹⁰ ingest is a disk miss
 ([#55](https://github.com/Sannrox/mikura/issues/55)); hop count+sum still
 holds 500 ms at 10⁷. A miss is not an engine pick. Scale-out after this
-ceiling is [#248](https://github.com/Sannrox/mikura/issues/248).
+ceiling closed no-action
+([#248](https://github.com/Sannrox/mikura/issues/248),
+[ADR 0046](docs/decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)).
 
 Out until an ADR: per-op join WAL; principals or tenants in this crate; a
 query language; a cluster compute backend; group-by or other aggregates

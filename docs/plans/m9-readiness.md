@@ -23,8 +23,9 @@ Unresolved SLO cells are not an availability miss.
 ([ADR 0024](../decisions/0024-unpartitioned-store.md)).
 [#193](https://github.com/Sannrox/mikura/issues/193) closed no-action.
 [#55](https://github.com/Sannrox/mikura/issues/55) closed: 10¹⁰ ingest is
-a disk miss. Scale-out after that ceiling is
-[#248](https://github.com/Sannrox/mikura/issues/248).
+a disk miss. Scale-out after that ceiling closed no-action
+([#248](https://github.com/Sannrox/mikura/issues/248),
+[ADR 0046](../decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)).
 
 ## Named revision
 
@@ -102,6 +103,7 @@ a named envelope misses on disk or `Store::open`.
 | [#192](https://github.com/Sannrox/mikura/issues/192) partitioning | **Closed no-action.** No named capacity miss. One identity space. |
 | [#193](https://github.com/Sannrox/mikura/issues/193) partition semantics | **Closed no-action.** Partitioning was not selected. |
 | [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Closed.** Ingest is the first miss (disk). Query still holds at 10⁷. |
+| [#248](https://github.com/Sannrox/mikura/issues/248) scale-out | **Closed no-action.** Synthetic ceiling documented; one unpartitioned store remains ([ADR 0046](../decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)). |
 
 ## Out of this investigation
 

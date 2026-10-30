@@ -32,7 +32,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0021](0021-bounded-host-execution.md) | One RPC at a time; no invented mixed-load SLO (amended by 0040) | accepted |
 | [0022](0022-operational-signals.md) | Host JSON health; process-local RPC counts | accepted |
 | [0023](0023-single-process-availability.md) | Retain one-process availability; no replication without a published miss (amended by #244) | accepted |
-| [0024](0024-unpartitioned-store.md) | Retain one unpartitioned store; no split without a published capacity miss | accepted |
+| [0024](0024-unpartitioned-store.md) | Retain one unpartitioned store; no split without a published capacity miss (amended by 0046) | accepted |
 | [0025](0025-ingest-action-id-uniqueness.md) | Action id uniqueness on ingest append | accepted |
 | [0026](0026-atomic-ingest-batch.md) | An ingest batch is all or nothing | accepted |
 | [0027](0027-overlay-apply-keeps-rematerialization.md) | A new overlay keeps rematerializing the instance; no patch-only path without a measured miss | accepted |
@@ -54,6 +54,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0043](0043-typed-ref-values.md) | Vector, time-series, geo, and media reference types | accepted |
 | [0044](0044-log-encryption.md) | Object log encryption at rest (`MIKURAV3`) | accepted |
 | [0045](0045-self-tuning-store.md) | Query-shape recording and a reviewable tuning advisor | accepted |
+| [0046](0046-unpartitioned-store-after-synthetic-ceiling.md) | Retain one unpartitioned store after the synthetic 10¹⁰ ingest ceiling | accepted |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is

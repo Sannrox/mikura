@@ -509,5 +509,6 @@ envelope's first miss.
 - **RAM** at 10⁷ is 4.0 GiB on 32 GiB. Fit holds at 10⁷.
 - **No engine pick.** Spark stays unsupported. Cluster compute stays a
   separate Design Discussion.
-- **No new Issue.** [#248](https://github.com/Sannrox/mikura/issues/248)
-  is the existing scale-out discussion after this ceiling.
+- **No new Issue.** Scale-out after this ceiling closed no-action
+  ([#248](https://github.com/Sannrox/mikura/issues/248),
+  [ADR 0046](../../docs/decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)).
