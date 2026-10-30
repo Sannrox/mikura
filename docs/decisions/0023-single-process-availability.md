@@ -89,8 +89,9 @@ No `MIKURAV1` change. No second store of record. No cluster compute.
 - Capacity is a separate decision
   ([ADR 0024](0024-unpartitioned-store.md)): one unpartitioned store.
   Availability and capacity stay separate.
-- [#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until
-  a consumer names a 10¹⁰ envelope.
+- [#55](https://github.com/Sannrox/mikura/issues/55) closed: 10¹⁰ ingest
+  is a disk miss. That is a capacity note, not an availability miss.
+  Scale-out is [#248](https://github.com/Sannrox/mikura/issues/248).
 - Backup, shutdown, and serial-RPC drills in
   [m9-readiness.md](../plans/m9-readiness.md) remain the recovery
   evidence. They are not SLOs.

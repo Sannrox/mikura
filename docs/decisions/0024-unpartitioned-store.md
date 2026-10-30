@@ -24,8 +24,10 @@ time for the product-loop stay blank
 [ADR 0016](0016-production-workload.md)). Unresolved cells are not a
 capacity miss. Synthetic spike 011 (10⁷ hop count+sum hold, 10⁸ ingest
 finish) is a different fixture and is not this workload's envelope.
-[#55](https://github.com/Sannrox/mikura/issues/55) is the 10¹⁰ hop
-envelope and stays blocked until a consumer names it.
+[#55](https://github.com/Sannrox/mikura/issues/55) closed the 10¹⁰ hop
+envelope: ingest is a disk miss on the synthetic fixture. That is not a
+consumer-published capacity target. Scale-out after the ceiling is
+[#248](https://github.com/Sannrox/mikura/issues/248).
 
 Availability already closed retain-one-process
 ([ADR 0023](0023-single-process-availability.md)). Partitioning is a
@@ -54,7 +56,9 @@ implemented.**
 
 3. **Capacity path.** Disk growth and `Store::open` time still revisit
    compact/checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53)),
-   not a split. 10¹⁰ stays [#55](https://github.com/Sannrox/mikura/issues/55).
+   not a split. 10¹⁰ closed as an ingest disk miss
+   ([#55](https://github.com/Sannrox/mikura/issues/55)); a partition
+   decision stays [#248](https://github.com/Sannrox/mikura/issues/248).
 
 4. **Revisit.** Open new research only when a consumer publishes object
    counts, fanout, disk, or rebuild targets this one store cannot meet.
@@ -81,8 +85,9 @@ Availability (one process, restore-from-log) is unchanged.
 - [#193](https://github.com/Sannrox/mikura/issues/193) closed
   no-action: partitioning was not selected. Partition semantics are
   not implemented.
-- [#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until
-  a consumer names a 10¹⁰ envelope.
+- [#55](https://github.com/Sannrox/mikura/issues/55) closed: ingest disk
+  miss on the synthetic fixture. One unpartitioned store remains until
+  [#248](https://github.com/Sannrox/mikura/issues/248) decides otherwise.
 - Compact/checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53))
   stays closed until a named envelope misses on disk or `Store::open`.
 

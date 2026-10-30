@@ -73,9 +73,9 @@ Ops already on the wire: `ingest_batch`, `ingest_stream_push`,
   ([#57](https://github.com/Sannrox/mikura/issues/57) tag; work stays
   there)
 - crates.io publish
-- 10¹⁰ envelope ([#55](https://github.com/Sannrox/mikura/issues/55));
-  10⁹ closed without a finished billion-object ingest
-  ([#54](https://github.com/Sannrox/mikura/issues/54))
+- 10¹⁰ envelope ([#55](https://github.com/Sannrox/mikura/issues/55)
+  closed: ingest is a disk miss); 10⁹ closed without a finished
+  billion-object ingest ([#54](https://github.com/Sannrox/mikura/issues/54))
 - M5 operators, subscriptions, encryption, tenants
 - Metrics dashboards, generated SDKs, gRPC
 - Post-accept evaluate/ingest deadline; admission is the request line

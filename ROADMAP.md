@@ -32,8 +32,10 @@ The named production workload is the product-loop
 ([m9-workload-acceptance.md](docs/plans/m9-workload-acceptance.md)).
 Synthetic envelopes do not set its SLOs.
 
-Scale and the log remain gated research. A larger envelope waits until a
-consumer names it, and a miss is not an engine pick.
+Scale and the log remain gated research. 10¹⁰ ingest is a disk miss
+([#55](https://github.com/Sannrox/mikura/issues/55)); hop count+sum still
+holds 500 ms at 10⁷. A miss is not an engine pick. Scale-out after this
+ceiling is [#248](https://github.com/Sannrox/mikura/issues/248).
 
 Out until an ADR: per-op join WAL; principals or tenants in this crate; a
 query language; a cluster compute backend; group-by or other aggregates

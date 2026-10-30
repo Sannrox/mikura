@@ -22,8 +22,9 @@ Unresolved SLO cells are not an availability miss.
 [#192](https://github.com/Sannrox/mikura/issues/192) closed no-action
 ([ADR 0024](../decisions/0024-unpartitioned-store.md)).
 [#193](https://github.com/Sannrox/mikura/issues/193) closed no-action.
-[#55](https://github.com/Sannrox/mikura/issues/55) stays blocked until a
-consumer names a 10¹⁰ envelope.
+[#55](https://github.com/Sannrox/mikura/issues/55) closed: 10¹⁰ ingest is
+a disk miss. Scale-out after that ceiling is
+[#248](https://github.com/Sannrox/mikura/issues/248).
 
 ## Named revision
 
@@ -100,7 +101,7 @@ a named envelope misses on disk or `Store::open`.
 | [#244](https://github.com/Sannrox/mikura/issues/244) replication revisit | **Closed no-action.** Named consumer still unpublished RPO/RTO. Checkpoints and online backup are restore, not a replica. |
 | [#192](https://github.com/Sannrox/mikura/issues/192) partitioning | **Closed no-action.** No named capacity miss. One identity space. |
 | [#193](https://github.com/Sannrox/mikura/issues/193) partition semantics | **Closed no-action.** Partitioning was not selected. |
-| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Blocked.** Until a consumer names that envelope. |
+| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ envelope | **Closed.** Ingest is the first miss (disk). Query still holds at 10⁷. |
 
 ## Out of this investigation
 

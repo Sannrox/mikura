@@ -87,5 +87,5 @@ spike 011 or from an 8-row Explorer seed would be a guessed SLO.
 | --- | --- |
 | [ADR 0016](../decisions/0016-production-workload.md) | Amended: Chisei is the named consumer; numbers still unpublished. |
 | [#189](https://github.com/Sannrox/mikura/issues/189) readiness | Still unresolved-evidence. |
-| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ | Still blocked until a consumer names that envelope. |
+| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ | Closed: ingest disk miss. Scale-out is [#248](https://github.com/Sannrox/mikura/issues/248). |
 | Lazy undeclared measures | [#258](https://github.com/Sannrox/mikura/issues/258): first-use cache on the sidecar; leaf budget fail-closed. |

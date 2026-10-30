@@ -1300,8 +1300,8 @@ fn readiness_report_keeps_slo_cells_unresolved() {
         "partition semantics must close no-action when partitioning is not selected"
     );
     assert!(
-        page.contains("[#55]") && page.contains("**Blocked.**"),
-        "10¹⁰ stays blocked until a consumer names that envelope"
+        page.contains("[#55]") && page.contains("**Closed.**") && page.contains("disk"),
+        "10¹⁰ closed as an ingest disk miss, not a production SLO"
     );
 }
 

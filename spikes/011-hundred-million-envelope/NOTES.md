@@ -446,3 +446,68 @@ versus sidecar after `Store::open`. Full log replay was not required.
 - **No engine pick.** Spark stays unsupported.
 - **No follow-up Issue.** Do not start
   [#55](https://github.com/Sannrox/mikura/issues/55) from this hold.
+
+## Addendum (2026-10-30): 10¹⁰ hop count and sum (#55)
+
+Question: after the 10⁹ close ([#54](https://github.com/Sannrox/mikura/issues/54))
+and the 10⁷ declared-rollup hold ([#152](https://github.com/Sannrox/mikura/issues/152)),
+do hop count and sum hold a published budget at 10¹⁰? Same fixture family.
+A miss is a note, not an engine pick. Classify whether ingest, open, or
+query is the first miss.
+
+Budgets stated before this run (same machine class as prior addenda: Apple
+M2 Pro, 32 GiB, Darwin arm64; `rustc` 1.99.0; no hostnames):
+
+| Metric | Budget |
+| --- | ---: |
+| Hop count + sum query | **≤ 500 ms** |
+| Dual-read vs sidecar (sampled; full replay only if cheap) | **hold** |
+| Fit in 32 GiB | **hold** |
+| 10¹⁰ ingest completes (disk and time) | **hold** |
+
+The harness now compiles against namespaced `Store` / `EvaluateRequest`
+and declared `Shipment.amount` rollups. `--stop-after-chunks` can abort a
+larger `--objects` run after N million-record flushes. This addendum ran
+the 10⁷ fixture to completion so query, open, and dual-read are on a
+known envelope, then projected 10¹⁰ from those sizes. Do not finish a
+10¹⁰ ingest.
+
+```text
+cargo test --manifest-path spikes/011-hundred-million-envelope/Cargo.toml --locked
+cargo run --release --manifest-path spikes/011-hundred-million-envelope/Cargo.toml --locked -- --objects 10000000 --oracle sidecar
+```
+
+Same Customer→Order→Shipment ratios, hidden every 100th key, sidecar
+oracle. `declared_sum=Shipment.amount`. Volume had ~69 GiB free.
+
+| objects | ingest | 1 M `commit_ms` | RSS | log | sidecar | **query** | `Store::open` | dual-read |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| **10⁷** (#152) | 149 s | — | 7.1 GiB | 593 MiB | 442 MiB | **40 ms** | 12.0 s | **hold** |
+| **10⁷** (this SHA) | 190 s | 7 s → 23 s, one 40 s spike | 4.0 GiB | 634 MiB | 491 MiB | **49 ms** | 24.0 s | **hold** |
+| **10¹⁰** | not run | climbing at 10⁷ | — | ~634 GiB proj. | ~491 GiB proj. | not reached | not reached | not reached |
+
+`live_query_ms=49`. `sidecar_query_ms=66`. `ingest_ms=190270`. Peak RSS
+`4311465984`. Log `664276992`. Sidecar `514607143`. `open_ms=23947`.
+Count `99000` and sum `226861000` match the published 10⁷ oracle.
+Dual-read is live versus sidecar after `Store::open`.
+
+10⁷ uses ~1.1 GiB of log plus sidecar. Linear disk use fills around
+600–700 M objects on this volume, before 10⁹, and long before 10¹⁰.
+Late 1 M `commit_ms` was already 18–23 s at 10⁷. A finished ten-billion
+object ingest cannot make the disk hold.
+
+Query still holds ≤ 500 ms at 10⁷ on declared rollups. That is not a
+10¹⁰ query number. Open is 24 s at 10⁷; restart cost is not this
+envelope's first miss.
+
+## Verdict: INGEST MISS; 10¹⁰ INGEST NOT REQUIRED
+
+- **First miss is ingest (disk).** Time would miss next if disk did not.
+- **Query** holds ≤ 500 ms at 10⁷: **49 ms**. Do not treat 10¹⁰ as a new
+  query question.
+- **`Store::open`** is 24 s at 10⁷. Not the first miss.
+- **RAM** at 10⁷ is 4.0 GiB on 32 GiB. Fit holds at 10⁷.
+- **No engine pick.** Spark stays unsupported. Cluster compute stays a
+  separate Design Discussion.
+- **No new Issue.** [#248](https://github.com/Sannrox/mikura/issues/248)
+  is the existing scale-out discussion after this ceiling.

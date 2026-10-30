@@ -54,12 +54,13 @@ correctness check.
 
 | Envelope | Result | What it is not |
 | --- | --- | --- |
-| 10⁷ hop count+sum on **declared** last-hop rollups | **40 ms hold** vs 500 ms; dual-read holds; 7.1 GiB RSS ([#152](https://github.com/Sannrox/mikura/issues/152)) | General query p95; undeclared first-use is [#258](https://github.com/Sannrox/mikura/issues/258) |
+| 10⁷ hop count+sum on **declared** last-hop rollups | **40 ms hold** vs 500 ms; dual-read holds; 7.1 GiB RSS ([#152](https://github.com/Sannrox/mikura/issues/152)). Remasure **49 ms**, 4.0 GiB ([#55](https://github.com/Sannrox/mikura/issues/55)) | General query p95; undeclared first-use is [#258](https://github.com/Sannrox/mikura/issues/258) |
 | 10⁷ hop count+sum **before** last-hop measures | miss vs 500 ms (878–2117 ms depending on addendum) | Current declared-rollup path |
 | 10⁸ ingest | **completes** (~2.8 h, 100 × 1 M chunks, peak 7.9 GiB) ([#137](https://github.com/Sannrox/mikura/issues/137)) | Query, `Store::open`, mixed load, or dual-read at 10⁸ |
 | 10⁸ query / open / dual-read | **unmeasured** | A hold or miss |
-| 10⁷ `Store::open` | ~12 s after last-hop measures | A published production reopen SLO |
-| 10⁹ ingest | not required; hop count+sum already misses 500 ms at 10⁷ without declared rollups ([#54](https://github.com/Sannrox/mikura/issues/54)) | A reason to start 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) |
+| 10⁷ `Store::open` | ~12 s after last-hop measures; 24 s on the [#55](https://github.com/Sannrox/mikura/issues/55) remasure | A published production reopen SLO |
+| 10⁹ ingest | not required; hop count+sum already misses 500 ms at 10⁷ without declared rollups ([#54](https://github.com/Sannrox/mikura/issues/54)) | A 10¹⁰ query question |
+| 10¹⁰ ingest | disk miss; not required. Query still holds 500 ms at 10⁷ on declared rollups ([#55](https://github.com/Sannrox/mikura/issues/55)) | A consumer capacity SLO or an engine pick |
 | Mixed ingest vs evaluate | host-process fixture evidence, not a published SLO | Concurrent snapshot readers with one exclusive writer ([ADR 0040](../decisions/0040-concurrent-host-readers.md)). Consumer mixed-load p95 stays unpublished ([ADR 0016](../decisions/0016-production-workload.md)). |
 | Simultaneous clients | **unmeasured** | An admission SLO beyond the request-line bound. [#188](https://github.com/Sannrox/mikura/issues/188) stays blocked |
 
@@ -132,5 +133,5 @@ bench is **not** a published SLO. Details:
 - Implementation of metrics, scheduling, replication, or partitioning
 - Filling unresolved cells with guessed numbers
 - Treating the 40 ms rollup hold as general evaluate latency
-- Starting 10¹⁰ from a synthetic hold
+- Treating the 10¹⁰ ingest miss as a consumer SLO or an engine pick
 - Private environment inventory in public artifacts
