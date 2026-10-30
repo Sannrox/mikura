@@ -33,15 +33,16 @@ application is complete.
 | Queries | Load one object; one exact root filter; bounded matching objects; hop count/sum in [objectset.rs](../../src/objectset.rs); composed predicates and snapshot pages ([#173](https://github.com/Sannrox/mikura/issues/173), [#174](https://github.com/Sannrox/mikura/issues/174), [ADR 0015](../decisions/0015-composable-object-sets.md)) | Extra operators still need a named fixture |
 | Edits | Property overlay on the log; `apply_action` still whole-record replace; Action-id replay on `apply_action` ([ADR 0011](../decisions/0011-action-id-retry-key.md)); overlay Action-id replay ([ADR 0019](../decisions/0019-overlay-retry-and-mutation-boundaries.md), [#181](https://github.com/Sannrox/mikura/issues/181)); [merge](../../crates/mikura-ingest/src/merge.rs) replaces a whole record for one cycle; [StreamApply](../../crates/mikura-ingest/src/apply.rs) records last committed source offset as `mikura.source/<source>` ([ADR 0031](../decisions/0031-ordered-stream-apply.md), [#246](https://github.com/Sannrox/mikura/issues/246)); overlay vs source merge is user-wins by default or newest-timestamp-wins on the kind descriptor ([ADR 0032](../decisions/0032-overlay-conflict-strategy.md), [#249](https://github.com/Sannrox/mikura/issues/249)) | Changelog source-sync offsets stay with the clerk ([#123](https://github.com/Sannrox/mikura/issues/123), [ADR 0020](../decisions/0020-resumable-source-reconciliation.md)). Multi-object atomic edits closed no-action ([#182](https://github.com/Sannrox/mikura/issues/182)). |
 | Access | Request restriction document (property deny plus object hide) on load, evaluate, overlay, action, and hide ([ADR 0014](../decisions/0014-externally-supplied-restrictions.md), [#179](https://github.com/Sannrox/mikura/issues/179)); non-loopback process bearer | Clerk still owns policy authoring |
-| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests. Named workload is the product-loop; synthetic scale is not an SLO ([ADR 0016](../decisions/0016-production-workload.md), [m9-workload-acceptance.md](m9-workload-acceptance.md)). Host RPCs are concurrent snapshot readers with one exclusive writer ([ADR 0040](../decisions/0040-concurrent-host-readers.md), [ADR 0021](../decisions/0021-bounded-host-execution.md)). Health is process-local ([ADR 0022](../decisions/0022-operational-signals.md)). M9 readiness is unresolved evidence ([m9-readiness.md](m9-readiness.md)). Availability is one process plus restore ([ADR 0023](../decisions/0023-single-process-availability.md), [#190](https://github.com/Sannrox/mikura/issues/190), [#244](https://github.com/Sannrox/mikura/issues/244)). Capacity is one unpartitioned store ([ADR 0024](../decisions/0024-unpartitioned-store.md), [#192](https://github.com/Sannrox/mikura/issues/192)) | Unpublished consumer SLOs. 10¹⁰ stays blocked |
+| Recovery and scale | CRC log, sidecar rebuild, copy-the-log restore e2e, stdin-close stop plus same-files reopen, integration and host-process tests. Named workload is the product-loop; synthetic scale is not an SLO ([ADR 0016](../decisions/0016-production-workload.md), [m9-workload-acceptance.md](m9-workload-acceptance.md)). Host RPCs are concurrent snapshot readers with one exclusive writer ([ADR 0040](../decisions/0040-concurrent-host-readers.md), [ADR 0021](../decisions/0021-bounded-host-execution.md)). Health is process-local ([ADR 0022](../decisions/0022-operational-signals.md)). M9 readiness is unresolved evidence ([m9-readiness.md](m9-readiness.md)). Availability is one process plus restore ([ADR 0023](../decisions/0023-single-process-availability.md), [#190](https://github.com/Sannrox/mikura/issues/190), [#244](https://github.com/Sannrox/mikura/issues/244)). Capacity is one unpartitioned store ([ADR 0024](../decisions/0024-unpartitioned-store.md), [#192](https://github.com/Sannrox/mikura/issues/192)). 10¹⁰ ingest is a disk miss ([#55](https://github.com/Sannrox/mikura/issues/55)) | Unpublished consumer SLOs. Scale-out after the synthetic ceiling is [#248](https://github.com/Sannrox/mikura/issues/248) |
 
 The [existing roadmap](../../ROADMAP.md) records a 10⁷ hop count+sum
-**40 ms hold** after last-hop measures ([#152](https://github.com/Sannrox/mikura/issues/152)),
-a finished 10⁸ ingest, and a 10⁹ close that does not need a finished
-billion-object run ([#54](https://github.com/Sannrox/mikura/issues/54)).
-[10¹⁰](https://github.com/Sannrox/mikura/issues/55) waits until a
-consumer names that envelope. Those are long-horizon research, not the
-next application milestone.
+**hold** after last-hop measures ([#152](https://github.com/Sannrox/mikura/issues/152),
+[#55](https://github.com/Sannrox/mikura/issues/55) remasure **49 ms**),
+a finished 10⁸ ingest, a 10⁹ close that does not need a finished
+billion-object run ([#54](https://github.com/Sannrox/mikura/issues/54)),
+and a 10¹⁰ close whose first miss is ingest disk
+([#55](https://github.com/Sannrox/mikura/issues/55)). Those are
+long-horizon research, not the next application milestone.
 
 ## First application contract
 
@@ -190,7 +191,7 @@ assumed requirements. gRPC remains ask-first.
 | Ingest / writeback | Overlay merge on source ingest; replacement Action | Test replay, stale writes, partial failures, repeated deliveries, and deletion lifetimes | Lost edits, duplicated effects, skipped source updates |
 | Access boundary | Caller-provided property denies and process bearer | Trusted-gateway contract; integration/e2e tests across every operation | Restricted values affect observable results or edits bypass admission |
 | Hosting | Single process, request bounds, stdin-close stop, copy-the-log restore | Operational signals ([#186](https://github.com/Sannrox/mikura/issues/186)) and concurrent-client admission ([#187](https://github.com/Sannrox/mikura/issues/187)) without inventing SLOs | One client stalls service or resources grow without bound |
-| Scale | Existing synthetic envelopes; 10⁸ ingest finished, 10⁸ query/open not reached. Named production workload is the product-loop ([m9-workload-acceptance.md](m9-workload-acceptance.md)) | One targeted bottleneck investigation at a time; 10¹⁰ waits for a named envelope | Optimizing a workload the application does not need |
+| Scale | Existing synthetic envelopes; 10⁸ ingest finished, 10⁸ query/open not reached; 10¹⁰ ingest is a disk miss ([#55](https://github.com/Sannrox/mikura/issues/55)). Named production workload is the product-loop ([m9-workload-acceptance.md](m9-workload-acceptance.md)) | One targeted bottleneck investigation at a time; scale-out after the synthetic ceiling is [#248](https://github.com/Sannrox/mikura/issues/248) | Optimizing a workload the application does not need |
 
 Implementation gates remain formatting, workspace tests (including named
 integration and process e2e), clippy, the quickstart when the public API
@@ -214,11 +215,12 @@ numbers are reserved by this proposal, and no issues are published by it.
 
 [#54](https://github.com/Sannrox/mikura/issues/54) is closed: a billion-object
 ingest is not needed to decide 10⁹. After last-hop measures, 10⁷ hop
-count+sum holds ([#152](https://github.com/Sannrox/mikura/issues/152)). Keep
-[#55](https://github.com/Sannrox/mikura/issues/55) blocked until a
-consumer names 10¹⁰. Measure the application's actual scale first. No
-larger synthetic envelope is needed to justify the next application
-milestone.
+count+sum holds ([#152](https://github.com/Sannrox/mikura/issues/152)).
+[#55](https://github.com/Sannrox/mikura/issues/55) is closed: 10¹⁰ ingest
+is a disk miss; query still holds at 10⁷. Measure the application's
+actual scale first. Scale-out after this synthetic ceiling is
+[#248](https://github.com/Sannrox/mikura/issues/248). No larger synthetic
+envelope is needed to justify the next application milestone.
 
 Defer full text, vector/geospatial search, group-by and extra aggregates
 ([ADR 0018](../decisions/0018-aggregation-semantics.md)),

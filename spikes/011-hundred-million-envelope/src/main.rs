@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+const NS: &str = "ns";
+
 struct Scale {
     customers: i64,
     orders: i64,
@@ -41,48 +43,57 @@ enum Oracle {
     Sidecar,
 }
 
+#[derive(Debug)]
 struct Args {
     objects: i64,
     dir: Option<PathBuf>,
     keep: bool,
     oracle: Oracle,
+    stop_after_chunks: Option<usize>,
+}
+
+struct IngestStats {
+    peak_rss: u64,
+    chunks: usize,
+    sampled: bool,
 }
 
 fn rec(kind: &str, key: String, hidden: bool, props: Vec<(&str, String)>) -> ObjectRecord {
     ObjectRecord {
         gen: 1,
+        namespace: NS.into(),
         kind: kind.into(),
         key,
         hidden,
         action_id: None,
+        schema_version: 1,
         props: props.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     }
 }
 
 fn request() -> EvaluateRequest {
     EvaluateRequest {
+        namespace: NS.into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop {
                 far_kind: "Order".into(),
                 join_property: "customer_id".into(),
                 incoming: false,
+                predicate: None,
             },
             Hop {
                 far_kind: "Shipment".into(),
                 join_property: "order_id".into(),
                 incoming: false,
+                predicate: None,
             },
         ],
         sum_kind: "Shipment".into(),
         sum_property: "amount".into(),
         aggregate: Aggregate::CountAndSum,
         acl: PropertyAcl::allow_all(),
-        filter: None,
-        object_bound: 0,
-        sort: None,
-        page_size: 0,
-        cursor: None,
+        ..EvaluateRequest::default()
     }
 }
 
@@ -113,8 +124,9 @@ fn shipment_sum_schema() -> Result<ObjectRecord, String> {
             outgoing: true,
         }],
         sums: vec!["amount".into()],
+        ..SchemaDescriptor::default()
     }
-    .to_record()
+    .to_record(NS)
 }
 
 fn commit_declared_measures(store: &mut Store) -> Result<(), String> {
@@ -123,30 +135,91 @@ fn commit_declared_measures(store: &mut Store) -> Result<(), String> {
     Ok(())
 }
 
-fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<u64, String> {
+struct Ingestor<'a> {
+    store: &'a mut Store,
+    batch: Vec<ObjectRecord>,
+    chunk: usize,
+    stop_after_chunks: Option<usize>,
+    chunks: usize,
+    peak_rss: u64,
+}
+
+impl Ingestor<'_> {
+    fn push(&mut self, record: ObjectRecord) -> Result<bool, String> {
+        self.batch.push(record);
+        if self.batch.len() < self.chunk {
+            return Ok(false);
+        }
+        self.flush()?;
+        self.chunks += 1;
+        Ok(self.stop_after_chunks == Some(self.chunks))
+    }
+
+    fn flush(&mut self) -> Result<(), String> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+        let n = self.batch.len();
+        let fsync_before = self.store.log_fsync_count();
+        let t = Instant::now();
+        BatchIngest::run(self.store, std::mem::take(&mut self.batch))?;
+        let rss = rss_bytes();
+        self.peak_rss = self.peak_rss.max(rss);
+        eprintln!(
+            "ingested_chunk={n} commit_ms={} fsync_delta={} rss_bytes={rss}",
+            t.elapsed().as_millis(),
+            self.store.log_fsync_count() - fsync_before,
+        );
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<IngestStats, String> {
+        self.flush()?;
+        Ok(IngestStats {
+            peak_rss: self.peak_rss.max(rss_bytes()),
+            chunks: self.chunks,
+            sampled: self.stop_after_chunks.is_some_and(|n| self.chunks >= n),
+        })
+    }
+}
+
+fn ingest(
+    store: &mut Store,
+    scale: &Scale,
+    chunk: usize,
+    stop_after_chunks: Option<usize>,
+) -> Result<IngestStats, String> {
     commit_declared_measures(store)?;
-    let mut batch = Vec::with_capacity(chunk);
-    let mut peak_rss = rss_bytes();
+    let mut ingestor = Ingestor {
+        store,
+        batch: Vec::with_capacity(chunk),
+        chunk,
+        stop_after_chunks,
+        chunks: 0,
+        peak_rss: rss_bytes(),
+    };
     for id in 0..scale.customers {
-        batch.push(rec(
+        if ingestor.push(rec(
             "Customer",
             format!("c{id}"),
             id % 100 == 0,
             vec![("region", region(id))],
-        ));
-        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
+        ))? {
+            return ingestor.finish();
+        }
     }
     for id in 0..scale.orders {
-        batch.push(rec(
+        if ingestor.push(rec(
             "Order",
             format!("o{id}"),
             id % 100 == 0,
             vec![("customer_id", format!("c{}", id % scale.customers))],
-        ));
-        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
+        ))? {
+            return ingestor.finish();
+        }
     }
     for id in 0..scale.shipments {
-        batch.push(rec(
+        if ingestor.push(rec(
             "Shipment",
             format!("s{id}"),
             id % 100 == 0,
@@ -154,35 +227,11 @@ fn ingest(store: &mut Store, scale: &Scale, chunk: usize) -> Result<u64, String>
                 ("order_id", format!("o{}", id % scale.orders)),
                 ("amount", format!("{}", (id % 50) + 1)),
             ],
-        ));
-        peak_rss = peak_rss.max(flush_if_full(store, &mut batch, chunk)?);
+        ))? {
+            return ingestor.finish();
+        }
     }
-    if !batch.is_empty() {
-        BatchIngest::run(store, std::mem::take(&mut batch))?;
-        peak_rss = peak_rss.max(rss_bytes());
-    }
-    Ok(peak_rss)
-}
-
-fn flush_if_full(
-    store: &mut Store,
-    batch: &mut Vec<ObjectRecord>,
-    chunk: usize,
-) -> Result<u64, String> {
-    if batch.len() < chunk {
-        return Ok(0);
-    }
-    let n = batch.len();
-    let fsync_before = store.log_fsync_count();
-    let t = Instant::now();
-    BatchIngest::run(store, std::mem::take(batch))?;
-    let rss = rss_bytes();
-    eprintln!(
-        "ingested_chunk={n} commit_ms={} fsync_delta={} rss_bytes={rss}",
-        t.elapsed().as_millis(),
-        store.log_fsync_count() - fsync_before,
-    );
-    Ok(rss)
+    ingestor.finish()
 }
 
 fn region(id: i64) -> String {
@@ -238,9 +287,12 @@ fn main() -> ExitCode {
         Oracle::Sidecar => "sidecar",
     };
     eprintln!(
-        "objects={} oracle={oracle} query_budget_ms=500 keep={}",
+        "objects={} oracle={oracle} query_budget_ms=500 keep={} stop_after_chunks={}",
         scale.total(),
-        args.keep || !ephemeral
+        args.keep || !ephemeral,
+        args.stop_after_chunks
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "none".into())
     );
     let ingest_start = Instant::now();
     let mut store = match Store::create(&log) {
@@ -250,8 +302,8 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let peak_rss = match ingest(&mut store, &scale, 1_000_000) {
-        Ok(peak) => peak.max(rss_bytes()),
+    let stats = match ingest(&mut store, &scale, 1_000_000, args.stop_after_chunks) {
+        Ok(stats) => stats,
         Err(error) => {
             eprintln!("ingest: {error}");
             eprintln!(
@@ -354,7 +406,7 @@ fn main() -> ExitCode {
     println!("objects={}", scale.total());
     println!("ingest_ms={ingest_ms}");
     println!("ingest_rss_bytes={ingest_rss}");
-    println!("peak_rss_bytes={peak_rss}");
+    println!("peak_rss_bytes={}", stats.peak_rss);
     println!("log_bytes={object_log_bytes}");
     println!("join_bytes={join_bytes}");
     println!("live_query_ms={live_query_ms}");
@@ -364,6 +416,8 @@ fn main() -> ExitCode {
     println!("replay_ms={replay_ms}");
     println!("oracle={oracle}");
     println!("replayed_oracle={replayed_oracle}");
+    println!("sampled={}", stats.sampled);
+    println!("sampled_chunks={}", stats.chunks);
     println!("two_hop_count={}", from_sidecar.two_hop_count);
     println!("sum_amount={}", from_sidecar.sum_amount);
     println!("dual_read_hold={dual_read}");
@@ -391,6 +445,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         dir: None,
         keep: false,
         oracle: Oracle::Full,
+        stop_after_chunks: None,
     };
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -421,6 +476,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                     other => return Err(format!("unknown --oracle {other}")),
                 };
             }
+            "--stop-after-chunks" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing --stop-after-chunks value".to_string())?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|_| format!("invalid --stop-after-chunks {value}"))?;
+                if n == 0 {
+                    return Err("--stop-after-chunks must be > 0".into());
+                }
+                parsed.stop_after_chunks = Some(n);
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -431,9 +498,20 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
 mod tests {
     use super::*;
 
+    fn temp_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "mikura-envelope-{}-{}-{label}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
     #[test]
     fn keep_dir_refuses_existing_log() {
-        let dir = std::env::temp_dir().join("mikura-envelope-keep-test");
+        let dir = temp_dir("keep");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("objects.mikura");
@@ -451,10 +529,11 @@ mod tests {
         let schema = SchemaDescriptor::from_record(&record).unwrap();
         assert_eq!(schema.kind, "Shipment");
         assert_eq!(schema.sums, vec!["amount".to_string()]);
+        assert_eq!(record.namespace, NS);
     }
 
     #[test]
-    fn parse_dir_keep_and_sidecar_oracle() {
+    fn parse_dir_keep_sidecar_oracle_and_stop() {
         let args = parse_args(
             [
                 "--objects",
@@ -463,6 +542,8 @@ mod tests {
                 "data/envelope",
                 "--oracle",
                 "sidecar",
+                "--stop-after-chunks",
+                "10",
             ]
             .into_iter()
             .map(String::from),
@@ -472,25 +553,35 @@ mod tests {
         assert_eq!(args.dir.as_deref(), Some(Path::new("data/envelope")));
         assert!(args.keep);
         assert_eq!(args.oracle, Oracle::Sidecar);
+        assert_eq!(args.stop_after_chunks, Some(10));
+    }
+
+    #[test]
+    fn stop_after_chunks_zero_is_rejected() {
+        let error =
+            parse_args(["--stop-after-chunks", "0"].into_iter().map(String::from)).unwrap_err();
+        assert_eq!(error, "--stop-after-chunks must be > 0");
     }
 
     #[test]
     fn small_fixture_dual_read_holds_and_hidden_out() {
-        let dir = std::env::temp_dir().join("mikura-envelope-test");
+        let dir = temp_dir("dual");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("objects.mikura");
         let scale = Scale::from_objects(1_000).unwrap();
         let mut store = Store::create(&log).unwrap();
-        ingest(&mut store, &scale, 200).unwrap();
+        let stats = ingest(&mut store, &scale, 200, None).unwrap();
+        assert!(!stats.sampled);
         let schema = store
-            .schema("Shipment")
+            .schema(NS, "Shipment")
             .unwrap()
             .expect("declared Shipment schema");
         assert_eq!(schema.sums, vec!["amount".to_string()]);
-        assert!(!store.joins().is_visible("Customer", "c0"));
-        assert!(!store.joins().is_visible("Order", "o0"));
-        assert!(!store.joins().is_visible("Shipment", "s0"));
+        let joins = store.joins(NS).unwrap();
+        assert!(!joins.is_visible("Customer", "c0"));
+        assert!(!joins.is_visible("Order", "o0"));
+        assert!(!joins.is_visible("Shipment", "s0"));
         let oss = ObjectSet::new(LocalCompute);
         let live = oss.evaluate(&store, &request()).unwrap();
         assert!(live.two_hop_count > 0);
@@ -505,6 +596,23 @@ mod tests {
         let from_log = oss.evaluate(&replayed, &request()).unwrap();
         assert_eq!(from_log.two_hop_count, live.two_hop_count);
         assert_eq!(from_log.sum_amount, live.sum_amount);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stop_after_one_chunk_samples_without_finishing() {
+        let dir = temp_dir("stop");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("objects.mikura");
+        let scale = Scale::from_objects(1_000).unwrap();
+        let mut store = Store::create(&log).unwrap();
+        let stats = ingest(&mut store, &scale, 200, Some(1)).unwrap();
+        assert!(stats.sampled);
+        assert_eq!(stats.chunks, 1);
+        let oss = ObjectSet::new(LocalCompute);
+        let live = oss.evaluate(&store, &request()).unwrap();
+        assert!(live.two_hop_count > 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

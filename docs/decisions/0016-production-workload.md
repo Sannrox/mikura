@@ -94,9 +94,10 @@ ADR does not change the log, the public API, or host `v=1`.
   retain-one-process ([ADR 0023](0023-single-process-availability.md)).
   [#192](https://github.com/Sannrox/mikura/issues/192) closed
   unpartitioned ([ADR 0024](0024-unpartitioned-store.md)).
-- 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) stays blocked
-  until a consumer names that envelope. Do not start it from the 40 ms
-  hold.
+- 10¹⁰ ([#55](https://github.com/Sannrox/mikura/issues/55)) closed: ingest
+  is a disk miss. Query still holds 500 ms at 10⁷ on declared rollups.
+  That synthetic ceiling is not a consumer SLO. Scale-out is
+  [#248](https://github.com/Sannrox/mikura/issues/248).
 
 ## Validation
 

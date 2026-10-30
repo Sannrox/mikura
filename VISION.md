@@ -54,7 +54,7 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 | Capability | Meaning |
 | --- | --- |
 | Hosted | Multi-process service; still one logical store |
-| Scale envelopes | Measure at 10⁸, then 10⁹, then 10¹⁰. A miss is not an engine pick |
+| Scale envelopes | 10⁸ ingest finished; 10⁹ and 10¹⁰ ingest are disk misses, not required. 10⁷ hop count+sum holds 500 ms on declared rollups. A miss is not an engine pick |
 | Streaming ingest | Append as records arrive; incremental index; backpressure fail closed |
 | Object-set service | Filter, load, hop, aggregate. No query language |
 | Heavy compute | In-process first. A cluster backend only after a published hop/agg envelope that in-process misses |
