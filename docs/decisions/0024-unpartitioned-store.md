@@ -1,10 +1,11 @@
-# ADR 0024: Retain one unpartitioned store; no split without a published capacity miss
+# ADR 0024: Retain one unpartitioned store; no split without a published capacity miss (amended by 0046)
 
 - Status: accepted
 - Date: 2026-09-20
 - Owners: mikura maintainers
-- Related: [#192](https://github.com/Sannrox/mikura/issues/192), [#193](https://github.com/Sannrox/mikura/issues/193), [#189](https://github.com/Sannrox/mikura/issues/189), [#55](https://github.com/Sannrox/mikura/issues/55), [#53](https://github.com/Sannrox/mikura/issues/53), [#152](https://github.com/Sannrox/mikura/issues/152), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0023](0023-single-process-availability.md), [m9-readiness.md](../plans/m9-readiness.md)
+- Related: [#192](https://github.com/Sannrox/mikura/issues/192), [#193](https://github.com/Sannrox/mikura/issues/193), [#189](https://github.com/Sannrox/mikura/issues/189), [#55](https://github.com/Sannrox/mikura/issues/55), [#53](https://github.com/Sannrox/mikura/issues/53), [#152](https://github.com/Sannrox/mikura/issues/152), [#248](https://github.com/Sannrox/mikura/issues/248), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0023](0023-single-process-availability.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md), [m9-readiness.md](../plans/m9-readiness.md)
 - Amends: none. Availability stays [ADR 0023](0023-single-process-availability.md). Compact/checkpoint stays [#53](https://github.com/Sannrox/mikura/issues/53).
+- Amended by: [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md) (synthetic 10¹⁰ ingest ceiling documented; scale-out stays closed until a consumer-published miss)
 - Supersedes: none
 - Superseded by: none
 
@@ -26,8 +27,9 @@ capacity miss. Synthetic spike 011 (10⁷ hop count+sum hold, 10⁸ ingest
 finish) is a different fixture and is not this workload's envelope.
 [#55](https://github.com/Sannrox/mikura/issues/55) closed the 10¹⁰ hop
 envelope: ingest is a disk miss on the synthetic fixture. That is not a
-consumer-published capacity target. Scale-out after the ceiling is
-[#248](https://github.com/Sannrox/mikura/issues/248).
+consumer-published capacity target. Scale-out after the ceiling closed
+no-action ([#248](https://github.com/Sannrox/mikura/issues/248),
+[ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)).
 
 Availability already closed retain-one-process
 ([ADR 0023](0023-single-process-availability.md)). Partitioning is a
@@ -57,8 +59,9 @@ implemented.**
 3. **Capacity path.** Disk growth and `Store::open` time still revisit
    compact/checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53)),
    not a split. 10¹⁰ closed as an ingest disk miss
-   ([#55](https://github.com/Sannrox/mikura/issues/55)); a partition
-   decision stays [#248](https://github.com/Sannrox/mikura/issues/248).
+   ([#55](https://github.com/Sannrox/mikura/issues/55)). Scale-out after
+   that ceiling closed no-action
+   ([ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)).
 
 4. **Revisit.** Open new research only when a consumer publishes object
    counts, fanout, disk, or rebuild targets this one store cannot meet.
@@ -86,8 +89,10 @@ Availability (one process, restore-from-log) is unchanged.
   no-action: partitioning was not selected. Partition semantics are
   not implemented.
 - [#55](https://github.com/Sannrox/mikura/issues/55) closed: ingest disk
-  miss on the synthetic fixture. One unpartitioned store remains until
-  [#248](https://github.com/Sannrox/mikura/issues/248) decides otherwise.
+  miss on the synthetic fixture. [#248](https://github.com/Sannrox/mikura/issues/248)
+  closed no-action
+  ([ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)):
+  one unpartitioned store remains.
 - Compact/checkpoint ([#53](https://github.com/Sannrox/mikura/issues/53))
   stays closed until a named envelope misses on disk or `Store::open`.
 

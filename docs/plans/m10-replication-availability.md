@@ -80,5 +80,5 @@ downtime or data-loss targets the restore path cannot meet.
 | --- | --- |
 | [ADR 0023](../decisions/0023-single-process-availability.md) | Amended: named consumer still unpublished RPO/RTO; checkpoints and online backup are restore, not a replica. |
 | [#191](https://github.com/Sannrox/mikura/issues/191) failover writes | Still closed no-action. |
-| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ | Closed: ingest disk miss. Scale-out is [#248](https://github.com/Sannrox/mikura/issues/248). |
+| [#55](https://github.com/Sannrox/mikura/issues/55) 10¹⁰ | Closed: ingest disk miss. Scale-out closed no-action ([#248](https://github.com/Sannrox/mikura/issues/248), [ADR 0046](../decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)). |
 | Replica protocol | Out until a published availability miss exists. |

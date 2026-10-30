@@ -577,7 +577,9 @@ keys. `MIKURAV1` fails closed
   ([#234](https://github.com/Sannrox/mikura/issues/234),
   [ADR 0028](decisions/0028-store-namespace.md));
   [#192](https://github.com/Sannrox/mikura/issues/192),
-  [ADR 0024](decisions/0024-unpartitioned-store.md))
+  [ADR 0024](decisions/0024-unpartitioned-store.md),
+  [#248](https://github.com/Sannrox/mikura/issues/248),
+  [ADR 0046](decisions/0046-unpartitioned-store-after-synthetic-ceiling.md))
 
 Those gaps are intentional at this stage, not undocumented bugs. See
 [ROADMAP.md](../ROADMAP.md).
