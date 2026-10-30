@@ -12,38 +12,7 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
-### Changed
-
-- Load and evaluate skip denied interned `(kind, property)` ids and clone
-  only allowed strings into `ObjectRecord.props`. Evaluate precomputes
-  those ids once per request. Public `Store::load` still returns an owned
-  map ([#260](https://github.com/Sannrox/mikura/issues/260)).
-- Live identity keys and hidden property maps store interned `(namespace,
-  kind, key)` and `(prop, value)` ids shared with the join sidecar. Load
-  materializes strings at the `ObjectRecord` API. Dual-read against log
-  replay holds
-  ([#259](https://github.com/Sannrox/mikura/issues/259)).
-- `Store::commit` flushes the object log on every call and persists the
-  join sidecar every 32 commits, every 100 ms, or on close. A crash
-  between log commit and sidecar persist still reopens from the log
-  ([#256](https://github.com/Sannrox/mikura/issues/256)).
-
-### Added
-
-- First evaluate of an undeclared two-hop sum builds last-hop rollups,
-  caches them on the join sidecar, and maintains them on apply. Leaves
-  above 20_000_000 fail closed. At most 32 undeclared caches per
-  namespace. Sidecar stays deletable; dual-read against log replay
-  holds. Schema `sums` remains the catalog
-  ([#258](https://github.com/Sannrox/mikura/issues/258)).
-- Schema `indexes` names properties evaluate may look up as secondary
-  indexes. Equality and inclusive range on those names use the join map
-  instead of scanning identities. Hop-target predicates invert from that
-  lookup into the frontier. Undeclared names still scan. Dual-read
-  against the scan path holds. Sidecar format unchanged; indexes rebuild
-  from owned pairs
-  ([#257](https://github.com/Sannrox/mikura/issues/257)).
-- Object logs encrypt at rest with caller-supplied keys (`Store::create_with_keys` / `open_with_keys`, `Host::open_with_keys`). Encrypted logs write `MIKURAV3`. Per-tenant DEKs wrap through `sekai-keys`; a revoked tenant is omitted from the projection and its writes are refused. Backup copies the superblock catalog. Compaction mints new DEKs ([#282](https://github.com/Sannrox/mikura/issues/282), [ADR 0044](docs/decisions/0044-log-encryption.md)).
+## [0.4.0] - 2026-10-30
 
 ### Upgrade
 
@@ -95,6 +64,20 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Added
 
+- First evaluate of an undeclared two-hop sum builds last-hop rollups,
+  caches them on the join sidecar, and maintains them on apply. Leaves
+  above 20_000_000 fail closed. At most 32 undeclared caches per
+  namespace. Sidecar stays deletable; dual-read against log replay
+  holds. Schema `sums` remains the catalog
+  ([#258](https://github.com/Sannrox/mikura/issues/258)).
+- Schema `indexes` names properties evaluate may look up as secondary
+  indexes. Equality and inclusive range on those names use the join map
+  instead of scanning identities. Hop-target predicates invert from that
+  lookup into the frontier. Undeclared names still scan. Dual-read
+  against the scan path holds. Sidecar format unchanged; indexes rebuild
+  from owned pairs
+  ([#257](https://github.com/Sannrox/mikura/issues/257)).
+- Object logs encrypt at rest with caller-supplied keys (`Store::create_with_keys` / `open_with_keys`, `Host::open_with_keys`). Encrypted logs write `MIKURAV3`. Per-tenant DEKs wrap through `sekai-keys`; a revoked tenant is omitted from the projection and its writes are refused. Backup copies the superblock catalog. Compaction mints new DEKs ([#282](https://github.com/Sannrox/mikura/issues/282), [ADR 0044](docs/decisions/0044-log-encryption.md)).
 - Product benchmark suite: `cargo bench -p mikura-host --bench product`
   reports p50/p95/p99 and the machine class for append+commit,
   `append_batch`, point and ACL reads, list/filter, one- and two-hop
@@ -204,6 +187,19 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ### Changed
 
+- Load and evaluate skip denied interned `(kind, property)` ids and clone
+  only allowed strings into `ObjectRecord.props`. Evaluate precomputes
+  those ids once per request. Public `Store::load` still returns an owned
+  map ([#260](https://github.com/Sannrox/mikura/issues/260)).
+- Live identity keys and hidden property maps store interned `(namespace,
+  kind, key)` and `(prop, value)` ids shared with the join sidecar. Load
+  materializes strings at the `ObjectRecord` API. Dual-read against log
+  replay holds
+  ([#259](https://github.com/Sannrox/mikura/issues/259)).
+- `Store::commit` flushes the object log on every call and persists the
+  join sidecar every 32 commits, every 100 ms, or on close. A crash
+  between log commit and sidecar persist still reopens from the log
+  ([#256](https://github.com/Sannrox/mikura/issues/256)).
 - Availability revisit after Explorer naming and log checkpoints stays
   one process plus restore-from-log. Unpublished RPO/RTO is not a miss.
   Online backup is not a replica. No follow-up failover writer
@@ -691,6 +687,7 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 - Public name is `mikura` (御倉). On-disk superblock magic is `MIKURAV1`.
 
-[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Sannrox/mikura/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/Sannrox/mikura/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sannrox/mikura/releases/tag/v0.1.0
