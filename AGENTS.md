@@ -36,7 +36,9 @@ tracked. Do not treat that directory as gitignored.
 | `crates/mikura-ingest/tests/stability.rs` | 1.0 surface compile-lock |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs, plans |
-| `scripts/` | ADR index, changelog draft, crates.io publish check, vendored `validate-workflow-skills.sh` |
+| `scripts/` | ADR index, changelog draft, crates.io publish check, vendored `validate-workflow-skills.sh`, signed-tag release packaging |
+| `RELEASING.md` | How a maintainer tags this repo (family policy lives in tenkai ADR 0040) |
+| `security/` | Allowed tag-signing public key and fingerprints |
 | `.github/` | CI, issue templates, pull request template |
 | `.agents/skills/` | Generated agent-kit stubs (see `## Shared agent skills`) |
 
@@ -52,10 +54,13 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p mikura-ingest --example quickstart
 cargo bench -p mikura-host --bench product
 bash build/release-images.sh
+bash scripts/validate-release.sh
 ```
 
 `bash build/release-images.sh` wraps `mikura-host`. Dirty trees are refused.
 `bash build/release.sh` pushes the git-describe tag to `DOCKER_REGISTRY`.
+`bash scripts/validate-release.sh` checks the signed-tag `v*` path without
+publishing. Agents never push `v*` tags.
 
 `cargo test` is the short loop. Spike crates are separate packages under
 `spikes/<nnn>-*/`; run them only when measuring, from that directory, and
@@ -144,6 +149,7 @@ Rows beyond `## Style and tests`:
 | ACL | load omits denied properties; deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
 | ADRs | `python3 scripts/adr-index --check` |
 | Skills / `AGENTS.md` | `bash scripts/validate-workflow-skills.sh` |
+| signed `v*` release path | `bash scripts/validate-release.sh` |
 
 Unit tests do not establish spike envelopes; measure in the spike and record
 the result in its `NOTES.md`.
@@ -156,7 +162,9 @@ the result in its `NOTES.md`.
 - CHANGELOG section drafted with `bash scripts/changelog-draft.sh`; upgrade
   notes first;
 - on-disk format changes and their ADR;
-- container image (`bash build/release-images.sh`).
+- container image (`bash build/release-images.sh`);
+- signed `v*` path: [RELEASING.md](RELEASING.md),
+  `bash scripts/validate-release.sh`.
 
 ## Ontology
 

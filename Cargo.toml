@@ -4,12 +4,9 @@ resolver = "2"
 
 [package]
 name = "mikura"
-# When releasing:
-# - Bump the version here, in crates/mikura-ingest and crates/mikura-host,
-#   and in the README.md status line.
-# - Run `cargo update -w` so Cargo.lock matches.
-# - Move CHANGELOG.md [Unreleased] to the new version, upgrade notes first.
-# - Squash-merge the release PR, then create the "v0.x.y" git tag on it.
+# Release process: RELEASING.md. Agents never push v* tags.
+# When bumping: this version, crates/mikura-ingest, crates/mikura-host,
+# and the README.md status line; then `cargo update -w`.
 version = "0.4.0"
 edition = "2021"
 publish = false
