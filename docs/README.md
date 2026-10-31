@@ -24,5 +24,6 @@ the job.
 | [../AGENTS.md](../AGENTS.md) | Governance | How agents work in this tree |
 | [../SECURITY.md](../SECURITY.md) | Governance | Vulnerability reporting |
 | [../CHANGELOG.md](../CHANGELOG.md) | Reference | What shipped |
+| [../RELEASING.md](../RELEASING.md) | Guide | How a maintainer tags this repository |
 
 There is no generated docs site. Markdown in git is the published docs.

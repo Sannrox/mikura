@@ -111,3 +111,9 @@ bash "${AGENT_KIT_HOME:-$HOME/.agents/agent-kit}/skills/deliver-ready-issue/scri
 
 Do not use GitHub rebase-merge when Verified history matters. Never pass
 `--no-gpg-sign` for local commits.
+
+## Releasing
+
+Maintainers cut annotated, signed `v*` tags after a version-bump pull
+request. Agents never push those tags. See [RELEASING.md](RELEASING.md).
+Pull requests do not edit `CHANGELOG.md`.

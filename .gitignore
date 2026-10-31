@@ -1,5 +1,6 @@
 /target
 /_output/
+/dist/
 **/target/
 /data/
 /spikes/scratch/
