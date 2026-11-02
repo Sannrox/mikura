@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ def cargo_metadata(root: Path) -> dict:
 
 
 def license_entry(raw: str) -> dict:
+    raw = raw.replace("/", " OR ")
     if any(token in raw for token in (" OR ", " AND ", " WITH ")):
         return {"expression": raw}
     return {"license": {"id": raw}}
@@ -50,7 +52,7 @@ def bom_from_metadata(meta: dict) -> dict:
     if root_pkg is None:
         raise SystemExit("cargo metadata did not include package mikura")
     root_purl = f"pkg:cargo/mikura@{root_pkg['version']}"
-    return {
+    bom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
         "version": 1,
@@ -66,8 +68,13 @@ def bom_from_metadata(meta: dict) -> dict:
         "components": sorted(components, key=lambda item: item["bom-ref"]),
     }
 
+    document = json.dumps(bom, sort_keys=True, separators=(",", ":"))
+    bom["serialNumber"] = uuid.uuid5(uuid.NAMESPACE_URL, document).urn
+    return bom
+
 
 def self_test() -> None:
+    assert license_entry("MIT/Apache-2.0") == {"expression": "MIT OR Apache-2.0"}
     meta = {
         "workspace_members": [
             "mikura 0.4.0 (path+file:///workspace)",
@@ -105,6 +112,12 @@ def self_test() -> None:
     assert bom["metadata"]["component"]["name"] == "mikura"
     assert bom["metadata"]["component"]["version"] == "0.4.0"
     assert bom["metadata"]["component"]["type"] == "application"
+    serial = bom["serialNumber"]
+    assert serial.startswith("urn:uuid:")
+    assert uuid.UUID(serial.removeprefix("urn:uuid:")).version == 5
+    assert bom_from_metadata(meta)["serialNumber"] == serial
+    meta["packages"][2]["version"] = "1.0.1"
+    assert bom_from_metadata(meta)["serialNumber"] != serial
     names = {item["name"] for item in bom["components"]}
     assert names == {"crc32fast", "serde"}, names
     by_name = {item["name"]: item for item in bom["components"]}
