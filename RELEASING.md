@@ -87,9 +87,10 @@ Dockerfile, `CHANGELOG.md`, and the sources) comes from the tagged commit, so
 a bug there needs a new rc or patch version.
 
 A re-run resumes the draft release and replaces all of its assets. It refuses
-a release that is already published, both before it builds and again in the
-job that drafts and publishes; cut a new version instead. One run per tag
-executes at a time.
+a release that is already published, both before it builds and again in
+every job that attests, drafts, or publishes; cut a new version instead. If
+the release state cannot be read, the run fails rather than going on. One run
+per tag executes at a time.
 
 Pull requests and `workflow_dispatch` without a tag dry-run the same
 packaging path on that ref. Dry runs never build images, mint attestations,
