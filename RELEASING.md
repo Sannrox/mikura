@@ -86,9 +86,10 @@ Everything else (the release scripts, `build/release-images.sh`, the
 Dockerfile, `CHANGELOG.md`, and the sources) comes from the tagged commit, so
 a bug there needs a new rc or patch version.
 
-A re-run resumes the draft release. It refuses a release that is already
-published, both before it builds and before it publishes; cut a new version
-instead. One run per tag executes at a time.
+A re-run resumes the draft release and replaces all of its assets. It refuses
+a release that is already published, both before it builds and again in the
+job that drafts and publishes; cut a new version instead. One run per tag
+executes at a time.
 
 Pull requests and `workflow_dispatch` without a tag dry-run the same
 packaging path on that ref. Dry runs never build images, mint attestations,

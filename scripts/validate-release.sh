@@ -66,6 +66,21 @@ fi
   || fail "${workflow} must refuse a published release early, when drafting, and before publishing"
 [[ "$(grep -cE 'gh release (create|upload)' "$workflow")" -eq 2 ]] \
   || fail "${workflow} must upload release assets only in the publish job's draft step"
+python3 - "$workflow" <<'PY_JOBS' || fail "${workflow} must refuse a published release in every job that touches the release"
+import re, sys
+body = open(sys.argv[1]).read().split("\njobs:\n", 1)[1]
+mutating = ("gh release upload", "gh release create", "gh release edit", "gh release delete-asset")
+missing = [
+    block.split(":", 1)[0].strip()
+    for block in re.split(r"(?m)^(?=  [a-z][a-z0-9-]*:\n)", body)
+    if any(m in block for m in mutating)
+    and "- name: Refuse a published release" not in block
+]
+if missing:
+    sys.exit("unguarded jobs: " + ", ".join(missing))
+PY_JOBS
+grep -F 'gh release delete-asset "$TAG" "$name" --yes' "$workflow" >/dev/null \
+  || fail "${workflow} must drop an earlier run's assets when it resumes a draft"
 grep -F "needs: [verify-tag, package, attest]" "$workflow" >/dev/null \
   || fail "${workflow} must publish only after package and attest, so a re-run can resume the draft"
 grep -F "needs.package.result == 'success'" "$workflow" >/dev/null || fail "${workflow} must not attest or publish unless package succeeded"
