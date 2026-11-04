@@ -121,8 +121,11 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)" == false ]]; then
-            echo "release ${TAG} is already published; cut a new tag instead of re-running" >&2
+          # Only a draft or an absent release may go on; any other answer fails.
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>&1)"; then
+            [[ "$state" == true ]] || { echo "release ${TAG} is already published; cut a new tag instead of re-running" >&2; exit 1; }
+          elif [[ "$state" != *"release not found"* ]]; then
+            echo "cannot read release ${TAG}: ${state}" >&2
             exit 1
           fi
       - name: Resolve release commit
@@ -206,6 +209,21 @@ jobs:
       attestation-url: ${{ steps.provenance.outputs.attestation-url }}
       sbom-attestation-url: ${{ steps.sbom.outputs.attestation-url }}
     steps:
+      # Attesting is a release mutation; a re-run of an old run checks again.
+      - name: Refuse a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Only a draft or an absent release may go on; any other answer fails.
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>&1)"; then
+            [[ "$state" == true ]] || { echo "release ${TAG} is already published; cut a new tag instead of re-running" >&2; exit 1; }
+          elif [[ "$state" != *"release not found"* ]]; then
+            echo "cannot read release ${TAG}: ${state}" >&2
+            exit 1
+          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: mikura-release
@@ -257,8 +275,11 @@ jobs:
           TAG: ${{ needs.verify-tag.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)" == false ]]; then
-            echo "release ${TAG} is already published; cut a new tag instead of re-running" >&2
+          # Only a draft or an absent release may go on; any other answer fails.
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>&1)"; then
+            [[ "$state" == true ]] || { echo "release ${TAG} is already published; cut a new tag instead of re-running" >&2; exit 1; }
+          elif [[ "$state" != *"release not found"* ]]; then
+            echo "cannot read release ${TAG}: ${state}" >&2
             exit 1
           fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -296,7 +317,14 @@ jobs:
             kind=(--prerelease --latest=false)
           fi
           # A re-run resumes its draft; a published release is never touched.
-          draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo absent)"
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>&1)"; then
+            draft="$state"
+          elif [[ "$state" == *"release not found"* ]]; then
+            draft=absent
+          else
+            echo "cannot read release ${TAG}: ${state}" >&2
+            exit 1
+          fi
           case "$draft" in
             true)
               # Every run rebuilds every asset; drop the earlier run's so a
