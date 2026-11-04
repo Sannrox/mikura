@@ -145,6 +145,28 @@ self_test() {
 
   printf '[package]\nname = "mikura-host"\nversion = "0.9.9"\n' >"${work}/crates/mikura-host/Cargo.toml"
   (cd "$work" && expect_failure "does not match crate version" v0.1.0 "$first")
+  git -C "$work" checkout -q -- crates/mikura-host/Cargo.toml
+  git -C "$work" tag -d v0.2.0 >/dev/null
+
+  # Release candidates: the rc tag equals an rc crate version, and a final
+  # tag never releases an rc version.
+  local pkg rc
+  for pkg in Cargo.toml crates/mikura-ingest/Cargo.toml crates/mikura-host/Cargo.toml; do
+    sed 's/^version = "0.1.0"$/version = "0.2.0-rc.1"/' "${work}/${pkg}" >"${work}/${pkg}.new"
+    mv "${work}/${pkg}.new" "${work}/${pkg}"
+  done
+  git -C "$work" commit -q -am rc
+  rc="$(git -C "$work" rev-parse HEAD)"
+  git -C "$work" tag -s v0.2.0-rc.1 -m "rc" "$rc"
+  (cd "$work" && bash "$SCRIPT_PATH" verify v0.2.0-rc.1 "$rc" >/dev/null)
+  git -C "$work" tag -s v0.2.0 -m "final on rc" "$rc"
+  (cd "$work" && expect_failure "does not match crate version 0.2.0-rc.1" v0.2.0 "$rc")
+  git -C "$work" tag -s v0.2.0-beta.x -m "bad suffix" "$rc"
+  (cd "$work" && expect_failure "invalid release tag" v0.2.0-beta.x "$rc")
+
+  # The release workflow passes the commit it will build; a tag for another
+  # commit is refused.
+  (cd "$work" && expect_failure "resolves to ${first}, expected ${rc}" v0.1.0 "$rc")
 
   gpgconf --kill gpg-agent >/dev/null 2>&1 || true
   rm -rf "$tmp" || true
