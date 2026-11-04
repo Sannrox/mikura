@@ -106,6 +106,20 @@ grep -F 'build/release-images.sh' scripts/release-package.sh >/dev/null || fail 
 notes="$(python3 scripts/changelog-notes.py 0.2.0)"
 [[ "$notes" == *"Object logs written by v0.1.0 open"* ]] || fail "CHANGELOG notes missing expected 0.2.0 body"
 
+grep -F -- "--exclude '*-*' \"\${GIT_SHA}^\"" scripts/release-package.sh >/dev/null \
+  || fail "release-package.sh must take gate flags since the previous final tag in the release commit's history"
+grep -F 'range="${prev}..${GIT_SHA}"' scripts/release-package.sh >/dev/null \
+  && grep -F 'in_range[$1] { print $2 }' scripts/release-package.sh >/dev/null \
+  && grep -F 'commits="$(git rev-list "$range")" || fail' scripts/release-package.sh >/dev/null \
+  || fail "release-package.sh must count gate flags only for pull requests merged into the release commit's range"
+grep -F '|| fail "could not list merged pull requests for gate flags"' scripts/release-package.sh >/dev/null \
+  && grep -F '[[ "$(jq length <<<"$prs")" -lt 1000 ]] || fail' scripts/release-package.sh >/dev/null \
+  && grep -F 'command -v gh >/dev/null 2>&1 || fail' scripts/release-package.sh >/dev/null \
+  && grep -F ')" || fail "could not read gate flags from the merged pull requests"' scripts/release-package.sh >/dev/null \
+  || fail "release-package.sh must fail when the gate flag lookup fails or is truncated"
+grep -F -- "--match 'v*' --exclude '*-*' origin/main" scripts/changelog-draft.sh >/dev/null \
+  || fail "changelog-draft.sh must start from the last final tag, never an rc or beta tag"
+
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mikura-release-package.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "${tmp}/dist"
