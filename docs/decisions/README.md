@@ -55,6 +55,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0044](0044-log-encryption.md) | Object log encryption at rest (`MIKURAV3`) | accepted |
 | [0045](0045-self-tuning-store.md) | Query-shape recording and a reviewable tuning advisor | accepted |
 | [0046](0046-unpartitioned-store-after-synthetic-ceiling.md) | Retain one unpartitioned store after the synthetic 10¹⁰ ingest ceiling | accepted |
+| [0047](0047-object-storage-store-of-record.md) | Object-storage store of record with a swap-committed manifest | proposed |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is
