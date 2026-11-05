@@ -1,65 +1,59 @@
 # mikura
 
-**mikura** (御倉) is an **object database**: applications read and write
-objects, not SQL tables or search hits. The object log is the store of
-record. Indexes are projections you can delete and rebuild.
+**An object database: the log is the truth, everything else rebuilds.**
 
-v1 is an in-process Rust library plus a one-process host. Loopback bind
-is unauthenticated unless `--bearer` is set. Multi-process hosting is later.
-
+[![CI](https://img.shields.io/github/actions/workflow/status/Sannrox/mikura/ci.yml?branch=main&label=ci)](https://github.com/Sannrox/mikura/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Sannrox/mikura)](https://github.com/Sannrox/mikura/releases)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
-## Status
+[Quickstart](#try-it-in-five-minutes) · [Docs](docs/README.md) · [Architecture](docs/architecture.md) · [Vision](VISION.md) · [Roadmap](ROADMAP.md)
 
-Pre-1.0 (`0.4.0`, not published to crates.io). The listed 1.0 surface,
-deprecation rule, and log-compat promise are in
-[docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
-([ADR 0042](docs/decisions/0042-api-stability.md)). Suitable for local
-experiments and for contributing to the kernel. Not a production hosted store.
+mikura (御倉, "storehouse") stores application objects — not SQL rows, not
+search hits. Sources sync in, users edit, actions write back, and queries hop
+across links; everything lands on one append-only object log that survives
+any crash to its exact committed point. v1 is an in-process Rust library plus
+a one-process host.
 
-| Implemented | Not implemented |
-| --- | --- |
-| 4 KiB CRC32 paged log ([ADR 0001](docs/decisions/0001-paged-log.md)) | Principal-aware ACL on the wire |
-| Batch ingest, snapshot changelog, source/edit merge, bounded stream ingest, Action append | Cluster compute |
-| Loopback ingest/evaluate host; non-loopback bind with clerk bearer ([ADR 0003](docs/decisions/0003-hosted-service.md), [ADR 0007](docs/decisions/0007-host-bearer.md)) | Multi-process hosting |
-| Object-set hop / count / sum / bounded listing from slim join sidecar ([ADR 0004](docs/decisions/0004-slim-join-maps.md)) | |
-| Last-hop measures on `MKJOIN06` ([ADR 0010](docs/decisions/0010-last-hop-measures.md)) | |
-| Required store namespace on new logs (`MIKURAV2`, [ADR 0028](docs/decisions/0028-store-namespace.md)) | Existing-log migration |
-| Optional log encryption at rest (`MIKURAV3`, [ADR 0044](docs/decisions/0044-log-encryption.md)) | |
-| Schema-declared boolean, integer, timestamp, decimal, vector, time-series, geo, and media values as canonical UTF-8 in `props` ([ADR 0012](docs/decisions/0012-typed-values.md), [ADR 0043](docs/decisions/0043-typed-ref-values.md)) | |
-| Property deny-list (fail closed); exact-match filter on evaluate | |
-| Supplied schema as `mikura.schema` objects ([ADR 0008](docs/decisions/0008-type-link-delete.md)) | |
-| Refresh-safe overlay as `mikura.overlay` objects ([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)); user-wins or newest-timestamp-wins ([ADR 0032](docs/decisions/0032-overlay-conflict-strategy.md)) | |
+- **Objects, not tables.** Identity is `(namespace, kind, key)`; typed
+  properties and links are declared in a schema, and a committed descriptor
+  validates later writes of its kind.
+- **The log is the store of record.** Checksummed 4 KiB pages, group commit,
+  one commit point, optional encryption at rest. Reopen after a crash
+  recovers exactly what was acknowledged.
+- **Every index is disposable.** Join maps and rollups are projections:
+  delete them and they rebuild from the log.
+- **Edits survive refreshes by rule.** User edits live in an overlay merged
+  into later source writes under the declared conflict rule (user wins or
+  newest wins, per kind or per property).
+- **Writes are idempotent and atomic.** An Action id makes a retry a no-op;
+  batches and multi-object change sets commit all or nothing.
+- **Queries hop.** Multi-hop traversal, count and sum, bounded breakdowns,
+  multi-key sort, and snapshot cursors that fail closed instead of returning
+  a torn page.
+- **Restrictions fail closed.** A denied property is omitted; a denied
+  aggregate is an error, never a guessed value.
 
-Spikes 001–011 are throwaway evidence under [`spikes/`](spikes/README.md).
-
-## Quickstart
+## Try it in five minutes
 
 Requires a stable Rust toolchain (edition 2021).
 
 ```bash
-git clone https://github.com/Sannrox/mikura.git
-cd mikura
-cargo test --workspace --locked
+git clone https://github.com/Sannrox/mikura && cd mikura
 cargo run -p mikura-ingest --example quickstart
-bash build/release-images.sh
 ```
 
-`bash build/release-images.sh` wraps `mikura-host` (`git describe` tag; dirty
-trees refused). `bash build/release.sh` pushes that tag to `DOCKER_REGISTRY`.
-Signed `v*` releases: [RELEASING.md](RELEASING.md). There is no compose stack.
-
-The example writes a temp log, ingests Customer → Order → Shipment records,
-evaluates a two-hop count and sum, then applies one Action:
+The example creates a temp log, ingests Customer → Order → Shipment records,
+evaluates a two-hop count and sum, applies one Action, then reopens the log
+and proves the reread matches:
 
 ```text
 reachable roots: 1
 sum amount: 10
 after action: 15
+reopened log matches
 ```
 
-Use the crate from another package only after mikura is a tagged dependency.
-Until then, develop inside this repository.
+The same loop from Rust:
 
 ```rust
 use mikura::{
@@ -67,11 +61,12 @@ use mikura::{
 };
 use mikura_ingest::BatchIngest;
 
-let mut store = Store::create("data/objects.mikura")?;
+let mut store = Store::create(&log)?; // log: std::path::PathBuf
 BatchIngest::run(&mut store, records)?;
 let response = ObjectSet::new(LocalCompute).evaluate(
     &store,
     &EvaluateRequest {
+        namespace: "ns".into(),
         root_kind: "Customer".into(),
         hops: vec![
             Hop { far_kind: "Order".into(), join_property: "customer_id".into(), incoming: false, predicate: None },
@@ -87,58 +82,110 @@ let response = ObjectSet::new(LocalCompute).evaluate(
         sort: None,
         page_size: 0,
         cursor: None,
+        breakdown: None,
+        then_by: Vec::new(),
     },
 )?;
 ```
 
-Hidden objects are excluded from evaluate. A denied aggregate property
-returns `AclError::Denied` rather than a guessed value. `Store::load`
-takes the same deny list and omits those keys from the returned object.
-A committed `mikura.schema/<kind>` descriptor validates later writes of
-that kind; `Store::load` still returns historical unvalidated rows.
-Default hops find `far_kind` rows that point at the frontier key;
-`Hop.incoming` follows `props[join_property]` to `far_kind`.
-`EvaluateRequest.predicate` (and `Hop.predicate`) select with `eq`,
-`neq`, `range`, `missing`, `and`, `or`, and `not`.
-`EvaluateRequest.sort` plus `page_size` returns snapshot pages; the
-cursor binds the restriction, query, and live writer stamp.
+The complete program is
+[`crates/mikura-ingest/examples/quickstart.rs`](crates/mikura-ingest/examples/quickstart.rs).
+Hidden objects are excluded from evaluate. `Store::load` takes the same deny
+list and omits denied keys. Predicates (`eq`, `neq`, `range`, `missing`,
+`and`, `or`, `not`) select on evaluate and on each hop; `sort` plus
+`page_size` returns snapshot pages whose cursor binds the restriction, query,
+and live writer stamp. A committed `mikura.schema/<kind>` descriptor
+validates later writes of that kind.
 
-## Layout
+Use the crate from another package only after mikura is a tagged dependency.
+Until then, develop inside this repository. The loopback host and container
+image are built with `bash build/release-images.sh`; signed `v*` releases are
+in [RELEASING.md](RELEASING.md).
 
+## How it works
+
+```mermaid
+flowchart LR
+  B[batch / changelog / stream ingest] --> L[(object log)]
+  O[user-edit overlay] --> L
+  W[Action writeback] --> L
+  L --> J[join maps, rollups, checkpoints]
+  L -. crash: replay .-> J
+  J --> E[evaluate: hop, filter, count/sum, pages]
 ```
-src/                      mikura library (log, store, evaluate)
-crates/mikura-ingest/     write orchestrator (batch / changelog / merge / stream append / ordered apply)
-crates/mikura-host/       ingest/evaluate/load host, process binary, product-loop example
-crates/mikura-ingest/tests/integration.rs  public-API integration suite (unit tests stay in-crate)
-crates/mikura-host/tests/e2e.rs  host-process e2e suite
-docs/                     architecture, glossary, ADRs, plans
-spikes/              historical measurements; not the store
-VISION.md            why this project exists
-ROADMAP.md           what to build next, in order
-```
 
-## Documentation
+An **object** is `(namespace, kind, key)`; every write is a new generation,
+and a delete is a hide, so history stays readable
+([ADR 0036](docs/decisions/0036-object-history-reads.md)). The **log** is the
+only authority: committed pages survive any crash, and every index is a
+projection rebuilt from it
+([ADR 0001](docs/decisions/0001-paged-log.md),
+[ADR 0034](docs/decisions/0034-log-checkpoints.md)). A **schema** descriptor
+validates writes of its kind and migrates by declared version
+([ADR 0035](docs/decisions/0035-versioned-schema-migration.md)). The
+**overlay** keeps user edits safe across source refreshes
+([ADR 0009](docs/decisions/0009-refresh-safe-edit-overlay.md)), and an
+**Action** id is a retry key, so writebacks replay without double-apply
+([ADR 0011](docs/decisions/0011-action-id-retry-key.md)).
 
-| Doc | Use it for |
+**Why not a SQL database or a search engine?** A relational schema spreads
+one object across tables and makes every link a join you maintain by hand; a
+search index is a projection pretending to be the store of record. mikura
+keeps the object as the unit of storage and query, makes every index
+deletable, and keeps exactly one thing you must never lose: the log. Details
+in [docs/architecture.md](docs/architecture.md).
+
+## Next steps
+
+| I want to… | Read |
 | --- | --- |
-| [VISION.md](VISION.md) | Product purpose and boundary |
-| [ROADMAP.md](ROADMAP.md) | Ordered next work |
-| [docs/plans/application-roadmap.md](docs/plans/application-roadmap.md) | Application-led milestone proposal |
-| [docs/architecture.md](docs/architecture.md) | How the crate works today |
-| [docs/glossary.md](docs/glossary.md) | Terms (log, projection, envelope, …) |
-| [docs/benchmarks.md](docs/benchmarks.md) | Product benchmark suite, baseline table, regression gate |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, pull requests |
-| [AGENTS.md](AGENTS.md) | Instructions for coding agents |
-| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| Understand the product purpose and boundary | [VISION.md](VISION.md) |
+| See what gets built next, in order | [ROADMAP.md](ROADMAP.md) |
+| Learn how the crate works today | [docs/architecture.md](docs/architecture.md) |
+| Look up a term (log, projection, envelope, …) | [docs/glossary.md](docs/glossary.md) |
+| Run the benchmark suite and regression gate | [docs/benchmarks.md](docs/benchmarks.md) |
+| Read the 1.0 surface and compatibility promise | [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md) |
+| Browse the architecture decisions | [docs/decisions/README.md](docs/decisions/README.md) |
+| Set up, test, and open a pull request | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Point a coding agent at this repository | [AGENTS.md](AGENTS.md) |
+| Report a vulnerability | [SECURITY.md](SECURITY.md) |
+
+Everything else is in the [documentation index](docs/README.md). Spikes
+001–011 under [`spikes/`](spikes/README.md) are throwaway measurements, not
+the store of record.
+
+## Status
+
+Pre-1.0 (`0.4.0`, not published to crates.io). The core loop — ingest,
+evaluate, Action writeback, crash recovery, online backup and restore — is in
+place; interfaces may change between minor releases under the
+[1.0 surface rules](docs/plans/1.0-surface.md)
+([ADR 0042](docs/decisions/0042-api-stability.md)). Not yet implemented:
+principal-aware ACL on the wire, and multi-process hosting. Pre-namespace
+logs migrate with `Store::migrate_unnamespaced`, which writes a new log and
+leaves the source unchanged
+([ADR 0030](docs/decisions/0030-unnamespaced-log-migration.md)). One process
+owns one log today
+([ADR 0023](docs/decisions/0023-single-process-availability.md)); work is
+tracked in [GitHub Issues](https://github.com/Sannrox/mikura/issues).
+
+Suitable for local experiments and for contributing to the kernel. Not a
+production hosted store.
 
 ## Independence
 
-mikura is its own git repository and crate. It does not depend on a control
-plane. A governed control plane may later **depend** on a published mikura tag.
-Do not vendor this tree into another repo, and do not use SQL as mikura's
-store of record.
+mikura is its own repository and crate. It does not depend on a control
+plane; a governed control plane may later **depend** on a published mikura
+tag. Do not vendor this tree into another repo, and do not use SQL as
+mikura's store of record.
 
-## License
+## Contributing
+
+`cargo test --workspace --locked` runs the suite;
+`cargo clippy --workspace --all-targets --locked -- -D warnings` and
+`cargo fmt --check` are the lint gates. Setup and pull-request flow are in
+[CONTRIBUTING.md](CONTRIBUTING.md), agent workflow in [AGENTS.md](AGENTS.md),
+and tagging in [RELEASING.md](RELEASING.md).
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT), at your option.
