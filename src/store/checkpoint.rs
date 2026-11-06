@@ -270,7 +270,7 @@ impl Store {
         file.write_all(&crc32(&body).to_le_bytes())
             .map_err(|e| e.to_string())?;
         file.sync_data().map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+        crate::durable::rename(&tmp, &path)
     }
 
     fn write_log_checkpoint_at(
@@ -317,7 +317,8 @@ impl Store {
             let _ = std::fs::remove_file(&prev);
             std::fs::rename(&path, &prev).map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+        // One directory sync covers both renames.
+        crate::durable::rename(&tmp, &path)
     }
 
     pub(super) fn adopt_log_checkpoint(&mut self, pages: u32) -> Result<bool, String> {

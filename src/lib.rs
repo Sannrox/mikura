@@ -46,6 +46,7 @@ pub mod backup;
 mod codec;
 mod compute;
 mod crypto;
+mod durable;
 mod joins;
 mod log;
 mod objectset;

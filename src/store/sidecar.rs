@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
@@ -219,8 +221,10 @@ impl Store {
             let sealed = Self::seal_partitioned(store_dek, self.writer.deks(), pages, plains)?;
             let path = Self::join_map_path(&self.log);
             let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, sealed).map_err(|e| e.to_string())?;
-            return std::fs::rename(&tmp, &path).map_err(|e| e.to_string());
+            let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+            file.write_all(&sealed).map_err(|e| e.to_string())?;
+            file.sync_data().map_err(|e| e.to_string())?;
+            return crate::durable::rename(&tmp, &path);
         }
         let mut body = Vec::new();
         body.extend_from_slice(JOIN_MAGIC);

@@ -543,7 +543,10 @@ log checkpoint when taken at or before it, while the host keeps serving.
 `verify` checks every committed page and record. `restore` writes a new
 log truncated to a restore point (`mkrp1:<commit point>:<page crc>`) and
 never touches its source
-([ADR 0037](decisions/0037-online-backup-and-restore.md)). There is no
+([ADR 0037](decisions/0037-online-backup-and-restore.md)). Backup, restore,
+and every sidecar or checkpoint replace sync the file, publish it with a
+rename or link, then sync the parent directory, so a returned call
+survives power loss. There is no
 backup RPC. The sidecar is a rebuildable projection, never recovery
 material and never copied. A valid log checkpoint lets open
 replay only the tail. Deleting the copied sidecar still answers load, list,
