@@ -30,6 +30,7 @@ fn batch_ingest_evaluate_rebuild_matches_live() {
         .unwrap();
     let after = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(after.sum_amount, 15);
+    drop(store);
 
     let reopened = Store::open(&log).unwrap();
     let from_log = oss.evaluate(&reopened, &fixture_request()).unwrap();

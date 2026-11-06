@@ -339,6 +339,7 @@ fn ordered_pages_bind_snapshot_and_fail_closed() {
         )
         .unwrap();
     assert_eq!(keys(&continued), ["inc-3"]);
+    drop(reopened);
     let sidecar = log.with_extension("mikura.joins");
     let _ = std::fs::remove_file(&sidecar);
     let replayed = Store::open(&log).unwrap();

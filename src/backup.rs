@@ -245,7 +245,7 @@ fn carry_checkpoint(from: &Path, to: &Path, commit_point: u32) -> Result<(), Str
         let published = (|| {
             out.write_all(&bytes).map_err(|e| e.to_string())?;
             out.sync_all().map_err(|e| e.to_string())?;
-            std::fs::rename(&tmp, &target).map_err(|e| e.to_string())
+            crate::durable::rename(&tmp, &target)
         })();
         if published.is_err() {
             let _ = std::fs::remove_file(&tmp);
@@ -283,7 +283,8 @@ fn require_absent(path: &Path) -> Result<(), String> {
 
 /// Write through a new `{dst}.tmp`, sync, then publish it as `dst` with a
 /// hard link, which fails if `dst` appeared meanwhile: `dst` appears whole
-/// or not at all and is never replaced.
+/// or not at all and is never replaced. Returns once the link is durable; a
+/// failed directory sync removes `dst` again.
 fn write_new(dst: &Path, fill: impl FnOnce(&mut File) -> Result<(), String>) -> Result<(), String> {
     let mut tmp = PathBuf::from(dst.as_os_str());
     tmp.as_mut_os_string().push(".tmp");
@@ -298,7 +299,10 @@ fn write_new(dst: &Path, fill: impl FnOnce(&mut File) -> Result<(), String>) -> 
         std::fs::hard_link(&tmp, dst).map_err(|e| format!("{}: {e}", dst.display()))
     })();
     let _ = std::fs::remove_file(&tmp);
-    result
+    result?;
+    crate::durable::sync_parent(dst).inspect_err(|_| {
+        let _ = std::fs::remove_file(dst);
+    })
 }
 
 /// Commit point of a log whose superblock a writer may be replacing: a torn

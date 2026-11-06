@@ -484,6 +484,7 @@ fn loopback_ingest_evaluate_matches_in_process() {
     assert!(hosted.ok, "{hosted:?}");
     let hosted = hosted.evaluate.unwrap();
 
+    drop(host);
     let store = Store::open(&log).unwrap();
     let direct = ObjectSet::new(LocalCompute)
         .evaluate(
@@ -966,6 +967,8 @@ fn load_matches_in_process_and_omits_denied() {
     });
     assert!(hosted.ok, "{hosted:?}");
     let loaded = hosted.load.expect("load payload");
+    // One writer per log: close the host before opening the store directly.
+    drop(host);
     let store = Store::open(&log).unwrap();
     assert_eq!(
         loaded,
@@ -973,6 +976,8 @@ fn load_matches_in_process_and_omits_denied() {
             .load("ns", "Customer", "c1", &PropertyAcl::allow_all())
             .unwrap()
     );
+    drop(store);
+    let host = Host::open(&log, 8).unwrap();
     let omitted = host.handle(HostRequest::Load {
         namespace: "ns".into(),
         kind: "Customer".into(),

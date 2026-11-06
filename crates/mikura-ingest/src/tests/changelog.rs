@@ -121,11 +121,13 @@ fn changelog_into_merge_matches_new_snapshot_plus_edits() {
     let live = oss.evaluate(&store, &shipment_request()).unwrap();
     assert_eq!(live.two_hop_count, 2);
     assert_eq!(live.sum_amount, 15);
+    assert_identity(&store, &expected);
+    drop(store);
     let reopened = Store::open(&log).unwrap();
     let from_log = oss.evaluate(&reopened, &shipment_request()).unwrap();
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
-    assert_same_identity(&store, &reopened, &expected);
+    assert_identity(&reopened, &expected);
     assert!(!reopened.joins("ns").unwrap().is_visible("Shipment", "s2"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -138,6 +140,7 @@ fn changelog_empty_diff_does_not_append() {
     BatchIngest::run(&mut store, snapshot.clone()).unwrap();
     ChangelogIngest::run(&mut store, snapshot.clone(), snapshot).unwrap();
     assert!(store.joins("ns").unwrap().is_visible("Shipment", "s1"));
+    drop(store);
     let reopened = Store::open(&log).unwrap();
     assert!(reopened.joins("ns").unwrap().is_visible("Shipment", "s1"));
     let _ = std::fs::remove_dir_all(&dir);

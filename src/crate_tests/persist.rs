@@ -38,13 +38,14 @@ fn ingest_evaluate_rebuild_acl_action_and_spark_fail_closed() {
         Err(ComputeError::Acl(AclError::Denied { .. }))
     ));
 
+    drop(store);
     let rebuilt = Store::open(&log).unwrap();
     let from_log = oss.evaluate(&rebuilt, &fixture_request()).unwrap();
     assert_eq!(from_log.two_hop_count, after.two_hop_count);
     assert_eq!(from_log.sum_amount, after.sum_amount);
 
     let spark = ObjectSet::new(SparkCompute);
-    let err = spark.evaluate(&store, &fixture_request()).unwrap_err();
+    let err = spark.evaluate(&rebuilt, &fixture_request()).unwrap_err();
     assert!(matches!(err, ComputeError::UnsupportedBackend { .. }));
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -381,8 +382,8 @@ fn append_second_shipment(store: &mut Store) {
         .unwrap();
 }
 
-/// Log commit is durable even when sidecar persist is skipped. Forget is the
-/// crash: Drop would persist.
+/// Log commit is durable even when sidecar persist is skipped. `crash`
+/// skips Drop, which would persist.
 #[test]
 fn kill_between_log_commit_and_sidecar_persist_reopens_from_log() {
     let (dir, log) = isolated_log("sidecar-crash");
@@ -396,7 +397,7 @@ fn kill_between_log_commit_and_sidecar_persist_reopens_from_log() {
         !Store::join_delta_path(&log).exists(),
         "sidecar must lag the log until persist"
     );
-    std::mem::forget(store);
+    store.crash();
 
     let reopened = Store::open(&log).unwrap();
     let oss = ObjectSet::new(LocalCompute);
@@ -451,5 +452,37 @@ fn sidecar_persist_after_n_commits() {
         .unwrap();
     assert!(Store::join_delta_path(&log).is_file());
     assert_eq!(store.sidecar_stamp_pages(), store.committed_pages());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One writer per log (#342): a second open or create fails at once without
+/// touching the log, a reader that never locks still copies it, and closing
+/// or crashing the holder frees the log.
+#[test]
+fn a_second_writer_fails_closed_until_the_holder_ends() {
+    let (dir, log) = isolated_log("writer-lock");
+    let mut store = Store::create(&log).unwrap();
+    seed_checkpoint(&mut store);
+    let len = std::fs::metadata(&log).unwrap().len();
+    for second in [Store::open(&log), Store::create(&log)] {
+        let error = second.err().expect("second writer must fail");
+        assert!(error.starts_with(crate::LOG_IN_USE), "{error}");
+    }
+    assert_eq!(
+        std::fs::metadata(&log).unwrap().len(),
+        len,
+        "create truncated"
+    );
+    let backup = dir.join("backup.mikura");
+    crate::backup::backup_log(&log, &backup).unwrap();
+
+    drop(store);
+    let store = Store::open(&log).unwrap();
+    store.crash();
+    let reopened = Store::open(&log).unwrap();
+    let response = ObjectSet::new(LocalCompute)
+        .evaluate(&reopened, &fixture_request())
+        .unwrap();
+    assert_eq!(response.two_hop_count, 1);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -103,6 +103,8 @@ fn main() -> Result<(), String> {
         .evaluate(&store, &request())
         .map_err(|err| format!("{err:?}"))?;
     println!("after action: {}", after.sum_amount);
+    // One writer per log: close it before reopening.
+    drop(store);
 
     let reopened = Store::open(&log)?;
     let from_log = objects

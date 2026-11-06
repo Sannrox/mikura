@@ -96,7 +96,9 @@ fn load_props(store: &Store, as_of: Option<u32>) -> HashMap<String, String> {
     }
 }
 
-fn reopen_and_rebuild(log: &std::path::Path) -> Store {
+/// Close `store`, then reopen `log` with every projection deleted.
+fn reopen_and_rebuild(store: Store, log: &std::path::Path) -> Store {
+    drop(store);
     drop(Store::open(log).unwrap());
     std::fs::remove_file(Store::join_map_path(log)).unwrap();
     let _ = std::fs::remove_file(Store::join_delta_path(log));
@@ -199,7 +201,7 @@ fn rename_migrates_overlays_and_named_reads() {
         Some("keep")
     );
 
-    let rebuilt = reopen_and_rebuild(&log);
+    let rebuilt = reopen_and_rebuild(store, &log);
     assert_eq!(
         rebuilt
             .load(NS, "incident", "inc-1", &PropertyAcl::allow_all())
@@ -235,7 +237,7 @@ fn retarget_survives_overlay_on_the_link() {
         load_props(&store, None).get("affects").map(String::as_str),
         Some("svc-api")
     );
-    let rebuilt = reopen_and_rebuild(&log);
+    let rebuilt = reopen_and_rebuild(store, &log);
     assert_eq!(
         rebuilt.schema(NS, "incident").unwrap().unwrap().links[0].far_kind,
         "service"
@@ -330,10 +332,10 @@ fn rollback_round_trip_restores_original_load() {
         3
     );
 
+    drop(store);
     let reopened = Store::open(&log).unwrap();
     assert_eq!(load_props(&reopened, None), original);
-    drop(reopened);
-    let rebuilt = reopen_and_rebuild(&log);
+    let rebuilt = reopen_and_rebuild(reopened, &log);
     assert_eq!(load_props(&rebuilt, None), original);
     let _ = std::fs::remove_dir_all(&dir);
 }

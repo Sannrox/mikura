@@ -1493,7 +1493,7 @@ pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> 
     let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
     write_body_and_crc(&mut file, body)?;
     file.sync_data().map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+    crate::durable::rename(&tmp, path)
 }
 
 pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {

@@ -71,6 +71,7 @@ fn stream_bound_n_plus_one_fails_closed_without_drop() {
     let live = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(live.sum_amount, 13);
     stream.flush(&mut store).unwrap();
+    drop(store);
     let reopened = Store::open(&log).unwrap();
     let committed = oss.evaluate(&reopened, &fixture_request()).unwrap();
     assert_eq!(committed.sum_amount, 13);

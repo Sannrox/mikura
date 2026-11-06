@@ -58,6 +58,7 @@ fn load_current_object_after_reopen() {
         .unwrap();
     assert_eq!(latest.gen, 2);
     assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
+    drop(updated);
 
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();

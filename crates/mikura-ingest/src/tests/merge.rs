@@ -169,12 +169,14 @@ fn merge_append_reopen_matches_live_identity() {
     let live = oss.evaluate(&store, &shipment_request()).unwrap();
     assert_eq!(live.two_hop_count, 2);
     assert_eq!(live.sum_amount, 9);
+    assert_identity(&store, &merged);
+    drop(store);
 
     let reopened = Store::open(&log).unwrap();
     let from_log = oss.evaluate(&reopened, &shipment_request()).unwrap();
     assert_eq!(from_log.two_hop_count, live.two_hop_count);
     assert_eq!(from_log.sum_amount, live.sum_amount);
-    assert_same_identity(&store, &reopened, &merged);
+    assert_identity(&reopened, &merged);
     assert!(!reopened
         .joins("ns")
         .unwrap()
