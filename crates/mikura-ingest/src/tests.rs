@@ -104,34 +104,16 @@ pub(crate) fn shipment_request() -> EvaluateRequest {
     }
 }
 
-pub(crate) fn assert_same_identity(live: &Store, reopened: &Store, records: &[ObjectRecord]) {
+/// Assert that `store` shows exactly `records`: hidden ones invisible, every
+/// other property as written.
+pub(crate) fn assert_identity(store: &Store, records: &[ObjectRecord]) {
+    let joins = store.joins("ns").unwrap();
     for record in records {
-        assert_eq!(
-            live.joins("ns")
-                .unwrap()
-                .is_visible(&record.kind, &record.key),
-            !record.hidden
-        );
-        assert_eq!(
-            reopened
-                .joins("ns")
-                .unwrap()
-                .is_visible(&record.kind, &record.key),
-            !record.hidden
-        );
+        assert_eq!(joins.is_visible(&record.kind, &record.key), !record.hidden);
         if !record.hidden {
             for (name, value) in &record.props {
                 assert_eq!(
-                    live.joins("ns")
-                        .unwrap()
-                        .prop(&record.kind, &record.key, name),
-                    Some(value.as_str())
-                );
-                assert_eq!(
-                    reopened
-                        .joins("ns")
-                        .unwrap()
-                        .prop(&record.kind, &record.key, name),
+                    joins.prop(&record.kind, &record.key, name),
                     Some(value.as_str())
                 );
             }

@@ -3021,3 +3021,38 @@ fn missing_or_unknown_namespace_fails_closed() {
     assert_eq!(known.evaluate.as_ref().unwrap().two_hop_count, 1);
     drop(host);
 }
+
+#[test]
+fn process_second_writer_fails_closed_and_a_killed_holder_never_wedges() {
+    let tmp = TempLog::new("writer-lock");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": product_loop_source(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+
+    // Closed stdin stops a host that wrongly started, so this cannot hang.
+    let second = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
+        .args([
+            "--log",
+            tmp.path().to_str().unwrap(),
+            "--bind",
+            "127.0.0.1:0",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("run second mikura-host");
+    assert!(!second.status.success(), "second writer must not start");
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(stderr.starts_with(mikura::LOG_IN_USE), "{stderr}");
+    assert!(String::from_utf8_lossy(&second.stdout).is_empty());
+    let tier = load_object(&host, "component", "svc-api");
+    assert_eq!(tier.props.get("tier").map(String::as_str), Some("prod"));
+
+    // SIGKILL: no shutdown path runs, and the OS drops the lock.
+    drop(host);
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let tier = load_object(&reopened, "component", "svc-api");
+    assert_eq!(tier.props.get("tier").map(String::as_str), Some("prod"));
+}

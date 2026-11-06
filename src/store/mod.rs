@@ -472,6 +472,14 @@ impl Store {
         self.sidecar_persist_interval = interval;
     }
 
+    /// End this store as a killed process would: Drop and its sidecar
+    /// persist never run, and the OS releases the writer lock.
+    #[cfg(test)]
+    pub(crate) fn crash(self) {
+        self.writer.release_lock();
+        std::mem::forget(self);
+    }
+
     fn install_live(&mut self, id: LiveId, meta: LiveMeta, props: HashMap<String, String>) {
         let ns = self.ns_name(id.0).to_string();
         {

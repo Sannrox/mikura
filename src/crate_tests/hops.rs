@@ -169,6 +169,7 @@ fn exact_match_filter_restricts_roots() {
     let reopened = Store::open(&log).unwrap();
     assert_eq!(oss.evaluate(&reopened, &us).unwrap(), us_resp);
     assert!(!reopened.joins(NS).unwrap().is_visible("Customer", "c0"));
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), us_resp);

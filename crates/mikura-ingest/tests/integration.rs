@@ -779,6 +779,7 @@ fn load_current_object_after_restart() {
             .unwrap(),
         hidden
     );
+    drop(reopened);
 
     let mut store = Store::open(tmp.path()).unwrap();
     store
@@ -791,6 +792,7 @@ fn load_current_object_after_restart() {
         .unwrap();
     assert_eq!(latest.gen, 2);
     assert_eq!(latest.props.get("region").map(String::as_str), Some("ap"));
+    drop(updated);
 
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
@@ -844,6 +846,7 @@ fn incoming_hop_follows_join_property() {
     drop(store);
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&reopened, &incoming).unwrap().two_hop_count, 1);
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&replayed, &incoming).unwrap().two_hop_count, 1);
@@ -934,6 +937,7 @@ fn exact_match_filter_on_evaluate() {
 
     let reopened = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&reopened, &us).unwrap(), response);
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(oss.evaluate(&replayed, &us).unwrap(), response);
@@ -1193,6 +1197,7 @@ fn composed_predicates_select_typed_object_sets() {
         listed_keys(&oss.evaluate(&reopened, &open).unwrap()),
         ["inc-1"]
     );
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(
@@ -1386,6 +1391,7 @@ fn schema_validates_product_loop_writes_and_rebuilds() {
         reopened.schema("ns", "component").unwrap().unwrap(),
         stored_component
     );
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(
@@ -1556,6 +1562,7 @@ fn evaluate_lists_product_loop_objects_and_enforces_bound() {
             .key,
         "svc-api"
     );
+    drop(reopened);
     std::fs::remove_file(Store::join_map_path(tmp.path())).unwrap();
     let replayed = Store::open(tmp.path()).unwrap();
     assert_eq!(

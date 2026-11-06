@@ -466,6 +466,13 @@ rule or a hard-delete.
 ## Hosted service
 
 `mikura-host` is a single process over the in-process `Store` ([ADR 0003](decisions/0003-hosted-service.md)).
+One writer owns a log: `Store` open and create take an exclusive advisory
+lock on the log file and fail at once with an error starting with
+`LOG_IN_USE` while another process or `Store` holds it. The OS drops the
+lock when the holder exits or dies, so a crash never needs manual cleanup.
+Readers that do not open a `Store`, such as backup, take no lock. The lock
+is local to one host and does not fence writers on other machines that
+share a network filesystem.
 The crate ships a `mikura-host` binary that binds loopback and serves one
 JSON line per connection. Concurrent snapshot readers share the store, with
 per-namespace fair share; one writer runs at a time

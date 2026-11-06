@@ -5,7 +5,7 @@ use crc32fast::Hasher as Crc;
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,22 +98,52 @@ pub(crate) struct StagedCommit {
     fsyncs: u64,
 }
 
+/// Create or truncate the log at `path` for writing. The lock is taken
+/// before truncation, so a create never clears a log another writer holds.
+fn create_locked(path: &Path) -> Result<File, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    lock_writer(&file, path)?;
+    file.set_len(0).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+/// Take the exclusive writer lock on the open log `file`, failing at once
+/// with [`crate::LOG_IN_USE`] when another writer holds it (#342). The OS
+/// drops the lock when the file closes or the process dies, so a crashed
+/// holder never blocks a later open. The lock is advisory and local to one
+/// host: readers that never lock, such as backup, are unaffected, and it
+/// does not fence writers on other machines sharing a network filesystem.
+fn lock_writer(file: &File, path: &Path) -> Result<(), String> {
+    match file.try_lock() {
+        Ok(()) => Ok(()),
+        Err(TryLockError::WouldBlock) => Err(format!(
+            "{}: {} is open for writing by another process or Store",
+            crate::LOG_IN_USE,
+            path.display()
+        )),
+        Err(TryLockError::Error(e)) => Err(format!("lock {}: {e}", path.display())),
+    }
+}
+
 impl LogWriter {
     pub fn create(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let file = File::create(path).map_err(|e| e.to_string())?;
+        let file = create_locked(path)?;
         let mut writer = Self::blank(file, sync, 0);
         writer.write_superblock()?;
         Ok(writer)
     }
 
     pub fn create_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let file = File::create(path).map_err(|e| e.to_string())?;
+        let file = create_locked(path)?;
         let mut writer = Self::blank(file, sync, 0);
         writer.install_keys(Arc::new(keys))?;
         writer.mint_store_dek()?;
@@ -158,6 +188,7 @@ impl LogWriter {
             .write(true)
             .open(path)
             .map_err(|e| e.to_string())?;
+        lock_writer(&file, path)?;
         let mut superblock = vec![0u8; PAGE];
         file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
         std::io::Read::read_exact(&mut file, &mut superblock).map_err(|e| e.to_string())?;
@@ -361,6 +392,13 @@ impl LogWriter {
 
     pub fn page_used(&self) -> usize {
         self.used
+    }
+
+    /// Release the writer lock while keeping the file open, as the OS does
+    /// when the holding process dies.
+    #[cfg(test)]
+    pub(crate) fn release_lock(&self) {
+        let _ = self.file.unlock();
     }
 
     /// True after a superblock write failed and left the commit point unknown,

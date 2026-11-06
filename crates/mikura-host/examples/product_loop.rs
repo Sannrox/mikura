@@ -7,7 +7,7 @@
 //! cargo run -p mikura-host --example product_loop
 //! ```
 
-use mikura::{ObjectRecord, PropertyAcl, Store};
+use mikura::ObjectRecord;
 use mikura_host::{Host, HostResponse};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -291,13 +291,19 @@ fn main() -> Result<(), String> {
         after_reopen.props.get("tier").map(String::as_str),
         Some("prod")
     );
-    let store = Store::open(&log)?;
+    let incident = require_ok(
+        "load inc-1 after reopen",
+        reopened.rpc(&serde_json::json!({
+            "op": "load",
+            "namespace": "ns",
+            "kind": "incident",
+            "key": "inc-1"
+        }))?,
+    )?
+    .load
+    .expect("load payload");
     assert_eq!(
-        store
-            .load("ns", "incident", "inc-1", &PropertyAcl::allow_all())?
-            .props
-            .get("name")
-            .map(String::as_str),
+        incident.props.get("name").map(String::as_str),
         Some("elevated latency")
     );
 

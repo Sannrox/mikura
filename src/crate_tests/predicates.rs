@@ -330,6 +330,7 @@ fn composed_predicates_filter_then_hop_and_rebuild() {
         ),
         ["inc-1", "inc-2"]
     );
+    drop(reopened);
     let sidecar = log.with_extension("mikura.joins");
     let _ = std::fs::remove_file(&sidecar);
     let replayed = Store::open(&log).unwrap();

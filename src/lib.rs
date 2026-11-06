@@ -71,6 +71,9 @@ pub const JOIN_DELTA_FORMAT: &[u8; 8] = b"MKJOIN6D";
 pub const JOIN_DELTA_FORMAT_V5: &[u8; 8] = b"MKJOIN5D";
 /// Log checkpoint magic (`MKCKPT01`). Unknown magic falls back.
 pub const CHECKPOINT_FORMAT: &[u8; 8] = b"MKCKPT01";
+/// Prefix of the error [`Store`] open and create return while another
+/// writer holds the log (#342): `log in use: <path> ...`.
+pub const LOG_IN_USE: &str = "log in use";
 
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};
