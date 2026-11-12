@@ -17,15 +17,19 @@
 //! 20% above the baseline p50 for the same name and size fails the run.
 
 use mikura::{
-    tenant_namespace, Aggregate, ComputeBackend, EvaluateRequest, ExactMatch, Hop, KeyPurpose,
-    LocalCompute, LogKeys, MemoryKeyProvider, ObjectRecord, PropertyAcl, RuntimeProfile,
-    SchemaDescriptor, SchemaLink, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
+    tenant_namespace, AclError, Aggregate, Breakdown, ComputeBackend, ComputeError,
+    EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, KeyPurpose, LocalCompute, LogKeys,
+    MemoryKeyProvider, ObjectRecord, Predicate, PropertyAcl, RuntimeProfile, SchemaDescriptor,
+    SchemaLink, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
 };
 use mikura_host::{Host, HostRequest};
 use mikura_ingest::BatchIngest;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -48,6 +52,23 @@ const FIXED_WRITES: usize = 100;
 struct Report {
     machine: Machine,
     results: Vec<Measurement>,
+    #[serde(default)]
+    serving_bar: Vec<ServingBarSize>,
+}
+
+/// Pass/fail oracles and recorded cost for one fixture size (#355).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ServingBarSize {
+    objects: u64,
+    parity: bool,
+    policy: bool,
+    restart: bool,
+    restart_ns: Option<u64>,
+    peak_rss_bytes: u64,
+    peak_rss_per_million: u64,
+    /// Serving RSS cap (#353). ADR 0045 `MemoryBudget` is not this.
+    memory_budget: String,
+    errors: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,7 +300,7 @@ fn hop(far_kind: &str, join_property: &str) -> Hop {
 }
 
 /// Run every measurement for one fixture size.
-fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String> {
+fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<ServingBarSize, String> {
     let fixture = Fixture::new(objects);
     let scale = Scale::new(objects);
     let mut store = Store::create(&fixture.log)?;
@@ -310,15 +331,21 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String
         "ns/record",
         per_record,
     ));
+    let peak_rss = peak_rss_bytes();
+    results.push(Measurement::single("peak_rss", objects, "bytes", peak_rss));
     results.push(Measurement::single(
-        "peak_rss",
+        "peak_rss_per_million",
         objects,
         "bytes",
-        peak_rss_bytes(),
+        peak_rss.saturating_mul(1_000_000) / objects.max(1),
     ));
     // Before the time-budgeted appends below, so the size is deterministic.
     let log_bytes = std::fs::metadata(&fixture.log).map_or(0, |meta| meta.len());
     results.push(Measurement::single("log_size", objects, "bytes", log_bytes));
+
+    drop(store);
+    let serving = serving_bar_size(&fixture.log, objects, &scale, peak_rss)?;
+    let mut store = Store::open(&fixture.log)?;
 
     let mut next = scale.shipments;
     results.push(Measurement::new(
@@ -453,7 +480,7 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<(), String
         "ns/op",
         writes,
     ));
-    Ok(())
+    Ok(serving)
 }
 
 /// Delete every rebuildable projection so `open` replays the log.
@@ -466,6 +493,379 @@ fn remove_projections(log: &Path) {
     ] {
         let _ = std::fs::remove_file(path);
     }
+}
+
+fn serving_shapes(scale: &Scale) -> Vec<(&'static str, EvaluateRequest)> {
+    let outgoing = vec![hop("Order", "customer_id"), hop("Shipment", "order_id")];
+    let incoming = Hop {
+        far_kind: "Customer".into(),
+        join_property: "customer_id".into(),
+        incoming: true,
+        predicate: None,
+    };
+    let bound = (scale.shipments as usize)
+        .saturating_add(FIXED_WRITES)
+        .saturating_add(1);
+    vec![
+        ("hops_outgoing", hop_request("Customer", outgoing, "amount")),
+        (
+            "hops_incoming",
+            EvaluateRequest {
+                hops: vec![incoming],
+                sum_kind: "Order".into(),
+                sum_property: "customer_id".into(),
+                ..hop_request("Order", Vec::new(), "amount")
+            },
+        ),
+        (
+            "filter",
+            EvaluateRequest {
+                filter: Some(ExactMatch {
+                    property: "weight".into(),
+                    value: "3".into(),
+                }),
+                object_bound: bound,
+                sort: Some(Sort::by("amount")),
+                page_size: 20,
+                ..hop_request("Shipment", Vec::new(), "amount")
+            },
+        ),
+        (
+            "predicate",
+            EvaluateRequest {
+                predicate: Some(Predicate::eq("weight", "3")),
+                object_bound: bound,
+                sort: Some(Sort::by("amount")),
+                page_size: 20,
+                ..hop_request("Shipment", Vec::new(), "amount")
+            },
+        ),
+        (
+            "grouping",
+            EvaluateRequest {
+                breakdown: Some(Breakdown {
+                    group_by: vec!["region".into()],
+                    max_groups: 10,
+                    distinct: None,
+                }),
+                sum_kind: "Customer".into(),
+                sum_property: "region".into(),
+                ..hop_request("Customer", Vec::new(), "amount")
+            },
+        ),
+        (
+            "multi_key_sort",
+            EvaluateRequest {
+                object_bound: bound,
+                sort: Some(Sort::by("amount")),
+                then_by: vec![Sort::by("weight")],
+                page_size: 20,
+                ..hop_request("Shipment", Vec::new(), "amount")
+            },
+        ),
+        (
+            "distinct_page",
+            EvaluateRequest {
+                object_bound: (scale.customers as usize).saturating_add(1),
+                sort: Some(Sort::by("region")),
+                page_size: 2,
+                hops: vec![Hop {
+                    far_kind: "Customer".into(),
+                    join_property: "customer_id".into(),
+                    incoming: true,
+                    predicate: None,
+                }],
+                sum_kind: "Customer".into(),
+                sum_property: "region".into(),
+                ..hop_request("Order", Vec::new(), "amount")
+            },
+        ),
+        (
+            "breakdown_distinct",
+            EvaluateRequest {
+                breakdown: Some(Breakdown {
+                    group_by: vec!["weight".into()],
+                    max_groups: 20,
+                    distinct: Some("order_id".into()),
+                }),
+                ..hop_request("Shipment", Vec::new(), "amount")
+            },
+        ),
+    ]
+}
+
+fn distinct_pages_are_unique(
+    store: &Store,
+    requests: &[(&str, EvaluateRequest)],
+) -> Result<(), String> {
+    let Some((_, seed)) = requests.iter().find(|(name, _)| *name == "distinct_page") else {
+        return Ok(());
+    };
+    let mut request = seed.clone();
+    let mut seen = HashSet::new();
+    for _ in 0..=request.object_bound {
+        let response = LocalCompute
+            .evaluate(store, &request)
+            .map_err(|err| format!("distinct_page: {err:?}"))?;
+        for row in &response.objects {
+            if !seen.insert((row.kind.clone(), row.key.clone())) {
+                return Err(format!(
+                    "distinct_page: duplicate {}/{} across pages",
+                    row.kind, row.key
+                ));
+            }
+        }
+        match response.cursor {
+            Some(cursor) => request.cursor = Some(cursor),
+            None => return Ok(()),
+        }
+    }
+    Err("distinct_page: cursor did not end".into())
+}
+
+fn fingerprints(response: &EvaluateResponse) -> (usize, i64, Vec<String>, Vec<Group>, bool) {
+    (
+        response.two_hop_count,
+        response.sum_amount,
+        response
+            .objects
+            .iter()
+            .map(|row| format!("{}/{}/{}", row.namespace, row.kind, row.key))
+            .collect(),
+        response.groups.clone(),
+        response.cursor.is_some(),
+    )
+}
+
+fn serving_parity(log: &Path, scale: &Scale) -> Result<(), String> {
+    let store = Store::open(log)?;
+    let requests = serving_shapes(scale);
+    let live: Vec<(&str, EvaluateResponse)> = requests
+        .iter()
+        .map(|(name, request)| {
+            LocalCompute
+                .evaluate(&store, request)
+                .map(|response| (*name, response))
+                .map_err(|err| format!("{name}: live evaluate: {err:?}"))
+        })
+        .collect::<Result<_, _>>()?;
+    distinct_pages_are_unique(&store, &requests)?;
+    drop(store);
+    remove_projections(log);
+    let replayed = Store::open(log)?;
+    for ((name, request), (_, live_answer)) in requests.iter().zip(live.iter()) {
+        let from_log = LocalCompute
+            .evaluate(&replayed, request)
+            .map_err(|err| format!("{name}: replay evaluate: {err:?}"))?;
+        if fingerprints(live_answer) != fingerprints(&from_log) {
+            return Err(format!("{name}: live projection differs from log replay"));
+        }
+    }
+    Ok(())
+}
+
+fn serving_policy(log: &Path, scale: &Scale) -> Result<(), String> {
+    let store = Store::open(log)?;
+    let key = next_visible(&mut 1, scale);
+    let open = PropertyAcl::allow_all();
+    let open_row = store.load(NS, "Shipment", &key, &open)?;
+    if !open_row.props.contains_key("amount") {
+        return Err("open load omitted amount".into());
+    }
+    let deny = PropertyAcl::deny_property("Shipment", "amount");
+    let denied_row = store.load(NS, "Shipment", &key, &deny)?;
+    if denied_row.props.contains_key("amount") {
+        return Err("deny list did not omit amount".into());
+    }
+    let mut sum_denied = hop_request("Shipment", Vec::new(), "amount");
+    sum_denied.acl = deny;
+    match LocalCompute.evaluate(&store, &sum_denied) {
+        Err(ComputeError::Acl(AclError::Denied { kind, property }))
+            if kind == "Shipment" && property == "amount" => {}
+        other => return Err(format!("expected denied sum, got {other:?}")),
+    }
+    let listed = hop_request("Shipment", Vec::new(), "amount");
+    let open_page = LocalCompute
+        .evaluate(&store, &listed)
+        .map_err(|err| format!("open list: {err:?}"))?;
+    let mut hide = PropertyAcl::allow_all();
+    hide.insert_hide_identity("Shipment", &key)
+        .map_err(|err| err.to_string())?;
+    let mut hidden_list = listed.clone();
+    hidden_list.acl = hide;
+    let hidden_page = LocalCompute
+        .evaluate(&store, &hidden_list)
+        .map_err(|err| format!("hidden list: {err:?}"))?;
+    if hidden_page.two_hop_count >= open_page.two_hop_count {
+        return Err("hide_identities did not drop membership".into());
+    }
+    if hidden_page.sum_amount >= open_page.sum_amount {
+        return Err("hide_identities did not drop the row from the sum".into());
+    }
+    Ok(())
+}
+
+fn host_rpc(
+    addr: SocketAddr,
+    body: &serde_json::Value,
+) -> Result<mikura_host::HostResponse, String> {
+    let mut client = std::net::TcpStream::connect(addr).map_err(|err| format!("connect: {err}"))?;
+    client
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .map_err(|err| err.to_string())?;
+    client
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .map_err(|err| err.to_string())?;
+    let line = serde_json::to_string(body).map_err(|err| err.to_string())?;
+    client
+        .write_all(line.as_bytes())
+        .and_then(|_| client.write_all(b"\n"))
+        .map_err(|err| format!("write: {err}"))?;
+    let mut buf = String::new();
+    client
+        .read_to_string(&mut buf)
+        .map_err(|err| format!("read: {err}"))?;
+    serde_json::from_str(buf.trim()).map_err(|err| format!("decode: {err}"))
+}
+
+fn spawn_listening_host(log: &Path) -> Result<(std::process::Child, SocketAddr), String> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
+        .args([
+            "--log",
+            log.to_str().ok_or("log path is not utf-8")?,
+            "--bind",
+            "127.0.0.1:0",
+            "--stream-bound",
+            "8",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("spawn mikura-host: {err}"))?;
+    let stdout = child.stdout.take().ok_or("host stdout")?;
+    let mut line = String::new();
+    BufReader::new(stdout)
+        .read_line(&mut line)
+        .map_err(|err| format!("read listening line: {err}"))?;
+    let addr = line
+        .strip_prefix("listening ")
+        .map(str::trim)
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| {
+            let _ = child.kill();
+            format!("expected listening address, got {line:?}")
+        })?;
+    Ok((child, addr))
+}
+
+fn serving_restart(log: &Path, scale: &Scale) -> Result<u64, String> {
+    let key = next_visible(&mut 1, scale);
+    let (mut live, addr) = spawn_listening_host(log)?;
+    let loaded = host_rpc(
+        addr,
+        &serde_json::json!({
+            "op": "load",
+            "namespace": NS,
+            "kind": "Shipment",
+            "key": key,
+        }),
+    )?;
+    if !loaded.ok {
+        let _ = live.kill();
+        return Err(format!("load committed before kill: {loaded:?}"));
+    }
+    let pushed = host_rpc(
+        addr,
+        &serde_json::json!({
+            "op": "ingest_stream_push",
+            "record": shipment(scale.shipments.saturating_add(50_000), scale),
+        }),
+    )?;
+    if !pushed.ok {
+        let _ = live.kill();
+        return Err(format!("stream push: {pushed:?}"));
+    }
+    let _ = live.kill();
+    let _ = live.wait();
+    let started = Instant::now();
+    let (mut reopened, addr) = spawn_listening_host(log)?;
+    let health = host_rpc(addr, &serde_json::json!({"op": "health"}))?;
+    let restart_ns = started.elapsed().as_nanos() as u64;
+    if !health.ok || !health.health.as_ref().map(|row| row.ready).unwrap_or(false) {
+        let _ = reopened.kill();
+        return Err(format!("host not ready after kill: {health:?}"));
+    }
+    let restored = host_rpc(
+        addr,
+        &serde_json::json!({
+            "op": "load",
+            "namespace": NS,
+            "kind": "Shipment",
+            "key": key,
+        }),
+    )?;
+    if !restored.ok {
+        let _ = reopened.kill();
+        return Err(format!("committed write missing after kill: {restored:?}"));
+    }
+    let tail_key = format!("s{}", scale.shipments.saturating_add(50_000));
+    let missing = host_rpc(
+        addr,
+        &serde_json::json!({
+            "op": "load",
+            "namespace": NS,
+            "kind": "Shipment",
+            "key": tail_key,
+        }),
+    )?;
+    let _ = reopened.kill();
+    let _ = reopened.wait();
+    if missing.ok {
+        return Err("uncommitted stream push survived kill".into());
+    }
+    Ok(restart_ns)
+}
+
+fn serving_bar_size(
+    log: &Path,
+    objects: u64,
+    scale: &Scale,
+    peak_rss: u64,
+) -> Result<ServingBarSize, String> {
+    let mut errors = Vec::new();
+    let parity = match serving_parity(log, scale) {
+        Ok(()) => true,
+        Err(err) => {
+            errors.push(err);
+            false
+        }
+    };
+    let policy = match serving_policy(log, scale) {
+        Ok(()) => true,
+        Err(err) => {
+            errors.push(err);
+            false
+        }
+    };
+    let (restart, restart_ns) = match serving_restart(log, scale) {
+        Ok(ns) => (true, Some(ns)),
+        Err(err) => {
+            errors.push(err);
+            (false, None)
+        }
+    };
+    Ok(ServingBarSize {
+        objects,
+        parity,
+        policy,
+        restart,
+        restart_ns,
+        peak_rss_bytes: peak_rss,
+        peak_rss_per_million: peak_rss.saturating_mul(1_000_000) / objects.max(1),
+        memory_budget: "skipped: no serving memory budget (#353)".into(),
+        errors,
+    })
 }
 
 /// Nanosecond samples of one host mixed-load run.
@@ -639,8 +1039,9 @@ fn run() -> Result<bool, String> {
         machine.os, machine.arch, machine.cpus, machine.cpu
     );
     let mut results = Vec::new();
+    let mut serving_bar = Vec::new();
     for objects in sizes()? {
-        bench_size(objects, &mut results)?;
+        serving_bar.push(bench_size(objects, &mut results)?);
     }
     bench_encrypted_append(&mut results)?;
     println!(
@@ -679,10 +1080,34 @@ fn run() -> Result<bool, String> {
             );
         }
     }
-    let report = Report { machine, results };
+    for row in &serving_bar {
+        println!(
+            "serving_bar @ {}: parity={} policy={} restart={} peak_rss_per_million={} memory_budget={}",
+            row.objects,
+            row.parity,
+            row.policy,
+            row.restart,
+            row.peak_rss_per_million,
+            row.memory_budget
+        );
+        for err in &row.errors {
+            eprintln!("serving_bar: {err}");
+        }
+    }
+    let oracle_failed = serving_bar
+        .iter()
+        .any(|row| !row.parity || !row.policy || !row.restart);
+    let report = Report {
+        machine,
+        results,
+        serving_bar,
+    };
     if let Some(path) = std::env::var_os("MIKURA_BENCH_OUT") {
         let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
         std::fs::write(&path, json + "\n").map_err(|e| format!("write results: {e}"))?;
+    }
+    if oracle_failed {
+        return Err("serving bar failed".into());
     }
     let Some(path) = std::env::var_os("MIKURA_BENCH_BASELINE") else {
         return Ok(true);

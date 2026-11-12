@@ -104,6 +104,24 @@ impl HostProcess {
         Self { child, addr, stdin }
     }
 
+    /// SIGKILL the host while stdin is still open so the shutdown watcher
+    /// does not run first. Committed pages stay; an uncommitted tail is not
+    /// promoted. The OS drops the log lock.
+    fn kill(mut self) {
+        let _ = self.child.kill();
+        let status = self.child.wait().expect("wait killed host");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(9), "expected SIGKILL, got {status}");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = status;
+        }
+        drop(self.stdin.take());
+    }
+
     /// Close stdin and wait for a clean exit. Does not flush the stream.
     fn stop(mut self) {
         drop(self.stdin.take());
@@ -3055,4 +3073,62 @@ fn process_second_writer_fails_closed_and_a_killed_holder_never_wedges() {
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let tier = load_object(&reopened, "component", "svc-api");
     assert_eq!(tier.props.get("tier").map(String::as_str), Some("prod"));
+}
+
+#[test]
+fn process_kill_during_writes_keeps_committed_history() {
+    let tmp = TempLog::new("kill-during-writes");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let ingest = host.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": fixture(),
+    }));
+    assert!(ingest.ok, "{ingest:?}");
+    let committed = load_object(&host, "Shipment", "s1");
+    assert_eq!(
+        committed.props.get("amount").map(String::as_str),
+        Some("10")
+    );
+    let push = host.rpc(&serde_json::json!({
+        "op": "ingest_stream_push",
+        "record": rec(
+            "Shipment",
+            "s-uncommitted",
+            false,
+            &[("order_id", "o1"), ("amount", "99")],
+        ),
+    }));
+    assert!(push.ok, "{push:?}");
+    let live_tail = host.rpc(&serde_json::json!({
+        "op": "load",
+        "namespace": "ns",
+        "kind": "Shipment",
+        "key": "s-uncommitted"
+    }));
+    assert!(live_tail.ok, "{live_tail:?}");
+    host.kill();
+
+    let started = Instant::now();
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let health = reopened.rpc(&serde_json::json!({"op": "health"}));
+    assert!(health.ok, "{health:?}");
+    assert!(
+        health.health.as_ref().map(|row| row.ready).unwrap_or(false),
+        "{health:?}"
+    );
+    let restart = started.elapsed();
+    assert!(
+        restart < Duration::from_secs(5),
+        "host should serve again quickly, took {restart:?}"
+    );
+    let restored = load_object(&reopened, "Shipment", "s1");
+    assert_eq!(restored.props.get("amount").map(String::as_str), Some("10"));
+    let missing = reopened.rpc(&serde_json::json!({
+        "op": "load",
+        "namespace": "ns",
+        "kind": "Shipment",
+        "key": "s-uncommitted"
+    }));
+    assert!(!missing.ok, "{missing:?}");
+    assert!(missing.load.is_none());
 }

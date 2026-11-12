@@ -3,7 +3,9 @@
 The product benchmark suite measures the product `Store` and the in-process
 `Host`, not a spike. It answers the performance questions in
 [#237](https://github.com/Sannrox/mikura/issues/237) with numbers that a
-nightly job keeps honest. Spikes under `spikes/` stay throwaway.
+nightly job keeps honest, and the serving bar in
+[#355](https://github.com/Sannrox/mikura/issues/355). Spikes under `spikes/`
+stay throwaway.
 
 ## Run it
 
@@ -25,6 +27,43 @@ these variables resolve there. Use absolute paths.
 Output prints the machine class (OS, architecture, CPU count, CPU model)
 and one row per measurement with p50, p95 and p99. Every measurement is
 lower-is-better, so one rule covers the gate.
+
+`MIKURA_BENCH_OUT` JSON also carries a `serving_bar` array. Each size is
+pass/fail for parity, policy, and restart, plus recorded `peak_rss` and
+`restart_ns`. A serving memory-budget row is skipped until that API exists
+([#353](https://github.com/Sannrox/mikura/issues/353)). ADR 0045
+`MemoryBudget` is not that cap. The 20% p50 latency gate does not apply to
+the oracles; a failed oracle fails the run.
+
+A 400-object oracle of the same parity and policy checks runs in
+`cargo test --workspace --locked`. Host kill-during-write recovery is
+`cargo test -p mikura-host --test e2e --locked -- process_kill_during_writes_keeps_committed_history`.
+CI runs the 10^6 size on the nightly bench job. 10^7 stays opt-in.
+
+## Serving bar
+
+The bar is the same Customer → Order → Shipment fixture. It does not set an
+SLO. A release passes when every named shape matches log replay, a non-empty
+deny list and `hide_identities` are enforced, and a kill during writes still
+serves committed history.
+
+| Check | What it compares |
+| --- | --- |
+| Parity | hops both directions, filter, composed predicate, grouping, multi-key sort, distinct page, breakdown distinct vs `Store::open` after deleting the sidecar |
+| Policy | `Shipment.amount` deny on load and evaluate; hide of one visible shipment drops membership and sum |
+| Restart | SIGKILL with an uncommitted stream tail; reopen serves; committed load holds; the tail is gone |
+| Cost | existing `point_read`, `list_filter`, hop aggregates |
+| Memory | `peak_rss` and `peak_rss_per_million` |
+
+Baseline on current main, unbudgeted, from the published product-bench table
+(Apple M2 Pro, 10 CPUs, macOS arm64, 2026-10-18) plus oracles that are
+machine-independent:
+
+| Size | Parity / policy / restart | `peak_rss` | `peak_rss` per million |
+| --- | --- | ---: | ---: |
+| 10^4 | default tests plus `cargo bench` | 10.7 MiB | 1.07 GiB |
+| 10^6 | nightly bench job | 787.8 MiB | 787.8 MiB |
+| 10^7 | opt-in `MIKURA_BENCH_SIZES=10000000` | recorded by that run | recorded by that run |
 
 ## Fixture
 

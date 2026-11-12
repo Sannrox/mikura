@@ -27,6 +27,7 @@ mod restriction;
 mod row_filter;
 mod schema;
 mod schema_migrate;
+mod serving_bar;
 mod split_commit;
 mod stability;
 mod top_page;
