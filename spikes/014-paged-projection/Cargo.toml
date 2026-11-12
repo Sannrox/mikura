@@ -1,0 +1,12 @@
+[workspace]
+
+[package]
+name = "mikura-paged-projection-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway paged projection cache vs in-memory HashMap RSS. Not the store of record."
+
+[[bin]]
+name = "mikura-paged-projection-spike"
+path = "src/main.rs"

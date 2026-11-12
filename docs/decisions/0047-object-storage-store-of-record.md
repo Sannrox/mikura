@@ -3,9 +3,9 @@
 - Status: proposed
 - Date: 2026-11-05
 - Owners: mikura maintainers
-- Related: [#335](https://github.com/Sannrox/mikura/issues/335), [#356](https://github.com/Sannrox/mikura/issues/356), [#340](https://github.com/Sannrox/mikura/issues/340), [#353](https://github.com/Sannrox/mikura/issues/353), [#357](https://github.com/Sannrox/mikura/issues/357), [#360](https://github.com/Sannrox/mikura/issues/360), [#361](https://github.com/Sannrox/mikura/issues/361), [#362](https://github.com/Sannrox/mikura/issues/362), [#363](https://github.com/Sannrox/mikura/issues/363), [#336](https://github.com/Sannrox/mikura/issues/336), [#283](https://github.com/Sannrox/mikura/issues/283), [#244](https://github.com/Sannrox/mikura/issues/244), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0001](0001-paged-log.md), [ADR 0023](0023-single-process-availability.md), [ADR 0030](0030-unnamespaced-log-migration.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [ADR 0040](0040-concurrent-host-readers.md), [ADR 0042](0042-api-stability.md), [ADR 0044](0044-log-encryption.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)
+- Related: [#335](https://github.com/Sannrox/mikura/issues/335), [#356](https://github.com/Sannrox/mikura/issues/356), [#340](https://github.com/Sannrox/mikura/issues/340), [#353](https://github.com/Sannrox/mikura/issues/353), [#357](https://github.com/Sannrox/mikura/issues/357), [#360](https://github.com/Sannrox/mikura/issues/360), [#361](https://github.com/Sannrox/mikura/issues/361), [#362](https://github.com/Sannrox/mikura/issues/362), [#363](https://github.com/Sannrox/mikura/issues/363), [#336](https://github.com/Sannrox/mikura/issues/336), [#283](https://github.com/Sannrox/mikura/issues/283), [#244](https://github.com/Sannrox/mikura/issues/244), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0001](0001-paged-log.md), [ADR 0023](0023-single-process-availability.md), [ADR 0030](0030-unnamespaced-log-migration.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [ADR 0040](0040-concurrent-host-readers.md), [ADR 0042](0042-api-stability.md), [ADR 0044](0044-log-encryption.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md), [ADR 0048](0048-paged-projection-serving-budget.md)
 - Amends: [ADR 0023](0023-single-process-availability.md) — its revisit clause fires: [#335](https://github.com/Sannrox/mikura/issues/335) publishes a data-loss target restore-from-log cannot meet. One-process-at-a-time remains; restore-from-log stops being the only failure path.
-- Amended by: this file's 2026-11-12 operational rules ([#356](https://github.com/Sannrox/mikura/issues/356))
+- Amended by: this file's 2026-11-12 operational rules ([#356](https://github.com/Sannrox/mikura/issues/356)); in-process serving structure ([#353](https://github.com/Sannrox/mikura/issues/353), [ADR 0048](0048-paged-projection-serving-budget.md))
 - Supersedes: none
 - Superseded by: none
 
@@ -122,9 +122,9 @@ fence.**
    from the log, and they are replaced by writing a new object beside the
    serving one and switching the name in the next successful manifest
    swap. A derived object that does not match the manifest version it
-   claims is ignored and rebuilt. The in-process serving structure
-   (memory-mapped sidecar versus paged index) is not chosen here;
-   [#353](https://github.com/Sannrox/mikura/issues/353) owns that.
+   claims is ignored and rebuilt. The in-process serving structure is
+   a paged file plus a bounded cache
+   ([ADR 0048](0048-paged-projection-serving-budget.md)).
 
 10. **Commit-cost budget.** A data commit makes two sequential
     storage-call waves, independent of store size and of history length:
@@ -222,7 +222,8 @@ mikura.
   superblock format and the manifest format; the conversion itself is a
   one-way explicit step per log.
 - Implementation of these rules is [#340](https://github.com/Sannrox/mikura/issues/340)
-  after acceptance, with [#353](https://github.com/Sannrox/mikura/issues/353),
+  after acceptance, with [#353](https://github.com/Sannrox/mikura/issues/353)
+  / [ADR 0048](0048-paged-projection-serving-budget.md),
   [#357](https://github.com/Sannrox/mikura/issues/357),
   [#360](https://github.com/Sannrox/mikura/issues/360),
   [#361](https://github.com/Sannrox/mikura/issues/361),
@@ -259,4 +260,9 @@ mikura.
   closed. The in-process projection serving structure stays deferred to
   [#353](https://github.com/Sannrox/mikura/issues/353). Acceptance still
   waits on the [#335](https://github.com/Sannrox/mikura/issues/335)
+  measurements in Decision §8.
+- 2026-11-12, [#353](https://github.com/Sannrox/mikura/issues/353): the
+  in-process serving structure is
+  [ADR 0048](0048-paged-projection-serving-budget.md) (paged projection,
+  serving memory budget). Acceptance still waits on the [#335](https://github.com/Sannrox/mikura/issues/335)
   measurements in Decision §8.
