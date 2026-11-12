@@ -7,7 +7,7 @@ name = "mikura"
 # Release process: RELEASING.md. Agents never push v* tags.
 # When bumping: this version, crates/mikura-ingest, crates/mikura-host,
 # and the README.md status line; then `cargo update -w`.
-version = "0.5.0-rc.1"
+version = "0.5.0"
 edition = "2021"
 publish = false
 description = "Object database: durable object log, object-set evaluate, property ACLs, and Action writeback."
