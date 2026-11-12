@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "mikura-maintained-view-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: sabun-maintained breakdown vs evaluate-time breakdown on the product Store. Not the store of record."
+
+[[bin]]
+name = "mikura-maintained-view-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
+sabun = { git = "https://github.com/Sannrox/sabun.git", rev = "4bb1efd69885911fa8baffbb92ad3d51f65cab88" }
