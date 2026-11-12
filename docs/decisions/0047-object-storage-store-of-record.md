@@ -3,8 +3,9 @@
 - Status: proposed
 - Date: 2026-11-05
 - Owners: mikura maintainers
-- Related: [#335](https://github.com/Sannrox/mikura/issues/335), [#336](https://github.com/Sannrox/mikura/issues/336), [#283](https://github.com/Sannrox/mikura/issues/283), [#244](https://github.com/Sannrox/mikura/issues/244), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0001](0001-paged-log.md), [ADR 0023](0023-single-process-availability.md), [ADR 0030](0030-unnamespaced-log-migration.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [ADR 0040](0040-concurrent-host-readers.md), [ADR 0042](0042-api-stability.md), [ADR 0044](0044-log-encryption.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)
+- Related: [#335](https://github.com/Sannrox/mikura/issues/335), [#356](https://github.com/Sannrox/mikura/issues/356), [#340](https://github.com/Sannrox/mikura/issues/340), [#353](https://github.com/Sannrox/mikura/issues/353), [#357](https://github.com/Sannrox/mikura/issues/357), [#360](https://github.com/Sannrox/mikura/issues/360), [#361](https://github.com/Sannrox/mikura/issues/361), [#362](https://github.com/Sannrox/mikura/issues/362), [#363](https://github.com/Sannrox/mikura/issues/363), [#336](https://github.com/Sannrox/mikura/issues/336), [#283](https://github.com/Sannrox/mikura/issues/283), [#244](https://github.com/Sannrox/mikura/issues/244), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0001](0001-paged-log.md), [ADR 0023](0023-single-process-availability.md), [ADR 0030](0030-unnamespaced-log-migration.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [ADR 0040](0040-concurrent-host-readers.md), [ADR 0042](0042-api-stability.md), [ADR 0044](0044-log-encryption.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md)
 - Amends: [ADR 0023](0023-single-process-availability.md) — its revisit clause fires: [#335](https://github.com/Sannrox/mikura/issues/335) publishes a data-loss target restore-from-log cannot meet. One-process-at-a-time remains; restore-from-log stops being the only failure path.
+- Amended by: this file's 2026-11-12 operational rules ([#356](https://github.com/Sannrox/mikura/issues/356))
 - Supersedes: none
 - Superseded by: none
 
@@ -43,6 +44,15 @@ second stateful service that adds a shipping protocol, a lag contract, and a
 promotion mechanism without adding durability the remote store does not
 already give.
 
+The proposed commit point left six operational questions open: where
+projections live, how many sequential storage calls a commit may make, who
+may collect unreferenced objects, how a backend proves its conditional
+write, how a reader requires the write it just made, and what the `file`
+backend actually survives. [#356](https://github.com/Sannrox/mikura/issues/356)
+closes those here, while the ADR is still proposed. Filling the
+[#335](https://github.com/Sannrox/mikura/issues/335) measurement cells
+remains the acceptance gate.
+
 ## Decision
 
 **Move the store of record to object storage with conditional writes.
@@ -69,20 +79,27 @@ fence.**
    time remains the contract ([ADR 0040](0040-concurrent-host-readers.md)
    is unchanged inside the process).
 
-4. **Takeover is process start.** A replacement opens the manifest, rebuilds
-   or reloads projections, and serves. Deciding when to start a replacement
-   stays outside mikura (the clerk or the process supervisor). mikura ships
-   no cluster manager and no failure detector.
+4. **Takeover is process start.** A replacement opens the manifest, loads
+   the newest valid derived checkpoint and projection, replays only the
+   tail, and serves. Deciding when to start a replacement stays outside
+   mikura (the clerk or the process supervisor). mikura ships no cluster
+   manager and no failure detector.
 
 5. **Reads during and after failure.** Any process may open read-only at a
-   manifest version. Staleness is the manifest age and is reported, which
-   satisfies the bounded-staleness clause of
-   [#335](https://github.com/Sannrox/mikura/issues/335) without a replica
-   protocol.
+   manifest version. Staleness is the serving manifest version versus the
+   writer's, and is reported, which satisfies the bounded-staleness clause
+   of [#335](https://github.com/Sannrox/mikura/issues/335) without a replica
+   protocol. A reader may name a minimum manifest version. The store waits
+   up to a bound for it, then answers or refuses; it never answers below
+   that version. A reader at a version older than the retention window
+   (Decision §11) fails closed on a missing object and may retry at a
+   current version. There is no reader-to-writer pin or lease.
 
 6. **Crash debris is garbage, not state.** Staged segments whose swap never
-   landed are unreferenced and are collected on open or compact. No
-   roll-forward, no rollback, no repair tooling.
+   landed are unreferenced. The current writer may collect them on
+   open-for-write or compact. A read-only opener never collects. There is
+   no background scheduler. No roll-forward, no rollback, no repair
+   tooling.
 
 7. **Migration is explicit.** Existing `MIKURAV2`/`MIKURAV3` logs convert
    with a tool, as [ADR 0030](0030-unnamespaced-log-migration.md) did for
@@ -99,6 +116,60 @@ fence.**
    those cells with guessed numbers is forbidden, as in
    [ADR 0023](0023-single-process-availability.md).
 
+9. **One object layout.** Sealed log segments, checkpoints, and
+   projections live in one object namespace. Checkpoints and projections
+   are derived: they are never authority, they are deletable, they rebuild
+   from the log, and they are replaced by writing a new object beside the
+   serving one and switching the name in the next successful manifest
+   swap. A derived object that does not match the manifest version it
+   claims is ignored and rebuilt. The in-process serving structure
+   (memory-mapped sidecar versus paged index) is not chosen here;
+   [#353](https://github.com/Sannrox/mikura/issues/353) owns that.
+
+10. **Commit-cost budget.** A data commit makes two sequential
+    storage-call waves, independent of store size and of history length:
+    a parallel put of every new object that commit stages, then one
+    conditional write of the successor manifest. A lost-response
+    resolution is one extra read of the current manifest and is not the
+    happy path. The manifest is a snapshot, not a history fold: open is
+    one get of the current manifest, then a bounded set of gets of the
+    objects it names (the latest checkpoint, the current projection if
+    present, and the tail segments since that checkpoint). History older
+    than that checkpoint is not read to open. The store counts storage
+    calls per operation. This is a call-count bound, not a latency SLO.
+    [#357](https://github.com/Sannrox/mikura/issues/357) measures it.
+
+11. **Maintenance ownership.** Collection, compact, and conversion are
+    writes. They use the same conditional manifest swap as data commits.
+    A process that is not the current writer refuses them. There is no
+    second owner channel and no lease. Staged segments carry the manifest
+    version of the writer that staged them. A segment is collected only
+    when it is unreferenced, that writer has been fenced by a later
+    manifest version, and no retained manifest names it. The current
+    manifest and any point-in-time-retained manifests are retained; older
+    unretained manifests may lose their objects. Deletion order is
+    reference first, data second, so a manifest that opens names only
+    objects that exist. [#363](https://github.com/Sannrox/mikura/issues/363)
+    implements this.
+
+12. **Backend probe.** On open-for-write, the backend proves its
+    conditional write: two competing updates of a probe object, exactly
+    one of which succeeds. Without that proof the writer refuses to
+    start. A read-only open does not probe, does not write, and does not
+    require write permission; it fails closed if it cannot get the
+    manifest. A later promotion to writer runs the probe then. Storage
+    errors are typed (refused precondition, not found, unavailable,
+    unknown outcome). Credentials and the storage location stay with the
+    deployment. [#360](https://github.com/Sannrox/mikura/issues/360)
+    implements the remote backend.
+
+13. **What each backend survives.** The `file` backend survives process
+    crash and restart on the same disk. It does not survive machine loss
+    or disk loss: durability ends at that disk. An object-storage backend
+    survives process crash, machine loss, and disk loss of the compute
+    host; durability is the store's. Bucket loss is the deployment's copy
+    policy, not this crate.
+
 No consensus service. No multi-leader writes. No automatic failover inside
 mikura.
 
@@ -111,17 +182,28 @@ mikura.
 | Acknowledge locally, upload asynchronously | Fail-open on the data-loss clause. Rejected outright. |
 | Tighter backup cadence, renegotiate the target (option 1 in [#335](https://github.com/Sannrox/mikura/issues/335)) | The consumer published the target; this ADR exists to meet it, not to relax it. Available as explicit no-action if the spikes refute feasibility. |
 | Keep the local engine and add object storage beside it | Two commit protocols, two format lineages, two test matrices, forever. The `file` backend of one protocol serves local use instead. |
+| Fold every swap into an append-only manifest history | Open and takeover cost would grow with commit count. The manifest is a snapshot; older history is not required to open. |
+| Collect unreferenced segments while their stager is still the live writer | Deletes objects a commit may still name. Collection waits until that writer is fenced. |
+| A second owner record or lease for maintenance | Duplicates the swap fence. Maintenance is a write. |
+| Reader-to-writer pins so a live snapshot cannot be collected | A lease by another name. Retention is the current manifest plus PITR-retained manifests; an older reader fails closed and retries. |
+| Trust a backend's conditional write without a probe | Stores differ; a backend that accepts both competing updates is not this protocol. |
+| Run the competing-write probe on read-only open | Requires write permission to read, and mutates the namespace. Probe is a writer start check. |
+| Answer a minimum-version read from an older manifest | Misses read-your-writes. Refuse rather than serve below the named version. |
+| Treat the `file` backend as surviving machine loss | One disk. The protocol is the same; the survival is not. |
 
 ## Consequences
 
 - Commit latency rises from a local fsync to a storage round trip. Group
   commit and the existing batch and stream APIs amortize throughput; the
   per-commit envelope is spike evidence, not a guess. If the measured
-  envelope breaks the consumer's workload, this ADR is not accepted.
+  envelope breaks the consumer's workload, this ADR is not accepted. The
+  sequential call budget (two waves) is independent of that envelope.
 - Durability, machine-loss recovery, and offsite copy collapse into one
-  mechanism. [ADR 0037](0037-online-backup-and-restore.md) backup is
-  partially subsumed: retained manifest history is point-in-time restore;
-  its remaining scope is revisited after cutover.
+  mechanism on an object-storage backend. The `file` backend does not
+  gain those properties. [ADR 0037](0037-online-backup-and-restore.md)
+  backup is partially subsumed on the object-storage backend: retained
+  manifest history is point-in-time restore; its remaining scope is
+  revisited after cutover.
 - A second process opening the same log stops being corruption-by-convention
   and becomes a fenced, failing swap. The gap
   [ADR 0023](0023-single-process-availability.md) left unenforced closes
@@ -129,15 +211,24 @@ mikura.
 - New dependency: an object-store client in `mikura` (the crate that speaks
   it). No control-plane dependency; bucket and credential configuration
   stay with the deployment, not this repository.
-- Garbage collection of unreferenced segments is a new, bounded
-  responsibility on open and compact. There is still no background
-  scheduler.
+- Garbage collection of unreferenced segments is a writer operation on
+  open-for-write and compact. There is still no background scheduler.
+- Derived checkpoints and projections are named in the manifest and can
+  be deleted; takeover no longer requires a local sidecar.
 - [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md) is
   unchanged: one unpartitioned store, one identity space. This ADR changes
   where the one store lives, not how many there are.
 - Rolling deploys: during the migration window a host must read both the
   superblock format and the manifest format; the conversion itself is a
   one-way explicit step per log.
+- Implementation of these rules is [#340](https://github.com/Sannrox/mikura/issues/340)
+  after acceptance, with [#353](https://github.com/Sannrox/mikura/issues/353),
+  [#357](https://github.com/Sannrox/mikura/issues/357),
+  [#360](https://github.com/Sannrox/mikura/issues/360),
+  [#361](https://github.com/Sannrox/mikura/issues/361),
+  [#362](https://github.com/Sannrox/mikura/issues/362), and
+  [#363](https://github.com/Sannrox/mikura/issues/363) as the split-out
+  surfaces. This ADR does not implement them.
 
 ## Validation
 
@@ -154,3 +245,18 @@ mikura.
    present, staleness reported.
 4. Review after the first hosted deployment or 2027-01-31, whichever is
    earlier.
+5. [#356](https://github.com/Sannrox/mikura/issues/356) is closed when this
+   file names the six operational rules (or an explicit deferral). It does
+   not wait on the #335 cells and does not flip this ADR to accepted.
+
+## Amendments
+
+- 2026-11-12, [#356](https://github.com/Sannrox/mikura/issues/356): while
+  still proposed, record the object layout, the two-wave commit-cost
+  budget, writer-owned collection, the writer-only conditional-write
+  probe, minimum-version reads, and per-backend survival. Collection
+  preserves objects named by retained manifests; older readers fail
+  closed. The in-process projection serving structure stays deferred to
+  [#353](https://github.com/Sannrox/mikura/issues/353). Acceptance still
+  waits on the [#335](https://github.com/Sannrox/mikura/issues/335)
+  measurements in Decision §8.
