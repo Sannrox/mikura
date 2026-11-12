@@ -164,7 +164,9 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
-It does not keep a hot payload map. `Store::load(namespace, kind, key, acl)`
+It does not keep a hot payload map. A serving memory budget that pages
+this projection is [ADR 0048](decisions/0048-paged-projection-serving-budget.md);
+that path is not implemented yet. `Store::load(namespace, kind, key, acl)`
 reconstructs the live `ObjectRecord` from slim identity plus interned
 property pairs already in that sidecar
 ([ADR 0005](decisions/0005-current-object-load.md)). Missing or unknown

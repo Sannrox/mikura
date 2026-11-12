@@ -8,6 +8,8 @@
 - Superseded by: [ADR 0004](0004-slim-join-maps.md) for interned slim maps,
   then [ADR 0006](0006-action-provenance.md) and [ADR 0010](0010-last-hop-measures.md)
   for current magic (`MKJOIN04`)
+- Amended by: [ADR 0048](0048-paged-projection-serving-budget.md) for a
+  paged serving layout under a memory budget
 
 ## Context
 

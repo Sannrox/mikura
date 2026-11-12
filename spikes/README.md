@@ -21,6 +21,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 | [011-hundred-million-envelope](011-hundred-million-envelope/NOTES.md) | Product join maps; 10⁷ hop count+sum **49 ms hold** vs 500 ms on declared rollups; dual-read hold; 10¹⁰ ingest is a disk miss (not required) | HOLD at 10⁷ query; INGEST MISS at 10¹⁰ |
 | [012-overlay-apply](012-overlay-apply/NOTES.md) | New overlay on an existing identity vs a whole-record write; patch-only projection update | HOLD: same cost within fsync jitter, no change |
 | [013-row-filter-envelope](013-row-filter-envelope/NOTES.md) | 10⁷ two-hop with a 1 % restriction row filter vs open two-hop and root predicate | HOLD on root (104 ms); hop-target filter 7.9 s MISS |
+| [014-paged-projection](014-paged-projection/NOTES.md) | Paged 4 KiB cache vs in-memory maps; RSS at 10⁴ and 10⁶ | HOLD: paged RSS stays near the cache; mmap-and-decode does not |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.
