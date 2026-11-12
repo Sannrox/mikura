@@ -123,7 +123,7 @@ grep -F -- "--match 'v*' --exclude '*-*' origin/main" scripts/changelog-draft.sh
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mikura-release-package.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "${tmp}/dist"
-printf 'fake\n' >"${tmp}/dist/mikura-host-0.4.0-test"
+printf 'fake\n' >"${tmp}/dist/mikura-host-0.5.0-rc.1-test"
 ROOT_PATH="$ROOT_PATH" bash scripts/release-package.sh --out "${tmp}/dist" --skip-build --skip-test --skip-github --git-sha "$(git rev-parse HEAD)"
 [[ -f "${tmp}/dist/mikura-release.json" ]] || fail "dry-run package did not write a manifest"
 [[ -f "${tmp}/dist/mikura.cdx.json" ]] || fail "dry-run package did not write an SBOM"
@@ -132,9 +132,9 @@ python3 -c "import json,sys; m=json.loads(open(sys.argv[1]).read()); assert m['s
 
 notes_out="${tmp}/notes"
 mkdir -p "$notes_out"
-ROOT_PATH="$ROOT_PATH" bash scripts/release-package.sh --out "$notes_out" --skip-build --skip-test --skip-github --tag v0.4.0 --git-sha "$(git rev-parse HEAD)"
+ROOT_PATH="$ROOT_PATH" bash scripts/release-package.sh --out "$notes_out" --skip-build --skip-test --skip-github --tag v0.5.0-rc.1 --git-sha "$(git rev-parse HEAD)"
 [[ -s "${notes_out}/RELEASE_NOTES.md" ]] || fail "tag dry-run did not write CHANGELOG notes"
-grep -F "Join sidecars write \`MKJOIN06\`" "${notes_out}/RELEASE_NOTES.md" >/dev/null || fail "CHANGELOG notes missing expected 0.4.0 body"
-python3 -c "import json,sys; m=json.loads(open(sys.argv[1]).read()); assert m['version']=='0.4.0'; assert m['tag']=='v0.4.0'; assert m['schema']=='tenkai.family-release-manifest.v1'" "${notes_out}/mikura-release.json"
+grep -F "Object logs written by \`v0.4.0\` open" "${notes_out}/RELEASE_NOTES.md" >/dev/null || fail "CHANGELOG notes missing expected 0.5.0-rc.1 body"
+python3 -c "import json,sys; m=json.loads(open(sys.argv[1]).read()); assert m['version']=='0.5.0-rc.1'; assert m['tag']=='v0.5.0-rc.1'; assert m['schema']=='tenkai.family-release-manifest.v1'" "${notes_out}/mikura-release.json"
 
 printf 'validate-release passed\n'
