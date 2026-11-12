@@ -156,7 +156,7 @@ the store of record.
 
 ## Status
 
-Pre-1.0 (`0.4.0`, not published to crates.io). The core loop — ingest,
+Pre-1.0 (`0.5.0-rc.1`, not published to crates.io). The core loop — ingest,
 evaluate, Action writeback, crash recovery, online backup and restore — is in
 place; interfaces may change between minor releases under the
 [1.0 surface rules](docs/plans/1.0-surface.md)
