@@ -57,6 +57,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0046](0046-unpartitioned-store-after-synthetic-ceiling.md) | Retain one unpartitioned store after the synthetic 10¹⁰ ingest ceiling | accepted |
 | [0047](0047-object-storage-store-of-record.md) | Object-storage store of record with a swap-committed manifest | proposed |
 | [0048](0048-paged-projection-serving-budget.md) | Paged join projection with a serving memory budget | accepted |
+| [0049](0049-maintained-breakdown-justified.md) | A one-property breakdown kept current at commit is justified | accepted |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is
