@@ -8,6 +8,7 @@ mod delta;
 mod durable;
 mod encrypt;
 mod evolution;
+mod fault;
 mod helpers;
 mod hide;
 mod history;

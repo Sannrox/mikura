@@ -5,7 +5,7 @@ use crc32fast::Hasher as Crc;
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,6 +29,10 @@ const PAGE_HDR: usize = CRC_LEN + USED_LEN;
 const SUPER_COMMIT_OFF: usize = CRC_LEN + 8 + 2;
 const UNCERTAIN_COMMIT: &str =
     "log state uncertain after a failed commit or rollback; reopen the store";
+
+fn io_err(error: String) -> std::io::Error {
+    std::io::Error::other(error)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncPolicy {
@@ -104,15 +108,9 @@ fn create_locked(path: &Path) -> Result<File, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|e| e.to_string())?;
+    let file = crate::fault::open_rw_create(path)?;
     lock_writer(&file, path)?;
-    file.set_len(0).map_err(|e| e.to_string())?;
+    crate::fault::set_len(&file, 0)?;
     Ok(file)
 }
 
@@ -183,11 +181,7 @@ impl LogWriter {
     }
 
     fn open_inner(path: &Path, sync: SyncPolicy, keys: Option<LogKeys>) -> Result<Self, String> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
+        let mut file = crate::fault::open_rw(path)?;
         lock_writer(&file, path)?;
         let mut superblock = vec![0u8; PAGE];
         file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
@@ -446,7 +440,7 @@ impl LogWriter {
         self.written = self.committed;
         self.synced = self.committed;
         let end = PAGE as u64 * u64::from(1 + self.committed);
-        self.file.set_len(end).map_err(|e| e.to_string())?;
+        crate::fault::set_len(&self.file, end)?;
         self.file
             .seek(SeekFrom::Start(end))
             .map_err(|e| e.to_string())?;
@@ -632,10 +626,10 @@ impl LogWriter {
             let mut written = self.written;
             let mut synced = self.committed;
             for page in &staged.pages {
-                file.write_all(page)?;
+                crate::fault::write_all(&mut file, page).map_err(io_err)?;
                 written += 1;
                 if self.sync.durable() && written - synced >= self.sync.group_size() {
-                    file.sync_data()?;
+                    crate::fault::sync_data(file).map_err(io_err)?;
                     fsyncs += 1;
                     synced = written;
                 }
@@ -643,14 +637,17 @@ impl LogWriter {
             #[cfg(test)]
             self.run_stage_hook(CommitStage::PagesWritten);
             if self.sync.durable() {
-                file.sync_data()?;
+                crate::fault::sync_data(file).map_err(io_err)?;
                 fsyncs += 1;
             }
             Ok(())
         })();
         if let Err(error) = pages {
-            let truncated = file
-                .set_len(start)
+            if crate::fault::crashed() {
+                return Err(error.to_string());
+            }
+            let truncated = crate::fault::set_len(file, start)
+                .map_err(io_err)
                 .and_then(|()| file.seek(SeekFrom::Start(start)).map(drop));
             if let Err(truncate) = truncated {
                 self.failed.store(true, Ordering::Relaxed);
@@ -663,12 +660,12 @@ impl LogWriter {
             file.seek(SeekFrom::Start(0))?;
             // Half a superblock on disk, as a short write would leave it.
             let (head, tail) = staged.superblock.split_at(PAGE / 2);
-            file.write_all(head)?;
+            crate::fault::write_all(&mut file, head).map_err(io_err)?;
             #[cfg(test)]
             self.run_stage_hook(CommitStage::SuperblockTorn);
-            file.write_all(tail)?;
+            crate::fault::write_all(&mut file, tail).map_err(io_err)?;
             if self.sync.durable() {
-                file.sync_data()?;
+                crate::fault::sync_data(file).map_err(io_err)?;
                 fsyncs += 1;
             }
             file.seek(SeekFrom::Start(end)).map(drop)
@@ -706,7 +703,7 @@ impl LogWriter {
                 .map(|(tenant, dek)| (tenant.clone(), dek.clone()))
                 .collect::<HashMap<_, _>>()
         });
-        let mut file = File::open(path).map_err(|e| e.to_string())?;
+        let mut file = crate::fault::open_read(path)?;
         let needed = PAGE as u64 * u64::from(1 + self.committed);
         if file.metadata().map_err(|e| e.to_string())?.len() < needed {
             return Err("committed pages missing".into());
@@ -768,7 +765,7 @@ impl LogWriter {
             self.written + 1,
         );
         self.page = page;
-        self.file.write_all(&sealed?).map_err(|e| e.to_string())?;
+        crate::fault::write_all(&mut self.file, &sealed?)?;
         self.written += 1;
         self.page = vec![0u8; PAGE];
         self.used = 0;
@@ -861,9 +858,7 @@ impl LogWriter {
         self.file
             .seek(SeekFrom::Start(0))
             .map_err(|e| e.to_string())?;
-        self.file
-            .write_all(&superblock)
-            .map_err(|e| e.to_string())?;
+        crate::fault::write_all(&mut self.file, &superblock)?;
         self.sync_data()?;
         self.file
             .seek(SeekFrom::Start(pos.max(PAGE as u64)))
@@ -873,7 +868,7 @@ impl LogWriter {
 
     fn sync_data(&mut self) -> Result<(), String> {
         if self.sync.durable() {
-            self.file.sync_data().map_err(|e| e.to_string())?;
+            crate::fault::sync_data(&self.file)?;
             self.fsync_count += 1;
         }
         Ok(())
@@ -940,11 +935,12 @@ fn visit_committed_pages(
     keys: Option<&LogKeys>,
     visit: impl FnMut(u32, Vec<ObjectRecord>),
 ) -> Result<(), String> {
-    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut file = crate::fault::open_read(path)?;
     let mut superblock = vec![0u8; PAGE];
     file.read_exact(&mut superblock)
         .map_err(|_| "missing superblock".to_string())?;
-    let committed = match v1_namespace {
+    #[allow(unused_mut)]
+    let mut committed = match v1_namespace {
         None => parse_superblock(&superblock)?,
         Some(_) => parse_v1_superblock(&superblock)?,
     };
@@ -964,8 +960,12 @@ fn visit_committed_pages(
     } else {
         None
     };
-    let needed = PAGE as u64 * u64::from(1 + committed);
     let len = file.metadata().map_err(|e| e.to_string())?.len();
+    #[cfg(test)]
+    {
+        committed = crate::fault::maybe_orphan_pages(committed, len, PAGE);
+    }
+    let needed = PAGE as u64 * u64::from(1 + committed);
     if len < needed {
         return Err("committed pages missing".into());
     }

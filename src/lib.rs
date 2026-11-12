@@ -47,6 +47,7 @@ mod codec;
 mod compute;
 mod crypto;
 mod durable;
+mod fault;
 mod joins;
 mod log;
 mod objectset;
