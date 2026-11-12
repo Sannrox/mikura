@@ -18,7 +18,9 @@ thread_local! {
 /// Rename the already synced `from` to `to`, then sync the directory of
 /// `to`, so the new name survives power loss once this returns.
 pub(crate) fn rename(from: &Path, to: &Path) -> Result<(), String> {
-    std::fs::rename(from, to).map_err(|e| e.to_string())?;
+    crate::fault::run(crate::fault::Op::Rename, || {
+        std::fs::rename(from, to).map_err(|e| e.to_string())
+    })?;
     sync_parent(to)
 }
 
@@ -29,7 +31,9 @@ pub(crate) fn sync_parent(path: &Path) -> Result<(), String> {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
         _ => Path::new("."),
     };
-    sync_dir(dir).map_err(|e| format!("sync {}: {e}", dir.display()))?;
+    crate::fault::run(crate::fault::Op::Sync, || {
+        sync_dir(dir).map_err(|e| format!("sync {}: {e}", dir.display()))
+    })?;
     #[cfg(test)]
     SYNCED.with(|synced| synced.borrow_mut().push(dir.to_path_buf()));
     Ok(())

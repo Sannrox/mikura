@@ -1,7 +1,6 @@
 use crc32fast::Hasher as Crc;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1473,26 +1472,21 @@ pub(crate) fn check_join_crc(body: &[u8], expected: u32) -> Result<(), String> {
 }
 
 fn write_body_and_crc(file: &mut impl Write, body: &[u8]) -> Result<(), String> {
-    file.write_all(body).map_err(|e| e.to_string())?;
-    file.write_all(&crc32(body).to_le_bytes())
-        .map_err(|e| e.to_string())
+    crate::fault::write_all(file, body)?;
+    crate::fault::write_all(file, &crc32(body).to_le_bytes())
 }
 
 pub(crate) fn append_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| e.to_string())?;
+    let mut file = crate::fault::open_append(path)?;
     write_body_and_crc(&mut file, body)?;
-    file.sync_data().map_err(|e| e.to_string())
+    crate::fault::sync_data(&file)
 }
 
 pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+    let mut file = crate::fault::create(&tmp)?;
     write_body_and_crc(&mut file, body)?;
-    file.sync_data().map_err(|e| e.to_string())?;
+    crate::fault::sync_data(&file)?;
     crate::durable::rename(&tmp, path)
 }
 
