@@ -12,6 +12,51 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-12
+
+### Upgrade
+
+- Object logs written by `v0.4.0` open, load, append, and reopen unchanged.
+  No log or sidecar magic change.
+- Unkeyed logs still write `MIKURAV2`. Encrypted logs still write
+  `MIKURAV3`. Join sidecars write `MKJOIN06` / `MKJOIN6D`; `MKJOIN05` /
+  `MKJOIN5D` still open. Checkpoints stay `MKCKPT01`. Encrypted sidecars
+  and checkpoints stay sealed (`MKSEAL01` / `MKPART01`).
+- `MIKURAV1` and `MKJOIN04` and earlier still fail closed. Delete
+  `{log}.joins` and `{log}.joins.delta` to rebuild from the log if an
+  older binary must reopen.
+- A second writer now fails closed on open
+  ([#352](https://github.com/Sannrox/mikura/issues/352)). Older binaries
+  ignore the lock.
+- Crate version is `0.5.0`. crates.io stays `publish = false`.
+
+### Added
+
+- `Store` open and create take an exclusive advisory lock on the log.
+  A second process or `Store` fails at once with `mikura::LOG_IN_USE`.
+  The OS releases the lock when the holder closes, exits, or is killed.
+  Backup, verify, and restore take no lock
+  ([#352](https://github.com/Sannrox/mikura/issues/352)).
+- Seeded IO fault injection on commit and recovery in crate tests.
+  Production builds call through to the real syscall
+  ([#345](https://github.com/Sannrox/mikura/issues/345)).
+
+### Fixed
+
+- Backup, restore, join sidecar, and log checkpoint publication fsync the
+  parent directory after the rename, so a returned call survives power
+  loss ([#351](https://github.com/Sannrox/mikura/issues/351)).
+
+### Changed
+
+- A `v*` tag push dispatches `release.yml` from main. Tags with `-`
+  publish as GitHub pre-releases and are never marked latest
+  ([#332](https://github.com/Sannrox/mikura/issues/332),
+  [#333](https://github.com/Sannrox/mikura/issues/333),
+  [#334](https://github.com/Sannrox/mikura/issues/334)).
+- README is the product front door
+  ([#349](https://github.com/Sannrox/mikura/issues/349)).
+
 ## [0.5.0-rc.1] - 2026-11-12
 
 ### Upgrade
@@ -731,8 +776,9 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 - Public name is `mikura` (御倉). On-disk superblock magic is `MIKURAV1`.
 
-[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.5.0-rc.1...HEAD
-[0.5.0-rc.1]: https://github.com/Sannrox/mikura/compare/v0.4.0...v0.5.0-rc.1
+[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Sannrox/mikura/compare/v0.4.0...v0.5.0
+[0.5.0-rc.1]: https://github.com/Sannrox/mikura/compare/v0.4.0...850231fe301ddda77814c724d6750e693e4cf146
 [0.4.0]: https://github.com/Sannrox/mikura/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/Sannrox/mikura/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sannrox/mikura/releases/tag/v0.1.0
