@@ -507,9 +507,15 @@ fn restore_manifest_prefix(backup: &Path, dst: &Path, commit_point: u32) -> Resu
         None if commit_point == 0 => crate::objects::Manifest::empty(encrypted),
         None => return Err("committed pages missing".into()),
     };
+    if !manifest.prefix_key.is_empty() {
+        let prefix = src.get(&manifest.prefix_key)?;
+        manifest.prefix_segments = crate::objects::decode_manifest(&prefix)?.segments;
+    }
     let dest = crate::objects::FileStore::create(&objects_dir(dst), true)?;
     let mut kept = Vec::new();
-    for segment in &manifest.segments {
+    let mut segments = manifest.prefix_segments.clone();
+    segments.extend(manifest.segments.iter().cloned());
+    for segment in &segments {
         if segment.first_page > commit_point {
             continue;
         }
@@ -533,6 +539,11 @@ fn restore_manifest_prefix(backup: &Path, dst: &Path, commit_point: u32) -> Resu
         });
     }
     manifest.segments = kept;
+    manifest.prefix_segments.clear();
+    manifest.prefix_key.clear();
+    manifest.checkpoint_key.clear();
+    manifest.projection_key.clear();
+    manifest.checkpoint_pages = 0;
     manifest.committed_pages = commit_point;
     manifest.version = 0;
     dest.cas(0, &crate::objects::encode_manifest(&manifest)?)?;
@@ -550,6 +561,10 @@ fn copy_live_objects(src: &Path, dst: &Path) -> Result<(), String> {
         Some((version, bytes)) => {
             let mut manifest = crate::objects::decode_manifest(&bytes)?;
             manifest.version = version;
+            if !manifest.prefix_key.is_empty() {
+                let prefix = source.get(&manifest.prefix_key)?;
+                manifest.prefix_segments = crate::objects::decode_manifest(&prefix)?.segments;
+            }
             manifest.live_keys()
         }
         None => Default::default(),

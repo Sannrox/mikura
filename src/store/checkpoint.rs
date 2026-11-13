@@ -62,9 +62,11 @@ impl Store {
             && self.has_checkpoint
             && !self.joins.values().any(JoinMaps::has_unpersisted_lazy)
         {
-            return self.persist_log_checkpoint();
+            self.persist_log_checkpoint()?;
+        } else {
+            self.persist_projection()?;
         }
-        self.persist_projection()
+        self.publish_manifest_checkpoint()
     }
 
     /// Write live generations (including hidden rows) to `dst` and a log
@@ -233,6 +235,22 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    fn publish_manifest_checkpoint(&mut self) -> Result<(), String> {
+        let pages = self.writer.committed_pages();
+        if pages == 0 {
+            return Ok(());
+        }
+        let path = Self::checkpoint_path(&self.log);
+        if !path.is_file() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        if checkpoint_stamp(&bytes)? != pages {
+            return Ok(());
+        }
+        self.writer.publish_checkpoint(pages, &bytes)
     }
 
     pub(super) fn persist_log_checkpoint(&self) -> Result<(), String> {

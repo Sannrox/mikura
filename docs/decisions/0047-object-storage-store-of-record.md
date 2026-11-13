@@ -300,3 +300,11 @@ mikura.
   projection decode ([#340](https://github.com/Sannrox/mikura/issues/340))
   implement the accepted layout; they cannot be required to accept it.
   Implementation remains [#340](https://github.com/Sannrox/mikura/issues/340).
+- 2026-11-13, [#357](https://github.com/Sannrox/mikura/issues/357): the
+  file backend counts storage calls per operation. New snapshots write
+  `MKMANI02`; `MKMANI01` still opens. A happy-path LogWriter data commit
+  is one put then one CAS at 10⁴ and 10⁶ objects. After 10⁵ FileStore
+  put-then-CAS commits the wave count stays two. Open of a snapshot that
+  names a checkpoint does not `object_len` frozen segments; a missing
+  frozen segment fails when those pages are read, not at open. The
+  budget is recorded in [benchmarks.md](../benchmarks.md).

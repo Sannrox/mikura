@@ -210,3 +210,130 @@ fn leftover_segments_without_manifest_fail_closed() {
     assert_eq!(still, leftover, "open must not collect leftover objects");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn tiny(i: u64) -> ObjectRecord {
+    rec("Item", &format!("{i}"), false, &[("n", "1")])
+}
+
+fn commit_delta_at(objects: u64) -> crate::objects::StorageCalls {
+    let (dir, log) = temp_log(&format!("v4-waves-{objects}"));
+    let mut writer = LogWriter::create(&log, SyncPolicy::None).unwrap();
+    writer.hold_commits(true);
+    for i in 0..objects {
+        writer.append_record(&tiny(i)).unwrap();
+    }
+    writer.hold_commits(false);
+    writer.flush().unwrap();
+    let before = writer.storage_calls();
+    writer.append_record(&tiny(objects)).unwrap();
+    writer.flush().unwrap();
+    let delta = writer.storage_calls().saturating_sub(before);
+    drop(writer);
+    let _ = std::fs::remove_dir_all(&dir);
+    delta
+}
+
+#[test]
+fn data_commit_is_two_waves_at_10k_and_1m_objects() {
+    let at_10k = commit_delta_at(10_000);
+    let at_1m = commit_delta_at(1_000_000);
+    assert_eq!(at_10k.puts, 1, "10^4 objects put wave {at_10k:?}");
+    assert_eq!(at_10k.cas, 1, "10^4 objects CAS wave {at_10k:?}");
+    assert_eq!(at_10k.commit_waves(), 2, "10^4 objects");
+    assert_eq!(at_1m.puts, 1, "10^6 objects put wave {at_1m:?}");
+    assert_eq!(at_1m.cas, 1, "10^6 objects CAS wave {at_1m:?}");
+    assert_eq!(at_1m.commit_waves(), 2, "10^6 objects");
+}
+
+fn two_wave_commit(store: &crate::objects::FileStore, expected: u64, i: u64) -> u64 {
+    store.put(&format!("seg.{i}"), b"x").unwrap();
+    let mut snapshot = crate::objects::Manifest::empty(false);
+    snapshot.checkpoint_key = "ckpt".into();
+    snapshot.prefix_key = "prefix".into();
+    snapshot.checkpoint_pages = 1;
+    let (version, _) = store
+        .cas(
+            expected,
+            &crate::objects::encode_manifest(&snapshot).unwrap(),
+        )
+        .unwrap();
+    version
+}
+
+fn snapshot_open_gets(store: &crate::objects::FileStore) -> u64 {
+    let before = store.storage_calls();
+    let _ = store.current().unwrap();
+    let _ = store.get("prefix").unwrap();
+    let _ = store.get("ckpt").unwrap();
+    store
+        .storage_calls()
+        .saturating_sub(before)
+        .open_named_gets()
+}
+
+// 10^5 on-disk LogWriter commits exhaust inodes. The two-wave protocol is
+// FileStore put-then-CAS; LogWriter 10^4/10^6 and the snapshot-tail test
+// cover the writer path.
+#[test]
+fn data_commit_is_two_waves_after_100k_commits() {
+    let store = crate::objects::FileStore::memory();
+    store.put("prefix", b"prefix").unwrap();
+    store.put("ckpt", b"ckpt").unwrap();
+    let mut expected = 0;
+    for i in 0..100_000 {
+        expected = two_wave_commit(&store, expected, i);
+    }
+    let before = store.storage_calls();
+    two_wave_commit(&store, expected, 100_000);
+    let delta = store.storage_calls().saturating_sub(before);
+    assert_eq!(delta.puts, 1, "{delta:?}");
+    assert_eq!(delta.cas, 1, "{delta:?}");
+    assert_eq!(delta.commit_waves(), 2);
+}
+
+#[test]
+fn open_named_gets_stay_bounded_after_100k_commits() {
+    let store = crate::objects::FileStore::memory();
+    store.put("prefix", b"prefix").unwrap();
+    store.put("ckpt", b"ckpt").unwrap();
+    let expected = two_wave_commit(&store, 0, 0);
+    let first = snapshot_open_gets(&store);
+    let mut expected = expected;
+    for i in 1..=100_000 {
+        expected = two_wave_commit(&store, expected, i);
+    }
+    let after = snapshot_open_gets(&store);
+    assert_eq!(
+        first, after,
+        "open named gets before and after 10^5 commits"
+    );
+}
+
+#[test]
+fn checkpoint_keeps_the_snapshot_from_listing_the_prefix() {
+    let (dir, log) = temp_log("v4-snapshot-tail");
+    let mut store = Store::create_with_sync(&log, SyncPolicy::None).unwrap();
+    for i in 0..8 {
+        store.append(tiny(i)).unwrap();
+    }
+    store.checkpoint().unwrap();
+    store.append(tiny(8)).unwrap();
+    drop(store);
+    let objects = crate::objects::FileStore::open(&objects_dir(&log), false).unwrap();
+    let (_, bytes) = objects.current().unwrap().unwrap();
+    let snapshot = crate::objects::decode_manifest(&bytes).unwrap();
+    assert!(
+        snapshot.checkpoint_pages > 0,
+        "checkpoint must be named in the snapshot"
+    );
+    assert!(
+        !snapshot.prefix_key.is_empty(),
+        "frozen segments live in the prefix object"
+    );
+    assert_eq!(
+        snapshot.segments.len(),
+        1,
+        "snapshot lists the tail, not the prefix"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

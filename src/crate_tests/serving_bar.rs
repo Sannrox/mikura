@@ -339,6 +339,32 @@ fn serving_bar_shapes_match_log_replay() {
 }
 
 #[test]
+fn serving_bar_data_commit_is_two_storage_waves() {
+    let (dir, log) = bar_log("waves");
+    let scale = Scale::new(BAR_OBJECTS);
+    let mut store = Store::create(&log).unwrap();
+    seed(&mut store, &scale);
+    let before = store.storage_calls();
+    store
+        .append(rec_bar(
+            "Shipment",
+            's',
+            scale.shipments,
+            vec![
+                ("order_id", format!("o{}", 0)),
+                ("amount", "1".into()),
+                ("weight", "1".into()),
+            ],
+        ))
+        .unwrap();
+    let delta = store.storage_calls().saturating_sub(before);
+    assert_eq!(delta.puts, 1, "{delta:?}");
+    assert_eq!(delta.cas, 1, "{delta:?}");
+    assert_eq!(delta.commit_waves(), 2, "{delta:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn serving_bar_enforces_deny_and_hide_per_request() {
     let (dir, log) = bar_log("policy");
     let scale = Scale::new(BAR_OBJECTS);

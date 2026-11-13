@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::codec::{read_str, take, write_str};
@@ -119,6 +119,11 @@ pub struct LogWriter {
     objects: Option<crate::objects::FileStore>,
     manifest_version: u64,
     segments: Vec<crate::objects::Segment>,
+    prefix_segments: Vec<crate::objects::Segment>,
+    checkpoint_key: String,
+    projection_key: String,
+    prefix_key: String,
+    checkpoint_pages: u32,
     pending_pages: Vec<Vec<u8>>,
     encrypted_log: bool,
     #[cfg(test)]
@@ -283,6 +288,11 @@ impl LogWriter {
             objects: None,
             manifest_version: 0,
             segments: Vec::new(),
+            prefix_segments: Vec::new(),
+            checkpoint_key: String::new(),
+            projection_key: String::new(),
+            prefix_key: String::new(),
+            checkpoint_pages: 0,
             pending_pages: Vec::new(),
             encrypted_log: false,
             #[cfg(test)]
@@ -349,6 +359,11 @@ impl LogWriter {
         writer.objects = Some(objects);
         writer.manifest_version = manifest.version;
         writer.segments = std::mem::take(&mut manifest.segments);
+        writer.prefix_segments = std::mem::take(&mut manifest.prefix_segments);
+        writer.checkpoint_key = manifest.checkpoint_key;
+        writer.projection_key = manifest.projection_key;
+        writer.prefix_key = manifest.prefix_key;
+        writer.checkpoint_pages = manifest.checkpoint_pages;
         writer.encrypted_log = encrypted;
         writer.fsync_count += probe;
         if let Some(keys) = keys {
@@ -592,6 +607,13 @@ impl LogWriter {
 
     pub fn fsync_count(&self) -> u64 {
         self.fsync_count
+    }
+
+    pub fn storage_calls(&self) -> crate::objects::StorageCalls {
+        self.objects
+            .as_ref()
+            .map(crate::objects::FileStore::storage_calls)
+            .unwrap_or_default()
     }
 
     pub fn committed_pages(&self) -> u32 {
@@ -939,9 +961,13 @@ impl LogWriter {
         if self.objects.is_some() {
             visit_manifest_pages(
                 &objects_dir(path),
-                &self.segments,
+                ManifestCover {
+                    prefix: &self.prefix_segments,
+                    tail: &self.segments,
+                    checkpoint_pages: self.checkpoint_pages,
+                    committed: self.committed,
+                },
                 0,
-                self.committed,
                 deks.as_ref(),
                 |index, records| {
                     paged.extend(
@@ -1150,7 +1176,76 @@ impl LogWriter {
             encrypted: self.encrypted_log,
             segments: self.segments.clone(),
             catalog: self.catalog.clone(),
+            checkpoint_key: self.checkpoint_key.clone(),
+            projection_key: self.projection_key.clone(),
+            prefix_key: self.prefix_key.clone(),
+            checkpoint_pages: self.checkpoint_pages,
+            prefix_segments: Vec::new(),
         }
+    }
+
+    /// Freeze covered segments into a prefix object and name `checkpoint`.
+    /// Puts run as one wave, then one CAS. Tail after this is empty.
+    pub(crate) fn publish_checkpoint(
+        &mut self,
+        checkpoint_pages: u32,
+        checkpoint: &[u8],
+    ) -> Result<(), String> {
+        if self.objects.is_none() {
+            return Ok(());
+        }
+        if checkpoint_pages == 0 {
+            return Ok(());
+        }
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "manifest log is missing its object namespace".to_string())?;
+        let frozen: Vec<_> = self
+            .prefix_segments
+            .iter()
+            .cloned()
+            .chain(self.segments.iter().cloned())
+            .collect();
+        let prefix_bytes = encode_prefix(&frozen, checkpoint_pages)?;
+        let mut prefix_key = String::new();
+        let mut checkpoint_key = String::new();
+        let mut fsyncs = 0;
+        for _ in 0..8 {
+            if prefix_key.is_empty() {
+                let key = crate::objects::unique_object_key("prefix", checkpoint_pages);
+                match store.put(&key, &prefix_bytes) {
+                    Ok(n) => {
+                        fsyncs += n;
+                        prefix_key = key;
+                    }
+                    Err(error) if error.contains("already exists") => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            if checkpoint_key.is_empty() {
+                let key = crate::objects::unique_object_key("ckpt", checkpoint_pages);
+                match store.put(&key, checkpoint) {
+                    Ok(n) => {
+                        fsyncs += n;
+                        checkpoint_key = key;
+                    }
+                    Err(error) if error.contains("already exists") => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            break;
+        }
+        if prefix_key.is_empty() || checkpoint_key.is_empty() {
+            return Err("could not allocate unique snapshot object keys".into());
+        }
+        self.prefix_segments = frozen;
+        self.segments.clear();
+        self.prefix_key = prefix_key;
+        self.checkpoint_key = checkpoint_key;
+        self.checkpoint_pages = checkpoint_pages;
+        self.fsync_count += fsyncs;
+        self.swap_snapshot()
     }
 
     fn swap_snapshot(&mut self) -> Result<(), String> {
@@ -1198,14 +1293,8 @@ impl LogWriter {
         page_count: u32,
         bytes: &[u8],
     ) -> Result<(crate::objects::Segment, u64), String> {
-        static SEQ: AtomicU64 = AtomicU64::new(1);
         for _ in 0..8 {
-            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or(0);
-            let key = format!("seg.{first_page}.{nanos:x}-{seq:x}");
+            let key = crate::objects::unique_object_key("seg", first_page);
             match store.put(&key, bytes) {
                 Ok(fsyncs) => {
                     return Ok((
@@ -1426,12 +1515,23 @@ fn visit_committed_manifest_pages(
     };
     visit_manifest_pages(
         &objects_dir(path),
-        &manifest.segments,
+        ManifestCover {
+            prefix: &manifest.prefix_segments,
+            tail: &manifest.segments,
+            checkpoint_pages: manifest.checkpoint_pages,
+            committed: manifest.committed_pages,
+        },
         after_page,
-        manifest.committed_pages,
         deks.as_ref(),
         visit,
     )
+}
+
+struct ManifestCover<'a> {
+    prefix: &'a [crate::objects::Segment],
+    tail: &'a [crate::objects::Segment],
+    checkpoint_pages: u32,
+    committed: u32,
 }
 
 fn unwrap_manifest_catalog(
@@ -1454,17 +1554,29 @@ fn unwrap_manifest_catalog(
 
 fn visit_manifest_pages(
     root: &Path,
-    segments: &[crate::objects::Segment],
+    cover: ManifestCover<'_>,
     after_page: u32,
-    committed: u32,
     deks: Option<&HashMap<String, Dek>>,
     mut visit: impl FnMut(u32, Vec<ObjectRecord>),
 ) -> Result<(), String> {
     let store = crate::objects::FileStore::open(root, false)?;
-    ensure_manifest_pages(&store, segments, committed)?;
-    if after_page >= committed {
+    ensure_manifest_pages(
+        &store,
+        cover.prefix,
+        cover.tail,
+        cover.checkpoint_pages,
+        after_page,
+        cover.committed,
+    )?;
+    if after_page >= cover.committed {
         return Ok(());
     }
+    let committed = cover.committed;
+    let segments: Vec<&crate::objects::Segment> = if after_page >= cover.checkpoint_pages {
+        cover.tail.iter().collect()
+    } else {
+        cover.prefix.iter().chain(cover.tail.iter()).collect()
+    };
     for segment in segments {
         let last = segment.first_page + segment.page_count - 1;
         if last <= after_page || segment.first_page > committed {
@@ -1498,18 +1610,37 @@ fn visit_manifest_pages(
     Ok(())
 }
 
-/// Every page `1..=committed` must still have a live segment object. A
-/// matching checkpoint may skip decoding those pages; it must not skip this
-/// check (the V2 analog is `file_len >= PAGE * (1 + committed)`).
+/// Pages after a named checkpoint are the tail. Frozen segments are one
+/// prefix object, not a per-segment `object_len` at open (ADR 0047 §10).
 fn ensure_manifest_pages(
     store: &crate::objects::FileStore,
-    segments: &[crate::objects::Segment],
+    prefix: &[crate::objects::Segment],
+    tail: &[crate::objects::Segment],
+    checkpoint_pages: u32,
+    after_page: u32,
     committed: u32,
 ) -> Result<(), String> {
     if committed == 0 {
         return Ok(());
     }
-    let mut covered = 0u32;
+    if after_page >= checkpoint_pages {
+        let start = checkpoint_pages;
+        return ensure_span(store, tail, start, committed);
+    }
+    ensure_span(store, prefix, 0, checkpoint_pages)?;
+    ensure_span(store, tail, checkpoint_pages, committed)
+}
+
+fn ensure_span(
+    store: &crate::objects::FileStore,
+    segments: &[crate::objects::Segment],
+    covered: u32,
+    committed: u32,
+) -> Result<(), String> {
+    if covered == committed {
+        return Ok(());
+    }
+    let mut covered = covered;
     for segment in segments {
         let expected = PAGE as u64 * u64::from(segment.page_count);
         if store.object_len(&segment.key)? != expected {
@@ -1524,6 +1655,20 @@ fn ensure_manifest_pages(
         return Err("committed pages missing".into());
     }
     Ok(())
+}
+
+fn encode_prefix(
+    segments: &[crate::objects::Segment],
+    checkpoint_pages: u32,
+) -> Result<Vec<u8>, String> {
+    let mut prefix = crate::objects::Manifest::empty(false);
+    prefix.committed_pages = checkpoint_pages;
+    prefix.segments = segments.to_vec();
+    crate::objects::encode_manifest(&prefix)
+}
+
+fn decode_prefix(bytes: &[u8]) -> Result<Vec<crate::objects::Segment>, String> {
+    Ok(crate::objects::decode_manifest(bytes)?.segments)
 }
 
 /// Committed page `index` of a log, V2/V3 file or V4 segment.
@@ -1599,6 +1744,10 @@ fn load_current_manifest(
             parsed.version = version;
             if parsed.encrypted != encrypted {
                 return Err("manifest encryption flag does not match the stub".into());
+            }
+            if !parsed.prefix_key.is_empty() {
+                let prefix = store.get(&parsed.prefix_key)?;
+                parsed.prefix_segments = decode_prefix(&prefix)?;
             }
             Ok(parsed)
         }
