@@ -2102,6 +2102,11 @@ impl Store {
         self.writer.fsync_count()
     }
 
+    /// Storage-call counts on the swap-committed file backend (ADR 0047 §10).
+    pub fn storage_calls(&self) -> crate::StorageCalls {
+        self.writer.storage_calls()
+    }
+
     /// Whole-record replace with a clerk Action id (ADR 0006).
     ///
     /// A repeated id with the same body (`namespace`, `kind`, `key`,

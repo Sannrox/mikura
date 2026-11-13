@@ -67,7 +67,7 @@ pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
 pub const LOG_FORMAT_ENCRYPTED: &[u8; 8] = b"MIKURAV3";
 /// Stub magic this crate writes for swap-committed logs (`MIKURAV4`, ADR 0047).
 pub const LOG_FORMAT_MANIFEST: &[u8; 8] = b"MIKURAV4";
-/// Snapshot object magic (`MKMANI01`) named by a `MIKURAV4` stub.
+/// Snapshot object magic (`MKMANI02`) named by a `MIKURAV4` stub.
 pub const MANIFEST_FORMAT: &[u8; 8] = objects::MANIFEST_FORMAT;
 /// Join sidecar magic (`MKJOIN06`). Rebuildable; unknown magic fails closed.
 pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN06";
@@ -96,6 +96,7 @@ pub use crypto::{
     TenantId, UnwrapGrant, WrappedDek, STORE_KEY_TENANT,
 };
 pub use joins::JoinMaps;
+pub use objects::StorageCalls;
 pub use objectset::{
     Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, ObjectSet,
     Predicate, Sort, MAX_GROUPS,

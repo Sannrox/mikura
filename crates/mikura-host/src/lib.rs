@@ -726,6 +726,7 @@ impl Host {
         let lag_pages = u64::from(committed.saturating_sub(stamp));
         let queue_depth =
             (snap.inflight_reads + snap.writer_waiters + usize::from(snap.writer_active)) as u64;
+        let calls = store.storage_calls();
         self.inner.metrics.render(ProcessSnapshot {
             accepted: self.inner.accepted.load(Ordering::Relaxed),
             rejected: self.inner.rejected.load(Ordering::Relaxed),
@@ -735,6 +736,9 @@ impl Host {
             committed_pages: u64::from(committed),
             sidecar_lag_pages: lag_pages,
             open_replay_seconds: self.inner.open_replay.as_secs_f64(),
+            storage_puts: calls.puts,
+            storage_gets: calls.gets,
+            storage_cas: calls.cas,
         })
     }
 

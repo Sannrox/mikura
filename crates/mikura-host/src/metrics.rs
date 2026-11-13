@@ -76,6 +76,9 @@ pub struct ProcessSnapshot {
     pub committed_pages: u64,
     pub sidecar_lag_pages: u64,
     pub open_replay_seconds: f64,
+    pub storage_puts: u64,
+    pub storage_gets: u64,
+    pub storage_cas: u64,
 }
 
 pub struct Metrics {
@@ -138,6 +141,9 @@ impl Metrics {
             committed_pages,
             sidecar_lag_pages,
             open_replay_seconds,
+            storage_puts,
+            storage_gets,
+            storage_cas,
         } = snap;
         let mut out = String::new();
         out.push_str("# HELP mikura_rpc_latency_seconds Host RPC latency since process start.\n");
@@ -192,6 +198,21 @@ impl Metrics {
         out.push_str(&format!(
             "mikura_open_replay_seconds {open_replay_seconds:.6}\n"
         ));
+        out.push_str(
+            "# HELP mikura_storage_puts_total Writer FileStore puts since this process opened the log.\n",
+        );
+        out.push_str("# TYPE mikura_storage_puts_total counter\n");
+        out.push_str(&format!("mikura_storage_puts_total {storage_puts}\n"));
+        out.push_str(
+            "# HELP mikura_storage_gets_total Writer FileStore gets since this process opened the log.\n",
+        );
+        out.push_str("# TYPE mikura_storage_gets_total counter\n");
+        out.push_str(&format!("mikura_storage_gets_total {storage_gets}\n"));
+        out.push_str(
+            "# HELP mikura_storage_cas_total Conditional manifest writes since process open.\n",
+        );
+        out.push_str("# TYPE mikura_storage_cas_total counter\n");
+        out.push_str(&format!("mikura_storage_cas_total {storage_cas}\n"));
         out
     }
 }
@@ -227,6 +248,9 @@ mod tests {
             committed_pages: 0,
             sidecar_lag_pages: 0,
             open_replay_seconds: 0.0,
+            storage_puts: 0,
+            storage_gets: 0,
+            storage_cas: 0,
         });
         assert!(
             text.contains("mikura_rpc_latency_seconds_sum{op=\"evaluate\"} 0.0019"),

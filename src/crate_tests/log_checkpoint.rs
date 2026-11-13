@@ -222,20 +222,21 @@ fn truncated_log_fails_closed_with_matching_checkpoint() {
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, fixture());
     store.checkpoint().unwrap();
+    store
+        .append(rec("Item", "tail", false, &[("n", "1")]))
+        .unwrap();
     drop(store);
 
     remove_joins(&log);
     assert!(Store::checkpoint_path(&log).is_file());
-    let segment = std::fs::read_dir(crate::log::objects_dir(&log))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("seg."))
-        })
-        .expect("live segment");
-    std::fs::remove_file(segment).unwrap();
+    let objects = crate::objects::FileStore::open(&crate::log::objects_dir(&log), false).unwrap();
+    let (_, bytes) = objects.current().unwrap().unwrap();
+    let snapshot = crate::objects::decode_manifest(&bytes).unwrap();
+    let tail = snapshot
+        .segments
+        .last()
+        .expect("checkpointed log keeps a tail segment");
+    std::fs::remove_file(crate::log::objects_dir(&log).join(&tail.key)).unwrap();
 
     let err = match Store::open(&log) {
         Err(err) => err,
@@ -245,6 +246,37 @@ fn truncated_log_fails_closed_with_matching_checkpoint() {
         err.contains("committed pages missing"),
         "missing committed pages must fail closed: {err}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn matching_checkpoint_open_does_not_need_frozen_segments() {
+    let (dir, log) = temp_log("ckpt-frozen");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    store.checkpoint().unwrap();
+    store
+        .append(rec("Item", "tail", false, &[("n", "1")]))
+        .unwrap();
+    let live = evaluate_sum(&store);
+    drop(store);
+
+    let objects = crate::objects::FileStore::open(&crate::log::objects_dir(&log), false).unwrap();
+    let (_, bytes) = objects.current().unwrap().unwrap();
+    let snapshot = crate::objects::decode_manifest(&bytes).unwrap();
+    assert!(!snapshot.prefix_key.is_empty());
+    let prefix = objects.get(&snapshot.prefix_key).unwrap();
+    let frozen = crate::objects::decode_manifest(&prefix).unwrap();
+    let frozen_key = &frozen
+        .segments
+        .first()
+        .expect("checkpoint freezes prefix segments")
+        .key;
+    std::fs::remove_file(crate::log::objects_dir(&log).join(frozen_key)).unwrap();
+
+    remove_joins(&log);
+    let reopened = Store::open(&log).unwrap();
+    assert_eq!(evaluate_sum(&reopened), live);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

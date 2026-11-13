@@ -111,7 +111,7 @@ backend.
 - Page size: 4096 bytes. Record bodies are unchanged.
 - New logs: page 0 is a `MIKURAV4` stub (CRC32, magic, page-size, encrypted
   flag). Committed pages live in sealed segment objects named by a
-  `MKMANI01` snapshot. `Store::create` / `Store::create_with_keys` write
+  `MKMANI02` snapshot (`MKMANI01` still opens). `Store::create` / `Store::create_with_keys` write
   this layout. Encrypted payloads keep
   [ADR 0044](decisions/0044-log-encryption.md) inside segments; the
   wrapped-DEK catalog sits in the snapshot.
@@ -149,8 +149,13 @@ backend.
 | `Group(n)` | Durable put+swap after `n` data pages |
 
 `Store::create` / `Store::open` use `Group(32)`. A data commit is two
-storage-call waves: put the new segment, then the conditional manifest
-write ([ADR 0047](decisions/0047-object-storage-store-of-record.md) §10).
+storage-call waves: put the new objects that commit stages, then one
+conditional manifest write ([ADR 0047](decisions/0047-object-storage-store-of-record.md) §10).
+The snapshot names the latest checkpoint, the current projection if
+present, a prefix of frozen segments, and the tail since that checkpoint.
+Open gets the snapshot and the objects it names (prefix is one get). It
+does not `object_len` frozen segments; a missing frozen segment fails when
+those pages are read. `Store::storage_calls` exposes the counts.
 
 **Ingest / commit contract:**
 

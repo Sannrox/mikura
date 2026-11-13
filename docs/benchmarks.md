@@ -234,6 +234,30 @@ Readings:
 - Closed no-action: keep exclusive apply. No snapshot-on-read or
   double-buffered maps in the store.
 
+## Commit-cost budget
+
+[#357](https://github.com/Sannrox/mikura/issues/357), ADR 0047 Decision §10.
+A data commit on the swap-committed file backend makes two sequential
+storage-call waves, independent of store size and of history length: a
+parallel put of every new object that commit stages, then one conditional
+write of the successor manifest. Lost-response resolution is one extra
+read of the current manifest and is not the happy path.
+
+Open is one get of the current manifest, then a bounded set of gets of
+the objects it names (latest checkpoint, current projection if present,
+prefix of frozen segments, tail since that checkpoint). History older
+than that checkpoint is not read to open.
+
+`Store::storage_calls` exposes the counts. Host `metrics` scrapes
+`mikura_storage_puts_total`, `mikura_storage_gets_total`, and
+`mikura_storage_cas_total`. This is a call-count bound, not a latency SLO.
+
+Crate tests assert a LogWriter data commit is one put and one CAS at 10^4
+and 10^6 objects. After 10^5 FileStore put-then-CAS commits the wave count
+stays 2, and named-object gets of a snapshot stay bounded. A Store
+checkpoint snapshot lists the tail, not the frozen prefix. The serving-bar
+oracle in `src/crate_tests/serving_bar.rs` runs on this commit path.
+
 ## Nightly gate
 
 `.github/workflows/bench.yml` runs 10^4 and 10^6 every night on

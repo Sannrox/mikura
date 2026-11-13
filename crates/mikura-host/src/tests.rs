@@ -1223,6 +1223,9 @@ fn metrics_omit_object_keys_and_property_values() {
     assert!(text.contains("mikura_log_bytes"));
     assert!(text.contains("mikura_sidecar_lag_pages"));
     assert!(text.contains("mikura_open_replay_seconds"));
+    assert!(text.contains("mikura_storage_puts_total"));
+    assert!(text.contains("mikura_storage_gets_total"));
+    assert!(text.contains("mikura_storage_cas_total"));
     assert!(text.contains("op=\"ingest_batch\""), "{text}");
     assert!(!text.contains("secret-key"), "{text}");
     assert!(!text.contains("secret_prop"), "{text}");
