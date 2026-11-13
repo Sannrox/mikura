@@ -17,7 +17,8 @@ tracked. Do not treat that directory as gitignored.
 | Path | Role |
 | --- | --- |
 | `src/lib.rs` | Crate root and public exports |
-| `src/log.rs` | 4 KiB CRC pages + group-commit writer ([ADR 0001](docs/decisions/0001-paged-log.md)) |
+| `src/log.rs` | 4 KiB CRC pages + group-commit writer; `MIKURAV4` swap-commit ([ADR 0001](docs/decisions/0001-paged-log.md), [ADR 0047](docs/decisions/0047-object-storage-store-of-record.md)) |
+| `src/objects.rs` | File-backend object namespace and exclusive-create CAS |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
 | `src/joins.rs` | Interned `JoinMaps`, last-hop and one-property group rollups, sidecar checksum helpers (`MKJOIN06`) |
 | `src/paged.rs` | Paged join projection (`MKJOIN07`) plus serving page cache ([ADR 0048](docs/decisions/0048-paged-projection-serving-budget.md)) |
@@ -256,7 +257,7 @@ correction.
 
 **Never**
 
-- Commit secrets, object logs (`*.mikura`), join sidecars (`*.mikura.joins`,
+- Commit secrets, object logs (`*.mikura`, `*.mikura.obj`), join sidecars (`*.mikura.joins`,
   `*.joins.delta`, `*.joins.tmp`), checkpoint temps (`*.mikura.tmp`, `*.ckpt.tmp`), log checkpoints (`*.ckpt`, `*.ckpt.prev`), SQLite
   files, or `target/`.
 - Vendor mikura into another product or depend on a control plane from this

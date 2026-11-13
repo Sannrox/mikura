@@ -273,6 +273,7 @@ impl Store {
         // open, and deleting one could hit a caller's file.
         for path in [
             dst.to_path_buf(),
+            crate::log::objects_dir(dst),
             Self::join_map_path(dst),
             Self::join_delta_path(dst),
             Self::checkpoint_path(dst),
@@ -305,7 +306,7 @@ impl Store {
         let staging =
             Self::sidecar_path(dst, &format!(".migrating-{}-{nonce}", std::process::id()));
         let written = (|| {
-            let mut writer = LogWriter::create(&staging, SyncPolicy::Group(32))?;
+            let mut writer = LogWriter::create_superblock(&staging, SyncPolicy::Group(32))?;
             for record in &records {
                 // A V1 record near the page limit may not fit the namespace.
                 writer.append_record(record).map_err(|error| {
@@ -321,6 +322,95 @@ impl Store {
         })();
         let _ = std::fs::remove_file(&staging);
         written.map(|()| records.len())
+    }
+
+    /// Copy committed pages of a `MIKURAV2`/`MIKURAV3` log to a new swap-committed
+    /// `MIKURAV4` log at `dst`. `src` is only read. Dual-read of source and
+    /// destination must match.
+    pub fn migrate_to_manifest(src: &Path, dst: &Path) -> Result<usize, String> {
+        Self::migrate_to_manifest_with(src, dst, None)
+    }
+
+    /// Encrypted `MIKURAV3` source: the same keys unwrap the copied catalog.
+    pub fn migrate_to_manifest_with_keys(
+        src: &Path,
+        dst: &Path,
+        keys: LogKeys,
+    ) -> Result<usize, String> {
+        Self::migrate_to_manifest_with(src, dst, Some(keys))
+    }
+
+    fn migrate_to_manifest_with(
+        src: &Path,
+        dst: &Path,
+        keys: Option<LogKeys>,
+    ) -> Result<usize, String> {
+        for path in [
+            dst.to_path_buf(),
+            crate::log::objects_dir(dst),
+            Self::join_map_path(dst),
+            Self::join_delta_path(dst),
+            Self::checkpoint_path(dst),
+            Self::checkpoint_prev_path(dst),
+        ] {
+            if path.exists() {
+                return Err(format!(
+                    "migration target {} already exists",
+                    path.display()
+                ));
+            }
+        }
+        let stub = crate::log::read_committed_page(src, 0)?;
+        if crate::log::is_manifest_stub(&stub) {
+            return Err("log is already a swap-committed manifest".into());
+        }
+        let magic = crate::log::superblock_magic(&stub)?;
+        if magic == crate::LOG_FORMAT && keys.is_some() {
+            return Err("log is not encrypted".into());
+        }
+        if magic == crate::LOG_FORMAT_ENCRYPTED && keys.is_none() {
+            return Err("encrypted log requires keys".into());
+        }
+        if magic != crate::LOG_FORMAT && magic != crate::LOG_FORMAT_ENCRYPTED {
+            return Err("bad magic".into());
+        }
+        let committed = crate::log::parse_superblock(&stub)?;
+        let mut pages = Vec::with_capacity(committed as usize);
+        for index in 1..=committed {
+            pages.push(crate::log::read_committed_page(src, index)?);
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        let staging =
+            Self::sidecar_path(dst, &format!(".migrating-{}-{nonce}", std::process::id()));
+        let records = crate::log::read_records_with_keys(src, keys.as_ref())?.len();
+        let written = (|| {
+            let mut writer = if let Some(keys) = keys {
+                let catalog = crate::log::superblock_catalog(&stub)?;
+                LogWriter::create_manifest_with_catalog(
+                    &staging,
+                    SyncPolicy::Group(32),
+                    keys,
+                    catalog,
+                )?
+            } else {
+                LogWriter::create(&staging, SyncPolicy::Group(32))?
+            };
+            writer.append_copied_pages(pages)?;
+            writer.flush()?;
+            let committed = writer.committed_pages();
+            drop(writer);
+            crate::log::publish_log(&staging, dst)?;
+            crate::backup::carry_checkpoint(src, dst, committed).inspect_err(|_| {
+                let _ = std::fs::remove_file(Self::checkpoint_path(dst));
+                crate::log::remove_log(dst);
+            })?;
+            Ok(())
+        })();
+        crate::log::remove_log(&staging);
+        written.map(|()| records)
     }
 
     pub fn open(log: &Path) -> Result<Self, String> {
@@ -756,6 +846,16 @@ impl Store {
     pub(crate) fn crash(self) {
         self.writer.release_lock();
         std::mem::forget(self);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn release_writer_lock(&self) {
+        self.writer.release_lock();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_crash_before_swap(&mut self, crash: bool) {
+        self.writer.set_crash_before_swap(crash);
     }
 
     fn install_live(

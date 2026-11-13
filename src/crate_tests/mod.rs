@@ -17,6 +17,7 @@ mod hops;
 mod indexes;
 mod load;
 mod log_checkpoint;
+mod manifest;
 mod measures;
 mod migrate;
 mod namespace;

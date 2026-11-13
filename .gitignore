@@ -9,6 +9,7 @@
 *.sqlite
 *.sqlite-*
 *.mikura
+*.mikura.obj
 *.mikura.joins
 *.joins.delta
 *.joins.tmp

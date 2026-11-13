@@ -226,9 +226,16 @@ fn truncated_log_fails_closed_with_matching_checkpoint() {
 
     remove_joins(&log);
     assert!(Store::checkpoint_path(&log).is_file());
-    let bytes = std::fs::read(&log).unwrap();
-    assert!(bytes.len() > crate::log::PAGE);
-    std::fs::write(&log, &bytes[..crate::log::PAGE]).unwrap();
+    let segment = std::fs::read_dir(crate::log::objects_dir(&log))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("seg."))
+        })
+        .expect("live segment");
+    std::fs::remove_file(segment).unwrap();
 
     let err = match Store::open(&log) {
         Err(err) => err,
@@ -370,7 +377,8 @@ fn future_join_delta_does_not_install_uncommitted_rows() {
     store
         .append(rec("Customer", "c-force", false, &[("region", "us")]))
         .unwrap();
-    let prefix_log = std::fs::read(&log).unwrap();
+    let prefix = dir.join("prefix.mikura");
+    copy_log_tree(&log, &prefix);
     let prefix_joins = std::fs::read(Store::join_map_path(&log)).unwrap();
     store.set_join_delta_compact_bytes(u64::MAX);
     store
@@ -379,7 +387,7 @@ fn future_join_delta_does_not_install_uncommitted_rows() {
     let future_delta = std::fs::read(Store::join_delta_path(&log)).unwrap();
     drop(store);
 
-    std::fs::write(&log, prefix_log).unwrap();
+    copy_log_tree(&prefix, &log);
     std::fs::write(Store::join_map_path(&log), prefix_joins).unwrap();
     std::fs::write(Store::join_delta_path(&log), future_delta).unwrap();
     let _ = std::fs::remove_file(Store::checkpoint_path(&log));
@@ -403,7 +411,8 @@ fn future_join_sidecar_is_rebuilt_from_checkpoint() {
     let mut store = Store::create(&log).unwrap();
     append_all(&mut store, fixture());
     store.checkpoint().unwrap();
-    let prefix_log = std::fs::read(&log).unwrap();
+    let prefix = dir.join("prefix.mikura");
+    copy_log_tree(&log, &prefix);
     let prefix_ckpt = std::fs::read(Store::checkpoint_path(&log)).unwrap();
     let prefix_pages = store.committed_pages();
     store.append(wide_item("c-future", 'z')).unwrap();
@@ -412,7 +421,7 @@ fn future_join_sidecar_is_rebuilt_from_checkpoint() {
     let future_joins = std::fs::read(Store::join_map_path(&log)).unwrap();
     drop(store);
 
-    std::fs::write(&log, prefix_log).unwrap();
+    copy_log_tree(&prefix, &log);
     std::fs::write(Store::checkpoint_path(&log), prefix_ckpt).unwrap();
     std::fs::write(Store::join_map_path(&log), future_joins).unwrap();
     let _ = std::fs::remove_file(Store::join_delta_path(&log));
@@ -482,7 +491,8 @@ fn future_join_delta_rebuild_keeps_compacted_action_catalog() {
     compacted
         .append(rec("Customer", "c-force", false, &[("region", "us")]))
         .unwrap();
-    let prefix_log = std::fs::read(&compact).unwrap();
+    let prefix = dir.join("prefix.mikura");
+    copy_log_tree(&compact, &prefix);
     let prefix_joins = std::fs::read(Store::join_map_path(&compact)).unwrap();
     let prefix_ckpt = std::fs::read(Store::checkpoint_path(&compact)).unwrap();
     compacted.set_join_delta_compact_bytes(u64::MAX);
@@ -492,7 +502,7 @@ fn future_join_delta_rebuild_keeps_compacted_action_catalog() {
     let future_delta = std::fs::read(Store::join_delta_path(&compact)).unwrap();
     drop(compacted);
 
-    std::fs::write(&compact, prefix_log).unwrap();
+    copy_log_tree(&prefix, &compact);
     std::fs::write(Store::join_map_path(&compact), prefix_joins).unwrap();
     std::fs::write(Store::join_delta_path(&compact), future_delta).unwrap();
     std::fs::write(Store::checkpoint_path(&compact), prefix_ckpt).unwrap();

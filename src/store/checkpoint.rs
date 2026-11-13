@@ -83,6 +83,7 @@ impl Store {
         self.ensure_schema_history()?;
         for path in [
             dst.to_path_buf(),
+            crate::log::objects_dir(dst),
             Self::join_map_path(dst),
             Self::join_delta_path(dst),
             Self::checkpoint_path(dst),
@@ -165,14 +166,14 @@ impl Store {
             let dst_ckpt = Self::checkpoint_path(dst);
             std::fs::hard_link(&staged_ckpt, &dst_ckpt)
                 .map_err(|e| format!("publish {}: {e}", dst_ckpt.display()))?;
-            if let Err(error) = std::fs::hard_link(&staging, dst) {
+            if let Err(error) = crate::log::publish_log(&staging, dst) {
                 let _ = std::fs::remove_file(&dst_ckpt);
                 return Err(format!("publish {}: {error}", dst.display()));
             }
             let _ = std::fs::remove_file(&staged_ckpt);
             Ok(())
         })();
-        let _ = std::fs::remove_file(&staging);
+        crate::log::remove_log(&staging);
         let _ = std::fs::remove_file(Self::checkpoint_path(&staging));
         written.map(|()| records.len())
     }

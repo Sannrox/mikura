@@ -15,7 +15,7 @@ fn documented_format_ids_are_written() {
         .unwrap()
         .read_exact(&mut superblock)
         .unwrap();
-    assert_eq!(&superblock[4..12], LOG_FORMAT);
+    assert_eq!(&superblock[4..12], LOG_FORMAT_MANIFEST);
 
     let mut join_magic = [0u8; 8];
     std::fs::File::open(Store::join_map_path(&log))

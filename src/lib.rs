@@ -38,7 +38,8 @@
 //!
 //! See `docs/architecture.md` in the repository for the v1 contract.
 //! Format ids on the 1.0 surface: [`LOG_FORMAT`], [`LOG_FORMAT_ENCRYPTED`],
-//! [`JOIN_FORMAT`], [`JOIN_FORMAT_PAGED`], [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
+//! [`LOG_FORMAT_MANIFEST`], [`MANIFEST_FORMAT`], [`JOIN_FORMAT`], [`JOIN_FORMAT_PAGED`],
+//! [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
 
 mod acl;
 mod actions;
@@ -50,6 +51,7 @@ mod durable;
 mod fault;
 mod joins;
 mod log;
+mod objects;
 mod objectset;
 mod overlay;
 mod page;
@@ -59,10 +61,14 @@ mod store;
 mod tuning;
 mod value;
 
-/// Superblock magic this crate writes and opens for plaintext logs (`MIKURAV2`).
+/// Superblock magic this crate still opens for plaintext logs (`MIKURAV2`).
 pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
 /// Superblock magic for encrypted logs (`MIKURAV3`, ADR 0044).
 pub const LOG_FORMAT_ENCRYPTED: &[u8; 8] = b"MIKURAV3";
+/// Stub magic this crate writes for swap-committed logs (`MIKURAV4`, ADR 0047).
+pub const LOG_FORMAT_MANIFEST: &[u8; 8] = b"MIKURAV4";
+/// Snapshot object magic (`MKMANI01`) named by a `MIKURAV4` stub.
+pub const MANIFEST_FORMAT: &[u8; 8] = objects::MANIFEST_FORMAT;
 /// Join sidecar magic (`MKJOIN06`). Rebuildable; unknown magic fails closed.
 pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN06";
 /// Paged join sidecar magic (`MKJOIN07`) written under a serving budget.
@@ -78,6 +84,9 @@ pub const CHECKPOINT_FORMAT: &[u8; 8] = b"MKCKPT01";
 /// Prefix of the error [`Store`] open and create return while another
 /// writer holds the log (#342): `log in use: <path> ...`.
 pub const LOG_IN_USE: &str = "log in use";
+/// Prefix of the error a displaced writer returns when exclusive create of
+/// the next snapshot fails (ADR 0047).
+pub const LOG_FENCED: &str = "fenced";
 
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};

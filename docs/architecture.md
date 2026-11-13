@@ -101,15 +101,25 @@ current descriptor.
 
 ## Object log
 
-`src/log.rs` implements a single-file paged log.
+`src/log.rs` implements checksummed 4 KiB pages. New logs use the
+swap-committed file backend ([ADR 0047](decisions/0047-object-storage-store-of-record.md)):
+a `MIKURAV4` stub plus immutable segment objects under `{log}.obj`,
+advanced by an exclusive create of `manifest.{n}`. The successful swap
+is the acknowledgement and the fence. `src/objects.rs` is that file
+backend.
 
-- Page size: 4096 bytes.
-- Page 0 is the superblock: CRC32, magic `MIKURAV2`, page-size `u16`,
-  `committed_pages` `u32`. `MIKURAV1` fails closed on open;
-  `Store::migrate_unnamespaced` writes it as a new `MIKURAV2` log under a
-  caller-named namespace ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
-  Encrypted logs write `MIKURAV3` with a wrapped-DEK catalog after the
-  commit point (`Store::create_with_keys`, [ADR 0044](decisions/0044-log-encryption.md)).
+- Page size: 4096 bytes. Record bodies are unchanged.
+- New logs: page 0 is a `MIKURAV4` stub (CRC32, magic, page-size, encrypted
+  flag). Committed pages live in sealed segment objects named by a
+  `MKMANI01` snapshot. `Store::create` / `Store::create_with_keys` write
+  this layout. Encrypted payloads keep
+  [ADR 0044](decisions/0044-log-encryption.md) inside segments; the
+  wrapped-DEK catalog sits in the snapshot.
+- Superblock logs still open: page 0 is `MIKURAV2` or encrypted
+  `MIKURAV3` with `committed_pages`. `MIKURAV1` fails closed on open;
+  `Store::migrate_unnamespaced` writes a new `MIKURAV2` log
+  ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Convert
+  `MIKURAV2`/`MIKURAV3` with `Store::migrate_to_manifest`.
 - Data pages: CRC32, `used` `u16`, then length-prefixed records.
   Encrypted pages are tenant-homogeneous AES-256-GCM with the tenant id
   in the clear. Encrypted sidecars and checkpoints seal a per-tenant
@@ -126,30 +136,33 @@ current descriptor.
   [ADR 0028](decisions/0028-store-namespace.md),
   [ADR 0035](decisions/0035-versioned-schema-migration.md)).
 - Rebuild (`read_records`) verifies every page in `1..=committed_pages` and
-  ignores bytes after that range.
-- Checksum mismatch or a short committed file returns an error.
+  ignores bytes after that range (unreferenced staged objects on V4, orphan
+  pages on a superblock log).
+- Checksum mismatch or a missing committed page/object returns an error.
 
 `SyncPolicy`:
 
 | Policy | Behavior |
 | --- | --- |
-| `None` | Superblock advances without `fsync` (tests / spikes) |
-| `Page` | `fsync` after every data page |
-| `Group(n)` | `fsync` data pages in batches of `n`, then the superblock |
+| `None` | Manifest swap without `fsync` (tests / spikes) |
+| `Page` | Durable put+swap after every data page |
+| `Group(n)` | Durable put+swap after `n` data pages |
 
-`Store::create` / `Store::open` use `Group(32)`. That matches [ADR 0001](decisions/0001-paged-log.md).
+`Store::create` / `Store::open` use `Group(32)`. A data commit is two
+storage-call waves: put the new segment, then the conditional manifest
+write ([ADR 0047](decisions/0047-object-storage-store-of-record.md) §10).
 
-**Ingest / fsync contract:**
+**Ingest / commit contract:**
 
 - `Store::append` of one record flushes the writer, then persists join maps.
   A single-record append is a complete commit.
 - `mikura-ingest::BatchIngest::run` appends every record onto the writer, then flushes once
   (`Store::append_batch`, [ADR 0026](decisions/0026-atomic-ingest-batch.md)).
-  Under `Group(32)` that fsyncs data pages in batches of 32; the superblock
-  moves only when the batch ends. A crash mid-batch drops the uncommitted tail; rebuild reads
-  only `1..=committed_pages`.
-- Orphan pages after `committed_pages` are ignored. Missing committed pages
-  fail closed.
+  A crash mid-batch drops the uncommitted tail; rebuild reads only pages
+  the current manifest names.
+- Staged segments whose swap never landed are unreferenced garbage,
+  collected on the next open-for-write. Missing committed objects fail
+  closed.
 
 JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
@@ -581,21 +594,26 @@ checkpoint falls back.
 Closing stdin stops the listener. Stop does not flush the stream buffer;
 rebuild still reads only `1..=committed_pages`. Upgrade is replace the
 binary and `Host::open` the same files. Wire `v` other than omit/`1` stays
-a typed error. New logs are `MIKURAV2`, or `MIKURAV3` when created with
-keys. `MIKURAV1` fails closed
+a typed error. New logs are `MIKURAV4` (encrypted payloads keep ADR 0044 inside
+segments). `MIKURAV2`/`MIKURAV3` still open. `MIKURAV1` fails closed
 ([ADR 0028](decisions/0028-store-namespace.md)) until migrated
-([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
+([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Convert a
+superblock log with `Store::migrate_to_manifest`.
 
-Acknowledgement still ends at this process's superblock fsync. On disk
-loss, recovery is the last backup copy
-([ADR 0023](decisions/0023-single-process-availability.md),
-[ADR 0037](decisions/0037-online-backup-and-restore.md)). The accepted
-path that survives machine and disk loss of the compute host is a
-swap-committed manifest on object storage
-([ADR 0047](decisions/0047-object-storage-store-of-record.md),
-[#335](https://github.com/Sannrox/mikura/issues/335)); it is not in
-this crate yet
-([#340](https://github.com/Sannrox/mikura/issues/340)).
+Acknowledgement is the successful manifest swap. The `file` backend
+survives process crash and restart on the same disk; durability still
+ends at that disk. An object-storage backend that survives machine and
+disk loss of the compute host is
+[#360](https://github.com/Sannrox/mikura/issues/360). On disk loss of
+the file backend, recovery is the last backup copy
+([ADR 0037](decisions/0037-online-backup-and-restore.md)). Takeover is
+process start: open the current manifest, load the newest valid
+projection, replay the tail. Product projection decode on reopen is
+unchanged (local sidecar / checkpoint); spike 016 measured 850 ms to
+read a 740 MiB checkpoint object at 10⁷ class size after dropping the
+page cache. Remote GET and storing projections as derived objects are
+[#360](https://github.com/Sannrox/mikura/issues/360) and
+[#361](https://github.com/Sannrox/mikura/issues/361).
 
 ## What v1 does not do
 
