@@ -204,8 +204,16 @@ republish writes the replacement sidecar beside the serving file and
 publishes it with one rename. In-flight readers keep the maps or page
 file they already hold; the previous file's disk is released after the
 switch. A failed or killed write leaves the previous sidecar serving, or
-the new one after the rename, never a torn mix. Storing that file as a
-derived object is [#361](https://github.com/Sannrox/mikura/issues/361).
+the new one after the rename, never a torn mix. `Store::checkpoint`
+also puts those bytes as derived objects in the log's object namespace
+(`ckpt.{pages}.w{version}…`, `proj.{pages}.w{version}…`) and names them
+in the snapshot ([#361](https://github.com/Sannrox/mikura/issues/361),
+[ADR 0047](decisions/0047-object-storage-store-of-record.md) §9). They
+are never authority: a starting process with no local sidecar loads the
+newest matching objects and replays only the tail; deleting them, or a
+corrupt or version-mismatched object, is skipped and rebuilt from the
+log. 10^6 / 10^7 empty-machine envelopes stay spike measurements; crate
+tests prove the page-decode bound.
 Encrypted paged bytes sit inside the existing seal; the on-disk sidecar
 stays sealed. `Store::load(namespace, kind, key, acl)`
 reconstructs the live `ObjectRecord` from slim identity plus interned
@@ -243,7 +251,8 @@ delta file exceeds `JOIN_DELTA_COMPACT_BYTES` (64 MiB). Compact rewrites
 the interned checkpoint and deletes the delta. A join-checkpoint rewrite
 also writes `{log}.ckpt` when the Action-id catalog is complete for this
 process. `Store::checkpoint` writes that file at the current commit
-point. `Store::compact_to(dst)` writes live generations (including
+point and, on a manifest log, names the same snapshot as derived
+checkpoint and projection objects. `Store::compact_to(dst)` writes live generations (including
 hidden rows) to a new log plus a checkpoint that keeps the Action-id
 catalog; the source log is unchanged. Default open keeps full history.
 

@@ -671,6 +671,30 @@ impl LogWriter {
         self.committed
     }
 
+    pub(crate) fn has_object_store(&self) -> bool {
+        self.objects.is_some()
+    }
+
+    pub(crate) fn snapshot_version(&self) -> u64 {
+        self.manifest_version
+    }
+
+    pub(crate) fn checkpoint_object_key(&self) -> &str {
+        &self.checkpoint_key
+    }
+
+    pub(crate) fn projection_object_key(&self) -> &str {
+        &self.projection_key
+    }
+
+    pub(crate) fn get_object(&self, key: &str) -> Result<Vec<u8>, String> {
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "manifest log is missing its object namespace".to_string())?;
+        store.get(key)
+    }
+
     pub fn written_pages(&self) -> u32 {
         self.written
     }
@@ -1264,12 +1288,14 @@ impl LogWriter {
         }
     }
 
-    /// Freeze covered segments into a prefix object and name `checkpoint`.
-    /// Puts run as one wave, then one CAS. Tail after this is empty.
+    /// Freeze covered segments into a prefix object and name derived
+    /// checkpoint and projection objects. Puts run as one wave, then one CAS.
+    /// Tail after this is empty.
     pub(crate) fn publish_checkpoint(
         &mut self,
         checkpoint_pages: u32,
         checkpoint: &[u8],
+        projection: Option<&[u8]>,
     ) -> Result<(), String> {
         if self.objects.is_none() {
             return Ok(());
@@ -1288,44 +1314,31 @@ impl LogWriter {
             .chain(self.segments.iter().cloned())
             .collect();
         let prefix_bytes = encode_prefix(&frozen, checkpoint_pages)?;
-        let mut prefix_key = String::new();
-        let mut checkpoint_key = String::new();
-        let mut fsyncs = 0;
-        for _ in 0..8 {
-            if prefix_key.is_empty() {
-                let key = crate::objects::unique_object_key(
-                    "prefix",
-                    self.manifest_version,
-                    checkpoint_pages,
-                );
-                match store.put(&key, &prefix_bytes) {
-                    Ok(n) => {
-                        fsyncs += n;
-                        prefix_key = key;
-                    }
-                    Err(error) if error.contains("already exists") => continue,
-                    Err(error) => return Err(error),
-                }
-            }
-            if checkpoint_key.is_empty() {
-                let key = crate::objects::unique_object_key(
-                    "ckpt",
-                    self.manifest_version,
-                    checkpoint_pages,
-                );
-                match store.put(&key, checkpoint) {
-                    Ok(n) => {
-                        fsyncs += n;
-                        checkpoint_key = key;
-                    }
-                    Err(error) if error.contains("already exists") => continue,
-                    Err(error) => return Err(error),
-                }
-            }
-            break;
-        }
-        if prefix_key.is_empty() || checkpoint_key.is_empty() {
-            return Err("could not allocate unique snapshot object keys".into());
+        let (prefix_key, mut fsyncs) = put_unique_object(
+            store,
+            "prefix",
+            self.manifest_version,
+            checkpoint_pages,
+            &prefix_bytes,
+        )?;
+        let (checkpoint_key, ckpt_fsyncs) = put_unique_object(
+            store,
+            "ckpt",
+            self.manifest_version,
+            checkpoint_pages,
+            checkpoint,
+        )?;
+        fsyncs += ckpt_fsyncs;
+        if let Some(projection) = projection {
+            let (projection_key, proj_fsyncs) = put_unique_object(
+                store,
+                "proj",
+                self.manifest_version,
+                checkpoint_pages,
+                projection,
+            )?;
+            self.projection_key = projection_key;
+            fsyncs += proj_fsyncs;
         }
         self.prefix_segments = frozen;
         self.segments.clear();
@@ -1748,6 +1761,24 @@ fn ensure_span(
         return Err("committed pages missing".into());
     }
     Ok(())
+}
+
+fn put_unique_object(
+    store: &crate::objects::ObjectStore,
+    kind: &str,
+    writer_version: u64,
+    stamp: u32,
+    bytes: &[u8],
+) -> Result<(String, u64), String> {
+    for _ in 0..8 {
+        let key = crate::objects::unique_object_key(kind, writer_version, stamp);
+        match store.put(&key, bytes) {
+            Ok(fsyncs) => return Ok((key, fsyncs)),
+            Err(error) if error.contains("already exists") => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err("could not allocate unique snapshot object keys".into())
 }
 
 fn encode_prefix(

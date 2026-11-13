@@ -16,7 +16,7 @@ use super::{ActionCommit, LiveId, SetMember, Store};
 type ActionCatalog = HashMap<(String, String), ActionCommit>;
 type SchemaHistory = HashMap<(String, String), Vec<SchemaDescriptor>>;
 type InstanceSchemaVersions = HashMap<(String, String, String), u32>;
-type LoadedLogCheckpoint = (
+pub(super) type LoadedLogCheckpoint = (
     Checkpoint,
     ActionCatalog,
     Option<SchemaHistory>,
@@ -250,6 +250,25 @@ impl Store {
                 Ok(_) | Err(_) => continue,
             }
         }
+        self.restore_derived_action_catalog(pages)
+    }
+
+    fn restore_derived_action_catalog(&mut self, pages: u32) -> Result<(), String> {
+        let Some((loaded, actions, history, versions)) = self.load_named_checkpoint()? else {
+            return Ok(());
+        };
+        if loaded.pages > pages {
+            return Ok(());
+        }
+        self.action_commits = actions;
+        if let Some(history) = history {
+            self.schema_history = history;
+            self.schema_history_from_checkpoint = true;
+        }
+        if let Some(versions) = versions {
+            raise_instance_schema_versions(&self.joins, &self.ns, &mut self.identity, versions);
+        }
+        self.action_commits_from_log = true;
         Ok(())
     }
 
@@ -266,7 +285,13 @@ impl Store {
         if checkpoint_stamp(&bytes)? != pages {
             return Ok(());
         }
-        self.writer.publish_checkpoint(pages, &bytes)
+        let projection = Self::join_map_path(&self.log)
+            .is_file()
+            .then(|| std::fs::read(Self::join_map_path(&self.log)))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        self.writer
+            .publish_checkpoint(pages, &bytes, projection.as_deref())
     }
 
     pub(super) fn persist_log_checkpoint(&self) -> Result<(), String> {
@@ -395,6 +420,33 @@ impl Store {
             }
         }
         Ok(false)
+    }
+
+    /// Load the snapshot-named checkpoint object. Corrupt, stale, or missing
+    /// derived bytes are skipped (never authority). Storage unavailability
+    /// fails closed.
+    pub(super) fn load_named_checkpoint(&self) -> Result<Option<LoadedLogCheckpoint>, String> {
+        let key = self.writer.checkpoint_object_key();
+        if key.is_empty() || !self.writer.has_object_store() {
+            return Ok(None);
+        }
+        let bytes = match self.writer.get_object(key) {
+            Ok(bytes) => bytes,
+            Err(error) if crate::objects::object_missing(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match decode_log_checkpoint_bytes(&bytes, &self.writer) {
+            Ok(loaded)
+                if crate::objects::derived_covers(
+                    key,
+                    self.writer.snapshot_version(),
+                    loaded.0.pages,
+                ) =>
+            {
+                Ok(Some(loaded))
+            }
+            Ok(_) | Err(_) => Ok(None),
+        }
     }
 
     fn encode_action_commits(&self, body: &mut Vec<u8>) -> Result<(), String> {
@@ -543,11 +595,18 @@ fn decode_props(cur: &mut &[u8]) -> Result<HashMap<String, String>, String> {
 
 fn load_log_checkpoint(path: &Path, writer: &LogWriter) -> Result<LoadedLogCheckpoint, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("log checkpoint: {e}"))?;
-    if writer.keys().is_some() && !crate::crypto::is_sealed(&bytes) {
+    decode_log_checkpoint_bytes(&bytes, writer)
+}
+
+fn decode_log_checkpoint_bytes(
+    bytes: &[u8],
+    writer: &LogWriter,
+) -> Result<LoadedLogCheckpoint, String> {
+    if writer.keys().is_some() && !crate::crypto::is_sealed(bytes) {
         return Err("encrypted log requires a sealed checkpoint".into());
     }
-    if crate::crypto::is_sealed(&bytes) {
-        let (pages, slices) = Store::open_partitioned(writer, &bytes)
+    if crate::crypto::is_sealed(bytes) {
+        let (pages, slices) = Store::open_partitioned(writer, bytes)
             .map_err(|err| format!("log checkpoint: {err}"))?;
         let mut loaded = Checkpoint {
             pages,

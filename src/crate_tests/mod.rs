@@ -6,6 +6,7 @@ mod batch;
 mod change_set;
 mod collect;
 mod delta;
+mod derived;
 mod durable;
 mod encrypt;
 mod evolution;

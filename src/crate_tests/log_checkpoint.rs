@@ -38,6 +38,27 @@ fn checkpoint_open_matches_full_replay() {
     let _ = std::fs::remove_file(Store::checkpoint_prev_path(&log));
     remove_joins(&log);
     crate::log::take_pages_decoded();
+    let from_derived = Store::open(&log).unwrap();
+    assert_eq!(
+        crate::log::take_pages_decoded(),
+        0,
+        "snapshot-named derived objects must not decode log pages"
+    );
+    assert_eq!(evaluate_sum(&from_derived), live);
+    drop(from_derived);
+
+    let objects = crate::objects::FileStore::open(&crate::log::objects_dir(&log), false).unwrap();
+    let (_, bytes) = objects.current().unwrap().unwrap();
+    let snapshot = crate::objects::decode_manifest(&bytes).unwrap();
+    for key in [snapshot.checkpoint_key, snapshot.projection_key] {
+        if !key.is_empty() {
+            let _ = std::fs::remove_file(crate::log::objects_dir(&log).join(key));
+        }
+    }
+    remove_joins(&log);
+    let _ = std::fs::remove_file(Store::checkpoint_path(&log));
+    let _ = std::fs::remove_file(Store::checkpoint_prev_path(&log));
+    crate::log::take_pages_decoded();
     let replayed = Store::open(&log).unwrap();
     assert!(crate::log::take_pages_decoded() > 0);
     assert_eq!(evaluate_sum(&replayed), live);

@@ -1956,15 +1956,18 @@ pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> 
     result
 }
 
-pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+pub(crate) fn checksummed_body(bytes: &[u8]) -> Result<&[u8], String> {
     if bytes.len() < 12 {
         return Err("join sidecar too short".into());
     }
     let (body, crc_bytes) = bytes.split_at(bytes.len() - 4);
-    let expected = u32::from_le_bytes(crc_bytes.try_into().unwrap());
-    check_join_crc(body, expected)?;
-    Ok(body.to_vec())
+    check_join_crc(body, u32::from_le_bytes(crc_bytes.try_into().unwrap()))?;
+    Ok(body)
+}
+
+pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    Ok(checksummed_body(&bytes)?.to_vec())
 }
 
 pub(crate) struct Checkpoint {
