@@ -17,6 +17,7 @@ use crate::crypto::{
     seal_page_body, tenant_of_namespace, Dek, DekStatus, LogKeys, WrappedDek, STORE_KEY_TENANT,
 };
 use crate::store::ObjectRecord;
+use crate::UNCERTAIN_COMMIT;
 
 pub const PAGE: usize = 4096;
 const MAGIC: &[u8; 8] = crate::LOG_FORMAT;
@@ -31,8 +32,6 @@ const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
 const SUPER_COMMIT_OFF: usize = CRC_LEN + 8 + 2;
-const UNCERTAIN_COMMIT: &str =
-    "log state uncertain after a failed commit or rollback; reopen the store";
 
 fn io_err(error: String) -> std::io::Error {
     std::io::Error::other(error)
@@ -1088,16 +1087,21 @@ impl LogWriter {
             if let Some(segment) = self.put_pending_segment()? {
                 #[cfg(test)]
                 {
+                    self.run_stage_hook(CommitStage::PagesWritten);
                     if self.crash_before_swap {
                         return Err("crash before swap".into());
                     }
+                    self.run_stage_hook(CommitStage::SuperblockTorn);
                 }
                 self.segments.push(segment);
             }
             let committed = self.written;
             self.committed = committed;
             self.synced = committed;
-            return self.swap_snapshot();
+            self.swap_snapshot()?;
+            #[cfg(test)]
+            self.run_stage_hook(CommitStage::Durable);
+            return Ok(());
         }
         self.sync_data()?;
         self.committed = self.written;

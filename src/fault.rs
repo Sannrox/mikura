@@ -4,7 +4,7 @@
 //! per-thread plan that fails, delays, or crashes at a generated step.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +14,7 @@ pub(crate) enum Op {
     Truncate,
     Rename,
     Open,
+    Unlink,
 }
 
 #[cfg(test)]
@@ -98,6 +99,14 @@ pub(crate) fn open_read(path: &Path) -> Result<File, String> {
     run(Op::Open, || File::open(path).map_err(|e| e.to_string()))
 }
 
+pub(crate) fn unlink(path: &Path) -> Result<(), String> {
+    run(Op::Unlink, || match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    })
+}
+
 pub(crate) fn crashed() -> bool {
     #[cfg(test)]
     {
@@ -117,7 +126,7 @@ pub(crate) fn maybe_orphan_pages(committed: u32, file_len: u64, page: usize) -> 
 }
 
 #[cfg(test)]
-pub(crate) use live::{allow_recovery, install, take_trace, FaultKind, Plan, CI_SEEDS};
+pub(crate) use live::{allow_recovery, arm_next, install, take_trace, FaultKind, Plan, CI_SEEDS};
 
 #[cfg(test)]
 mod live {
@@ -182,6 +191,7 @@ mod live {
         static STEP: Cell<u64> = const { Cell::new(0) };
         static CRASHED: Cell<bool> = const { Cell::new(false) };
         static ORPHANS: Cell<bool> = const { Cell::new(false) };
+        static NEXT: Cell<Option<(Op, FaultKind)>> = const { Cell::new(None) };
         static TRACE: RefCell<Vec<(Op, Option<&'static str>)>> = const { RefCell::new(Vec::new()) };
     }
 
@@ -193,6 +203,7 @@ mod live {
             STEP.with(|s| s.set(0));
             CRASHED.with(|c| c.set(false));
             ORPHANS.with(|o| o.set(false));
+            NEXT.with(|n| n.set(None));
             TRACE.with(|t| t.borrow_mut().clear());
         }
     }
@@ -203,8 +214,15 @@ mod live {
         STEP.with(|s| s.set(0));
         CRASHED.with(|c| c.set(false));
         ORPHANS.with(|o| o.set(orphans));
+        NEXT.with(|n| n.set(None));
         TRACE.with(|t| t.borrow_mut().clear());
         Guard
+    }
+
+    /// Fire `kind` on the next `op`. Named commit-step cases use this so
+    /// generated step numbers stay out of the assertion.
+    pub fn arm_next(op: Op, kind: FaultKind) {
+        NEXT.with(|n| n.set(Some((op, kind))));
     }
 
     pub fn take_trace() -> Vec<(Op, Option<&'static str>)> {
@@ -232,6 +250,25 @@ mod live {
         pages.max(committed)
     }
 
+    fn apply<T>(kind: FaultKind, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        match kind {
+            // Delay occupies a plan slot and is recorded in the replay
+            // trace. It does not sleep: wall-clock waits are neither
+            // deterministic nor safe next to concurrent agents.
+            FaultKind::Delay => f(),
+            FaultKind::FailBefore => Err(FAILURE.into()),
+            FaultKind::FailAfter => {
+                f()?;
+                Err(FAILURE.into())
+            }
+            FaultKind::Crash => {
+                let result = f();
+                CRASHED.with(|c| c.set(true));
+                result.and(Err(CRASH.into()))
+            }
+        }
+    }
+
     pub fn run<T>(op: Op, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         if crashed() {
             return Err(CRASH.into());
@@ -241,24 +278,19 @@ mod live {
             s.set(n + 1);
             n
         });
+        if let Some((want, kind)) = NEXT.with(|n| n.get()) {
+            if op == want {
+                NEXT.with(|n| n.set(None));
+                TRACE.with(|t| t.borrow_mut().push((op, Some(kind.label()))));
+                return apply(kind, f);
+            }
+        }
         let plan = PLAN.with(|p| p.get());
         let applied = plan.filter(|p| p.step == step).map(|p| p.kind);
         TRACE.with(|t| t.borrow_mut().push((op, applied.map(FaultKind::label))));
         match applied {
-            // Delay occupies a plan slot and is recorded in the replay
-            // trace. It does not sleep: wall-clock waits are neither
-            // deterministic nor safe next to concurrent agents.
-            None | Some(FaultKind::Delay) => f(),
-            Some(FaultKind::FailBefore) => Err(FAILURE.into()),
-            Some(FaultKind::FailAfter) => {
-                f()?;
-                Err(FAILURE.into())
-            }
-            Some(FaultKind::Crash) => {
-                let result = f();
-                CRASHED.with(|c| c.set(true));
-                result.and(Err(CRASH.into()))
-            }
+            None => f(),
+            Some(kind) => apply(kind, f),
         }
     }
 }

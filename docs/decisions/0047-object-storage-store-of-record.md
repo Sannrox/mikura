@@ -65,7 +65,9 @@ fence.**
    manifest with a conditional write that names the expected current
    manifest version. Acknowledgement is the successful swap, nothing
    earlier. An ambiguous swap outcome (lost response) is resolved by reading
-   the manifest back. Fail closed.
+   the manifest back. When that read is unavailable the writer reports the
+   outcome as unknown and refuses further writes; it never reports success
+   or failure. Fail closed.
 
 2. **One engine.** Local disk is the `file` backend of the same protocol
    (atomic create-new as the conditional primitive). Tests, development,
