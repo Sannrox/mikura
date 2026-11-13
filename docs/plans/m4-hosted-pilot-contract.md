@@ -46,7 +46,7 @@ gRPC stays ask-first.
 | Same-binary reopen | `Host::open` / `Store::open` after process exit |
 | Request-line admission; disconnect fail closed | `process_oversize_request_fails_closed`, `process_disconnect_then_next_request_serves`. `RequestBound` is the byte bound. `RequestTimeout` is the request-line wall-clock. After a complete line is accepted, evaluate and ingest run to completion on this one-process host |
 | Backup and restore | `process_backup_restore_product_loop`: copy the log and optional `{log}.joins`, then `Host::open` on the copy. Dual-read deletes the copied sidecar. Corrupt committed pages and sidecar checksum mismatch stay fail-closed (`missing_committed_page_fails_closed`, `sidecar_checksum_and_bad_magic_fail_closed`) |
-| Shutdown and upgrade | `process_product_loop_survives_shutdown_and_reopen`: close stdin, start a current host on the same files, same load/list/hop/overlay. `process_uncommitted_stream_push_invisible_after_reopen` proves stop does not promote an uncommitted tail. Envelope mismatch stays `process_rejects_unknown_wire_v_and_accepts_omit_or_one`. No `MIKURAV1` change |
+| Shutdown and upgrade | `process_product_loop_survives_shutdown_and_reopen`: close stdin, start a current host on the same files, same load/list/hop/overlay. `process_uncommitted_stream_push_invisible_until_commit` proves a push is invisible on this process and that stop does not promote it. Envelope mismatch stays `process_rejects_unknown_wire_v_and_accepts_omit_or_one`. No `MIKURAV1` change |
 
 Do not invent hold/miss numbers. [M0 budgets](m0-application-contract.md)
 stay unset. Qualitative fail-closed checks are enough. Named production

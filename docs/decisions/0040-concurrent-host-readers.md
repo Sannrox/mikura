@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-10-16
 - Owners: mikura maintainers
-- Related: [#243](https://github.com/Sannrox/mikura/issues/243), [#188](https://github.com/Sannrox/mikura/issues/188), [#187](https://github.com/Sannrox/mikura/issues/187), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md)
+- Related: [#243](https://github.com/Sannrox/mikura/issues/243), [#188](https://github.com/Sannrox/mikura/issues/188), [#187](https://github.com/Sannrox/mikura/issues/187), [#319](https://github.com/Sannrox/mikura/issues/319), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md)
 - Amends: [ADR 0021](0021-bounded-host-execution.md) (one RPC at a time). Line-assembly bounds, fail-closed overload, run-to-completion after a complete line, and unpublished mixed-load SLOs stay.
 - Supersedes: none
 - Superseded by: none
@@ -204,3 +204,65 @@ same process sees uncommitted pushes. This amendment does not change it.
 - The mixed-load bench runs eight readers and one writer and reports the
   single-client write as `host_write_alone`. The numbers stay bench
   evidence, not an SLO ([ADR 0016](0016-production-workload.md)).
+
+## Amendment 2026-11-12: uncommitted stream pushes are invisible until commit
+
+Related: [#319](https://github.com/Sannrox/mikura/issues/319).
+
+### Context
+
+The 2026-10-28 amendment split batch commit so readers observe applied,
+committed state only, and left stream push as an exception: a later RPC
+on the same process could see a record that a crash would lose. That is
+the remaining hole in the batch rule.
+
+### Decision
+
+**`ingest_stream_push` / `StreamIngest::push` admits the record and holds
+it in the ingest buffer. Live maps and the log do not change. `load` and
+`evaluate` on this process see the last commit until `flush`.**
+
+Admission still fails closed on the push (bound, schema, Action id,
+overlay merge, encrypted-write tenant eligibility). A later write on
+the same `Store` that remaps or conflicts with a buffered Action id,
+that cannot leave buffered instances and overlays flushable under a
+new schema or overlay, or that would stale a buffered schema
+descriptor, fails closed, so flush cannot become permanently
+unflushable. A retry of a buffered write through a new `StreamIngest`
+on the same `Store` stays queued until flush. A durable flush of that
+retry releases leftover fences of the same body from dropped streams.
+A live sibling buffering the same body keeps its fence.
+`StreamIngest::discard` releases that stream's fences when the clerk
+drops the buffer without writing.
+`flush` appends the buffer through `Store::append_admitted_batch` and
+acknowledges only after the commit. A crash or stdin-close before
+flush drops the buffer, as reopen already did for uncommitted pages.
+
+`Store::append_uncommitted` still updates live maps for composition,
+overlay, hide, and `StreamApply`. Direct callers of that method own the
+window before their `commit`. Snapshot cursors bind the log stamp; a
+stream push does not change it, a flush does.
+
+This amends [ADR 0021](0021-bounded-host-execution.md) visibility to the
+same rule.
+
+### Alternatives considered
+
+| Option | Why not |
+| --- | --- |
+| Keep the stream exception, document crash semantics | A reader can act on a record a crash then loses; batch already rejected that. |
+| Delay apply inside `append_uncommitted` for every caller | Overlay, action, and sequential same-identity writes need the live maps for the next admit. |
+| A second generation of the projection for readers | Rejected in the 2026-10-28 amendment: memory at 10⁶. |
+
+### Consequences
+
+- In-process `StreamIngest::push` then `load` / `evaluate` is a behavior
+  change on the 1.0 `StreamIngest` surface. Wire `op` names are unchanged.
+  Drop without `discard` keeps Store fences until a matching retry flush,
+  `discard`, or reopen, so an abandoned buffer can still land. The host
+  has no discard RPC; a pre-commit `flush` error keeps the buffer
+  ([ADR 0026](0026-atomic-ingest-batch.md)) and a permanent failure needs
+  process restart.
+- No log or sidecar format change.
+- [#336](https://github.com/Sannrox/mikura/issues/336) snapshot-on-read
+  research can treat stream and batch as one committed-visibility rule.

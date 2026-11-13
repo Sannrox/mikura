@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::acl::PropertyAcl;
@@ -140,9 +141,43 @@ pub struct Store {
     ready: bool,
     action_commits: HashMap<(String, String), ActionCommit>,
     action_commits_from_log: bool,
+    /// Action ids admitted by stream push and not yet on the log. Later
+    /// writes on this `Store` fail closed on remap or body conflict so an
+    /// unflushed buffer cannot become permanently unflushable.
+    pending_action_claims: HashMap<(String, String), ActionCommit>,
+    /// Admitted uncommitted records in push order. Schema replacements
+    /// consult this so a later write cannot pin an unflushed buffer.
+    pending_admitted: Vec<ObjectRecord>,
+    /// Instance props before live overlay merge, aligned with
+    /// [`Self::pending_admitted`]. Overlay fences replay flush from these
+    /// so a later overlay hide cannot drop a required property the original
+    /// record did not carry.
+    pending_source_props: Vec<HashMap<String, String>>,
+    /// Stream that admitted each [`Self::pending_admitted`] row. Same-buffer
+    /// schema chains skip their own rows; sibling buffers do not.
+    pending_owners: Vec<u64>,
+    /// Owner passed to the in-flight [`Self::admit_uncommitted_buffered`].
+    admit_owner: u64,
+    /// Indexes into [`Self::pending_admitted`] fulfilled in the current
+    /// uncommitted transaction. Pruned after a successful commit; cleared
+    /// on abort so a failed flush keeps the fence.
+    applied_pending: HashSet<usize>,
+    /// True while [`Self::append_admitted_batch`] applies a stream buffer.
+    /// Intervening writers must not use this path; identical schema
+    /// descriptors would otherwise look like a fulfillment the stream cannot
+    /// see (ADR 0040).
+    applying_admitted: bool,
     /// Visible schema rows by (namespace, kind), oldest version first.
     schema_history: HashMap<(String, String), Vec<SchemaDescriptor>>,
     schema_history_from_checkpoint: bool,
+}
+
+fn abandoned_stream_owners() -> std::sync::MutexGuard<'static, HashSet<u64>> {
+    static DROPPED: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    DROPPED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 impl Store {
@@ -383,6 +418,13 @@ impl Store {
             ready: false,
             action_commits: HashMap::new(),
             action_commits_from_log: true,
+            pending_action_claims: HashMap::new(),
+            pending_admitted: Vec::new(),
+            pending_source_props: Vec::new(),
+            pending_owners: Vec::new(),
+            admit_owner: 0,
+            applied_pending: HashSet::new(),
+            applying_admitted: false,
             schema_history: HashMap::new(),
             schema_history_from_checkpoint: false,
         };
@@ -701,11 +743,11 @@ impl Store {
         props: &HashMap<String, String>,
     ) -> Result<ActionClaim, String> {
         self.ensure_action_commits()?;
-        let Some(committed) = self
-            .action_commits
-            .get(&(namespace.to_string(), action_id.to_string()))
-            .cloned()
-        else {
+        let key_pair = (namespace.to_string(), action_id.to_string());
+        let committed = self.action_commits.get(&key_pair).cloned();
+        let reserved = self.pending_action_claims.get(&key_pair).cloned();
+        let from_pending = committed.is_none() && reserved.is_some();
+        let Some(committed) = committed.or(reserved) else {
             return Ok(ActionClaim::New);
         };
         if committed.namespace != namespace || committed.kind != kind || committed.key != key {
@@ -729,6 +771,9 @@ impl Store {
         if committed.hidden {
             return Err(format!("action id {action_id} body conflict"));
         }
+        if from_pending {
+            return Ok(ActionClaim::Replay);
+        }
         if let Some(schema) = self.schema(namespace, kind)? {
             schema.validate(&ObjectRecord {
                 gen: 0,
@@ -742,6 +787,28 @@ impl Store {
             })?;
         }
         Ok(ActionClaim::Replay)
+    }
+
+    fn reserve_action(&mut self, record: &ObjectRecord) {
+        let Some(id) = record.action_id.as_deref().filter(|id| !id.is_empty()) else {
+            return;
+        };
+        self.pending_action_claims
+            .entry((record.namespace.clone(), id.to_string()))
+            .or_insert_with(|| ActionCommit {
+                namespace: record.namespace.clone(),
+                kind: record.kind.clone(),
+                key: record.key.clone(),
+                gen: record.gen,
+                hidden: record.hidden,
+                hide_applied: false,
+                props: record.props.clone(),
+                members: if record.kind == CHANGE_SET_KIND {
+                    marker_members(&record.props)
+                } else {
+                    Vec::new()
+                },
+            });
     }
 
     fn load_reserved<T>(
@@ -961,7 +1028,10 @@ impl Store {
                 },
                 false,
                 ActionIdWrite::Copy,
-            )?;
+                true,
+                false,
+            )
+            .map(|_| ())?;
         }
         self.commit()
     }
@@ -997,10 +1067,52 @@ impl Store {
         }
     }
 
+    /// Admit `record` the way [`Self::append_uncommitted`] does, without
+    /// writing pages or updating live maps. Stream ingest push uses this so a
+    /// later `load` / `evaluate` on this process cannot see a record a crash
+    /// would lose (ADR 0040).
+    pub fn admit_uncommitted(&mut self, record: ObjectRecord) -> Result<(), String> {
+        self.admit_uncommitted_buffered(record, true, false, 0)
+            .map(|_| ())
+    }
+
+    /// Stream ingest admission. `merge_overlay` is the live overlay merge.
+    /// `schema_follows_pending` treats a schema row as a replacement of a
+    /// descriptor that is still only in the ingest buffer (ADR 0040).
+    /// `owner` is the admitting stream; `0` is an unowned admit.
+    /// `Ok(false)` is a committed Action replay: no write, do not buffer it.
+    pub fn admit_uncommitted_buffered(
+        &mut self,
+        record: ObjectRecord,
+        merge_overlay: bool,
+        schema_follows_pending: bool,
+        owner: u64,
+    ) -> Result<bool, String> {
+        if self.writer.keys().is_some() {
+            self.writer.revalidate_catalog()?;
+            self.drop_revoked_tenants();
+        }
+        self.admit_owner = owner;
+        let result = self.write_uncommitted(
+            record,
+            merge_overlay,
+            ActionIdWrite::Claim,
+            false,
+            schema_follows_pending,
+        );
+        self.admit_owner = 0;
+        result
+    }
+
+    /// Fail closed when `record` cannot fit on a 4 KiB log page.
+    pub fn check_record_fits(&self, record: &ObjectRecord) -> Result<(), String> {
+        self.writer.check_record_fits(record)
+    }
+
     /// Buffer a record on the writer and update live maps. Durability requires
     /// [`Self::commit`]: a crash before that leaves the uncommitted tail off
-    /// the rebuild (ADR 0001). Stream ingest uses this; a batch that must be all or
-    /// nothing uses [`Self::append_batch`] (ADR 0026).
+    /// the rebuild (ADR 0001). Stream apply and composition use this; a batch
+    /// that must be all or nothing uses [`Self::append_batch`] (ADR 0026).
     ///
     /// A supplied Action id is unique in the namespace (ADR 0025, ADR 0028).
     /// The same id and the same body (`namespace`, `kind`, `key`, `hidden`,
@@ -1021,13 +1133,15 @@ impl Store {
             self.writer.revalidate_catalog()?;
             self.drop_revoked_tenants();
         }
-        self.write_uncommitted(record, true, ActionIdWrite::Claim)
+        self.write_uncommitted(record, true, ActionIdWrite::Claim, true, false)
+            .map(|_| ())
     }
 
     /// Buffer a whole-record replace. Overlay merge is skipped; schema
     /// validation still runs on a visible instance.
     pub(crate) fn append_replace(&mut self, record: ObjectRecord) -> Result<(), String> {
-        self.write_uncommitted(record, false, ActionIdWrite::Claim)
+        self.write_uncommitted(record, false, ActionIdWrite::Claim, true, false)
+            .map(|_| ())
     }
 
     fn write_overlay_audit(
@@ -1035,7 +1149,14 @@ impl Store {
         overlay: &OverlayPatch,
         audit: &ConflictAudit,
     ) -> Result<(), String> {
-        self.write_uncommitted(overlay.to_audit_record(audit)?, false, ActionIdWrite::Copy)
+        self.write_uncommitted(
+            overlay.to_audit_record(audit)?,
+            false,
+            ActionIdWrite::Copy,
+            true,
+            false,
+        )
+        .map(|_| ())
     }
 
     fn write_uncommitted(
@@ -1043,7 +1164,9 @@ impl Store {
         mut record: ObjectRecord,
         merge_overlay: bool,
         action_id_write: ActionIdWrite,
-    ) -> Result<(), String> {
+        apply: bool,
+        schema_follows_pending: bool,
+    ) -> Result<bool, String> {
         let claim_id = match action_id_write {
             ActionIdWrite::Claim => record.action_id.clone(),
             ActionIdWrite::Copy => None,
@@ -1052,6 +1175,7 @@ impl Store {
             Self::require_action_id(id, "empty action id")?;
         }
         require_namespace(&record.namespace)?;
+        let source_props = record.props.clone();
         let mut overlay_audit = None;
         let mut migrated_overlays = Vec::new();
         if record.kind == SCHEMA_KIND {
@@ -1085,13 +1209,20 @@ impl Store {
                         }
                         stored.version = stored.effective_version();
                         if incoming == stored {
-                            return Ok(());
+                            return Ok(false);
                         }
                     }
                 }
             }
             if !record.hidden {
-                if let Some(previous) = self.load_reserved(
+                self.refuse_conflicting_pending_schema(&record, &next, apply)?;
+                if schema_follows_pending {
+                    if !self.applying_admitted && !self.admitted_schema_eq(&record.namespace, &next)
+                    {
+                        self.pending_records_survive_schema(&record.namespace, &next)?;
+                    }
+                    record.props = next.to_record(record.namespace.clone())?.props;
+                } else if let Some(previous) = self.load_reserved(
                     &record.namespace,
                     SCHEMA_KIND,
                     &record.key,
@@ -1100,6 +1231,10 @@ impl Store {
                     let next = previous.check_replacement(&next)?;
                     migrated_overlays = self.plan_overlay_migrations(&record.namespace, &next)?;
                     self.plan_instance_migrations(&record.namespace, &next)?;
+                    if !self.applying_admitted && !self.admitted_schema_eq(&record.namespace, &next)
+                    {
+                        self.pending_records_survive_schema(&record.namespace, &next)?;
+                    }
                     record.props = next.to_record(record.namespace.clone())?.props;
                 } else if let Some(previous) = self
                     .schema_history
@@ -1110,6 +1245,10 @@ impl Store {
                     let next = previous.check_replacement(&next)?;
                     migrated_overlays = self.plan_overlay_migrations(&record.namespace, &next)?;
                     self.plan_instance_migrations(&record.namespace, &next)?;
+                    if !self.applying_admitted && !self.admitted_schema_eq(&record.namespace, &next)
+                    {
+                        self.pending_records_survive_schema(&record.namespace, &next)?;
+                    }
                     record.props = next.to_record(record.namespace.clone())?.props;
                 } else if !next.migration.is_empty() {
                     return Err(format!("migrate_* is not valid on first {}", next.kind));
@@ -1118,14 +1257,28 @@ impl Store {
                         "schema version {} must be 1 on first {}",
                         next.version, next.kind
                     ));
-                } else if next.version == 0 {
-                    let mut first = next;
-                    first.version = 1;
-                    record.props = first.to_record(record.namespace.clone())?.props;
+                } else {
+                    if !self.applying_admitted && !self.admitted_schema_eq(&record.namespace, &next)
+                    {
+                        let mut first = next.clone();
+                        if first.version == 0 {
+                            first.version = 1;
+                        }
+                        self.pending_records_survive_schema(&record.namespace, &first)?;
+                    }
+                    if next.version == 0 {
+                        let mut first = next;
+                        first.version = 1;
+                        record.props = first.to_record(record.namespace.clone())?.props;
+                    }
                 }
             }
         } else if record.kind == OVERLAY_KIND {
             OverlayPatch::from_record(&record)?;
+            if apply && matches!(action_id_write, ActionIdWrite::Claim) && !self.applying_admitted {
+                self.refuse_overlay_conflict_with_pending(&record)?;
+                self.pending_schemas_admit_overlay(&record)?;
+            }
         } else if record.kind == SOURCE_KIND {
             require_source_cursor(&record)?;
         } else if record.kind == CHANGE_SET_KIND {
@@ -1133,7 +1286,11 @@ impl Store {
                 "{CHANGE_SET_KIND} is written only by apply_change_set"
             ));
         } else if !record.hidden {
-            overlay_audit = self.resolve_instance(&mut record, merge_overlay)?;
+            overlay_audit =
+                self.resolve_instance(&mut record, merge_overlay, !schema_follows_pending)?;
+            if !self.applying_admitted {
+                self.pending_schemas_admit_instance(&record)?;
+            }
         }
         if let Some(id) = claim_id.as_deref() {
             if matches!(
@@ -1147,7 +1304,25 @@ impl Store {
                 )?,
                 ActionClaim::Replay
             ) {
-                return Ok(());
+                let claim_key = (record.namespace.clone(), id.to_string());
+                let pending_only = self.pending_action_claims.contains_key(&claim_key)
+                    && !self.action_commits.contains_key(&claim_key);
+                if !pending_only {
+                    return Ok(false);
+                }
+            }
+        }
+        if apply && record.hidden {
+            if let Some(id) = claim_id.as_deref() {
+                let claim_key = (record.namespace.clone(), id.to_string());
+                if let Some(reserved) = self.pending_action_claims.get(&claim_key) {
+                    if !reserved.hidden && !self.action_commits.contains_key(&claim_key) {
+                        return Err(format!(
+                            "action id {id} already committed on {}/{}/{}",
+                            reserved.namespace, reserved.kind, reserved.key
+                        ));
+                    }
+                }
             }
         }
         let hide_overlay =
@@ -1170,6 +1345,14 @@ impl Store {
             self.writer
                 .check_record_fits(&overlay.to_audit_record(audit)?)?;
         }
+        self.writer.check_tenant_writable_for(&record)?;
+        if !apply {
+            if claim_id.is_some() {
+                self.reserve_action(&record);
+            }
+            self.remember_pending_record(&record, source_props);
+            return Ok(true);
+        }
         let held = self.writer.holds_commits();
         if !migrated_overlays.is_empty() {
             self.writer.hold_commits(true);
@@ -1178,11 +1361,13 @@ impl Store {
         let schema_namespace = record.namespace.clone();
         let schema_kind = record.kind.clone();
         let schema_key = record.key.clone();
+        self.note_applied_pending(&record);
         self.apply_record(record);
         self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
-        let overlay_result = migrated_overlays
-            .into_iter()
-            .try_for_each(|overlay| self.write_uncommitted(overlay, false, ActionIdWrite::Copy));
+        let overlay_result = migrated_overlays.into_iter().try_for_each(|overlay| {
+            self.write_uncommitted(overlay, false, ActionIdWrite::Copy, true, false)
+                .map(|_| ())
+        });
         if !held {
             self.writer.hold_commits(false);
         }
@@ -1206,7 +1391,7 @@ impl Store {
                 self.append_uncommitted(hide)?;
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Merge a visible overlay into a visible, non-reserved source `record`
@@ -1218,17 +1403,28 @@ impl Store {
         &self,
         record: &mut ObjectRecord,
         merge_overlay: bool,
+        use_live_schema: bool,
     ) -> Result<Option<(OverlayPatch, ConflictAudit)>, String> {
         let was_hidden = self
             .find_live(&record.namespace, &record.kind, &record.key)
             .and_then(|id| self.identity.get(&id))
             .is_some_and(|meta| meta.hidden);
-        let schema = self.load_reserved(
-            &record.namespace,
-            SCHEMA_KIND,
-            &record.kind,
-            SchemaDescriptor::from_record,
-        )?;
+        let schema = if use_live_schema {
+            self.load_reserved(
+                &record.namespace,
+                SCHEMA_KIND,
+                &record.kind,
+                SchemaDescriptor::from_record,
+            )?
+        } else {
+            None
+        };
+        let pending_plan = if schema.is_none() && !use_live_schema {
+            self.last_pending_schema(&record.namespace, &record.kind)?
+                .map(|schema| schema.conflict_plan())
+        } else {
+            None
+        };
         let mut overlay_audit = None;
         if !was_hidden && merge_overlay {
             if let Some(overlay) = self.load_reserved(
@@ -1237,9 +1433,10 @@ impl Store {
                 &OverlayPatch::identity_key(&record.kind, &record.key),
                 OverlayPatch::from_record,
             )? {
-                let plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
+                let live_plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
+                let plan = live_plan.as_ref().or(pending_plan.as_ref());
                 let (merged, audit) =
-                    overlay.apply_with(std::mem::take(&mut record.props), plan.as_ref())?;
+                    overlay.apply_with(std::mem::take(&mut record.props), plan)?;
                 record.props = merged;
                 if record.action_id.is_none() {
                     record.action_id = overlay.action_id.clone();
@@ -1275,6 +1472,8 @@ impl Store {
     /// The log stays authority; a stale sidecar is caught up on open.
     pub fn commit(&mut self) -> Result<(), String> {
         self.writer.flush()?;
+        self.release_applied_action_claims();
+        self.release_applied_pending();
         self.sidecar_commits_since_persist = self.sidecar_commits_since_persist.saturating_add(1);
         self.maybe_persist_projection(false)
     }
@@ -1319,6 +1518,17 @@ impl Store {
         })
     }
 
+    /// Apply records previously admitted by stream push. Intervening writers
+    /// use [`Self::append_batch`]; this path is the owning buffer's flush so
+    /// a buffered schema can land without looking like a conflicting later
+    /// write (ADR 0040).
+    pub fn append_admitted_batch(&mut self, records: Vec<ObjectRecord>) -> Result<(), String> {
+        self.applying_admitted = true;
+        let result = self.append_batch(records);
+        self.applying_admitted = false;
+        result
+    }
+
     /// Run `append` with group commit held and commit its writes as one unit,
     /// with the abort and poison rules of [`Self::append_batch`].
     fn atomically(
@@ -1344,10 +1554,153 @@ impl Store {
                 }
             });
         }
+        self.release_applied_action_claims();
+        self.release_applied_pending();
         self.sidecar_commits_since_persist = self.sidecar_commits_since_persist.saturating_add(1);
         self.maybe_persist_projection(false).map_err(|error| {
             format!("committed to the log; projection sidecar not persisted: {error}")
         })
+    }
+
+    fn release_applied_action_claims(&mut self) {
+        self.pending_action_claims
+            .retain(|key, _| !self.action_commits.contains_key(key));
+    }
+
+    fn remember_pending_record(
+        &mut self,
+        record: &ObjectRecord,
+        source_props: HashMap<String, String>,
+    ) {
+        self.pending_admitted.push(record.clone());
+        self.pending_source_props.push(source_props);
+        self.pending_owners.push(self.admit_owner);
+    }
+
+    fn note_applied_pending(&mut self, record: &ObjectRecord) {
+        if record.action_id.is_none() {
+            return;
+        }
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.namespace != record.namespace
+                || pending.kind != record.kind
+                || pending.key != record.key
+            {
+                continue;
+            }
+            if Self::pending_write_fulfills(pending, record) {
+                self.applied_pending.insert(index);
+                return;
+            }
+        }
+    }
+
+    /// Remember that `owner` was dropped without [`Self::release_admitted`].
+    /// A later flush or discard of the same body can then drop leftover fences
+    /// from that stream without touching a live sibling (ADR 0040).
+    pub fn abandon_stream_owner(owner: u64) {
+        if owner != 0 {
+            abandoned_stream_owners().insert(owner);
+        }
+    }
+
+    fn owner_is_abandoned(owner: u64) -> bool {
+        owner != 0 && abandoned_stream_owners().contains(&owner)
+    }
+
+    /// Drop Store fences for records a stream is about to forget. Releases
+    /// this `owner`'s matching entries and leftover entries from dropped
+    /// streams of the same body. A live sibling of the same body keeps its
+    /// fence (ADR 0040).
+    pub fn release_admitted(&mut self, records: &[ObjectRecord], owner: u64) {
+        for record in records {
+            let indexes: Vec<usize> = self
+                .pending_admitted
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    !self.applied_pending.contains(index)
+                        && self.pending_release_match(*index, record)
+                        && self
+                            .pending_owners
+                            .get(*index)
+                            .is_some_and(|pending_owner| {
+                                *pending_owner == owner || Self::owner_is_abandoned(*pending_owner)
+                            })
+                })
+                .map(|(index, _)| index)
+                .collect();
+            self.applied_pending.extend(indexes);
+            if let Some(id) = record.action_id.as_deref() {
+                let key = (record.namespace.clone(), id.to_string());
+                if !self.action_commits.contains_key(&key) {
+                    let still_claimed =
+                        self.pending_admitted
+                            .iter()
+                            .enumerate()
+                            .any(|(i, pending)| {
+                                !self.applied_pending.contains(&i)
+                                    && pending.namespace == record.namespace
+                                    && pending.action_id.as_deref() == Some(id)
+                            });
+                    if !still_claimed {
+                        self.pending_action_claims.remove(&key);
+                    }
+                }
+            }
+        }
+        self.release_applied_pending();
+    }
+
+    fn pending_write_fulfills(pending: &ObjectRecord, record: &ObjectRecord) -> bool {
+        Self::same_admission(pending, record)
+            && match (&pending.action_id, &record.action_id) {
+                (Some(_), Some(_)) => true,
+                (None, None) => pending.props == record.props,
+                _ => false,
+            }
+    }
+
+    fn same_admission(pending: &ObjectRecord, record: &ObjectRecord) -> bool {
+        pending.namespace == record.namespace
+            && pending.kind == record.kind
+            && pending.key == record.key
+            && pending.hidden == record.hidden
+            && pending.action_id == record.action_id
+    }
+
+    fn pending_release_match(&self, index: usize, record: &ObjectRecord) -> bool {
+        let Some(pending) = self.pending_admitted.get(index) else {
+            return false;
+        };
+        if !Self::same_admission(pending, record) {
+            return false;
+        }
+        if record.action_id.is_some() {
+            return true;
+        }
+        pending.props == record.props
+            || self
+                .pending_source_props
+                .get(index)
+                .is_some_and(|source| source == &record.props)
+    }
+
+    fn release_applied_pending(&mut self) {
+        let mut indexes: Vec<usize> = self.applied_pending.drain().collect();
+        indexes.sort_unstable();
+        for index in indexes.into_iter().rev() {
+            if index < self.pending_admitted.len() {
+                self.pending_admitted.remove(index);
+                if index < self.pending_source_props.len() {
+                    self.pending_source_props.remove(index);
+                }
+                if index < self.pending_owners.len() {
+                    self.pending_owners.remove(index);
+                }
+            }
+        }
     }
 
     /// Drop every uncommitted record and rebuild the live projection from the
@@ -1363,6 +1716,7 @@ impl Store {
         self.has_checkpoint = false;
         self.delta_bytes = 0;
         self.action_commits.clear();
+        self.applied_pending.clear();
         self.schema_history.clear();
         self.schema_history_from_checkpoint = false;
         self.action_commits_from_log = true;
@@ -1418,7 +1772,14 @@ impl Store {
             false,
             &action.props,
         )? {
-            ActionClaim::Replay => return Ok(()),
+            ActionClaim::Replay => {
+                let claim_key = (action.namespace.clone(), action.id.clone());
+                let fulfill_reservation = self.pending_action_claims.contains_key(&claim_key)
+                    && !self.action_commits.contains_key(&claim_key);
+                if !fulfill_reservation {
+                    return Ok(());
+                }
+            }
             ActionClaim::New => {}
         }
         self.require_expected_gen(&action.namespace, &action.kind, &action.key, expected_gen)?;
@@ -1466,7 +1827,10 @@ impl Store {
             },
             true,
             ActionIdWrite::Copy,
-        )?;
+            true,
+            false,
+        )
+        .map(|_| ())?;
         self.commit()
     }
 
@@ -1529,8 +1893,15 @@ impl Store {
             }
         }
         self.ensure_action_commits()?;
-        if let Some(committed) = self.action_commits.get(&(namespace.clone(), id.clone())) {
+        let claim_key = (namespace.clone(), id.clone());
+        if let Some(committed) = self.action_commits.get(&claim_key) {
             return self.replay_change_set(committed, &edits, &id);
+        }
+        if let Some(reserved) = self.pending_action_claims.get(&claim_key) {
+            return Err(format!(
+                "action id {id} already committed on {}/{}/{}",
+                reserved.namespace, reserved.kind, reserved.key
+            ));
         }
         for edit in &edits {
             self.require_expected_gen(&namespace, edit.kind(), edit.key(), edit.expected_gen())?;
@@ -1573,7 +1944,9 @@ impl Store {
                         ..store.load(&namespace, &kind, &key, &PropertyAcl::allow_all())?
                     },
                 };
-                store.write_uncommitted(record, false, ActionIdWrite::Copy)?;
+                store
+                    .write_uncommitted(record, false, ActionIdWrite::Copy, true, false)
+                    .map(|_| ())?;
             }
             Ok(())
         })
@@ -1643,7 +2016,7 @@ impl Store {
     }
 
     /// `(committed_pages, written_pages, current page used)`. Cursors bind
-    /// this so an uncommitted stream append invalidates the snapshot.
+    /// this so a write that reaches the log invalidates the snapshot.
     pub fn snapshot_stamp(&self) -> (u32, u32, u32) {
         (
             self.writer.committed_pages(),
@@ -1799,6 +2172,557 @@ impl Store {
         rows.retain(|row| row.effective_version() != desc.effective_version());
         rows.push(desc);
         rows.sort_by_key(|row| row.effective_version());
+    }
+
+    /// Apply `steps` in order to live overlays and instances. Stream ingest uses
+    /// this so a buffered schema chain is checked against committed rows the
+    /// way flush will apply them (ADR 0040). Overlay keys and instance keys
+    /// already replaced in the buffer are skipped so superseded live bodies
+    /// are not migrated.
+    pub fn preflight_schema_chain(
+        &self,
+        namespace: &str,
+        steps: &[SchemaDescriptor],
+        skip_overlay_keys: &[String],
+        skip_instance_keys: &[String],
+    ) -> Result<(), String> {
+        if steps.is_empty() {
+            return Ok(());
+        }
+        let kind = &steps[0].kind;
+        let prefix = format!("{kind}/");
+        let ns_id = self.ns_ix.get(namespace).copied();
+        let mut overlay_errors = Vec::new();
+        let overlay_ids: Vec<_> = self
+            .identity
+            .keys()
+            .copied()
+            .filter(|&id| {
+                Some(id.0) == ns_id
+                    && self.live_kind(id) == Some(OVERLAY_KIND)
+                    && self
+                        .live_key(id)
+                        .is_some_and(|key| key.starts_with(&prefix))
+            })
+            .collect();
+        for id in overlay_ids {
+            let Some(overlay_key) = self.live_key(id).map(str::to_string) else {
+                continue;
+            };
+            if skip_overlay_keys.iter().any(|key| key == &overlay_key) {
+                continue;
+            }
+            let Ok(live) = self.load_stored(
+                namespace,
+                OVERLAY_KIND,
+                &overlay_key,
+                &PropertyAcl::allow_all(),
+            ) else {
+                continue;
+            };
+            if live.hidden {
+                continue;
+            }
+            let mut patch = OverlayPatch::from_record(&live)?;
+            let mut encoded = live;
+            let mut failed = false;
+            for step in steps {
+                if step.kind != *kind || step.migration.is_empty() {
+                    continue;
+                }
+                if let Err(err) = Self::preflight_overlay_step(&mut patch, step) {
+                    overlay_errors.push(err);
+                    failed = true;
+                    break;
+                }
+                encoded = match OverlayPatch::remapped_audit(
+                    &encoded,
+                    &step.migration.rename,
+                    &step.migration.drop,
+                ) {
+                    Ok(Some(audit)) => match patch.to_audit_record(&audit) {
+                        Ok(record) => record,
+                        Err(err) => {
+                            overlay_errors.push(err);
+                            failed = true;
+                            break;
+                        }
+                    },
+                    Ok(None) => match patch.to_record() {
+                        Ok(record) => record,
+                        Err(err) => {
+                            overlay_errors.push(err);
+                            failed = true;
+                            break;
+                        }
+                    },
+                    Err(err) => {
+                        overlay_errors.push(err);
+                        failed = true;
+                        break;
+                    }
+                };
+            }
+            if !failed {
+                if let Err(err) = self.check_record_fits(&encoded) {
+                    overlay_errors.push(err);
+                }
+            }
+        }
+        if !overlay_errors.is_empty() {
+            return Err(format!(
+                "cannot migrate overlays on {kind}: {}",
+                overlay_errors.join("; ")
+            ));
+        }
+        let mut instance_errors = Vec::new();
+        let kind_id = self
+            .joins
+            .get(namespace)
+            .and_then(|joins| joins.intern_existing(kind));
+        let instance_ids: Vec<_> = self
+            .identity
+            .keys()
+            .copied()
+            .filter(|&id| Some(id.0) == ns_id && Some(id.1) == kind_id)
+            .collect();
+        for id in instance_ids {
+            let Some(meta) = self.identity.get(&id) else {
+                continue;
+            };
+            if skip_instance_keys
+                .iter()
+                .any(|key| self.live_key(id) == Some(key.as_str()))
+            {
+                continue;
+            }
+            let ident = self
+                .live_strings(id)
+                .map(|(ns, kind, key)| format!("{ns}/{kind}/{key}"))
+                .unwrap_or_else(|_| format!("{}/{}/{}", id.0, id.1, id.2));
+            let mut props = if meta.hidden {
+                self.hidden_props
+                    .get(&id)
+                    .and_then(|owned| {
+                        self.joins
+                            .get(namespace)
+                            .map(|joins| Self::materialize_owned(joins, owned))
+                    })
+                    .unwrap_or_default()
+            } else {
+                self.joins
+                    .get(namespace)
+                    .map(|joins| {
+                        let kind = joins.intern_get(id.1).unwrap_or("");
+                        let key = joins.intern_get(id.2).unwrap_or("");
+                        joins.row_props(kind, key)
+                    })
+                    .unwrap_or_default()
+            };
+            for step in steps {
+                if step.kind != *kind {
+                    continue;
+                }
+                if step.migration.cast.is_empty() && step.migration.rename.is_empty() {
+                    continue;
+                }
+                if let Err(err) = step.migration.apply(&mut props, false) {
+                    instance_errors.push(format!("{ident} {err}"));
+                    break;
+                }
+            }
+        }
+        if !instance_errors.is_empty() {
+            return Err(format!(
+                "cannot migrate instances on {kind}: {}",
+                instance_errors.join("; ")
+            ));
+        }
+        Ok(())
+    }
+
+    fn preflight_overlay_step(
+        patch: &mut OverlayPatch,
+        next: &SchemaDescriptor,
+    ) -> Result<(), String> {
+        let ident = format!("{}/{}/{}", patch.namespace, next.kind, patch.key);
+        for name in patch.props.keys().chain(patch.cleared.iter()) {
+            if next.migration.drop.iter().any(|dropped| dropped == name) {
+                return Err(format!("overlay {ident} cannot carry dropped {name}"));
+            }
+        }
+        next.migration
+            .apply(&mut patch.props, false)
+            .map_err(|err| format!("overlay {ident} {err}"))?;
+        let mut cleared = Vec::new();
+        for name in &patch.cleared {
+            let renamed = next
+                .migration
+                .rename
+                .iter()
+                .find(|(old, _)| old == name)
+                .map(|(_, new)| new.clone())
+                .unwrap_or_else(|| name.clone());
+            if !cleared.contains(&renamed) {
+                cleared.push(renamed);
+            }
+        }
+        patch.cleared = cleared;
+        for name in patch.props.keys().chain(patch.cleared.iter()) {
+            if !next.properties.iter().any(|property| property == name) {
+                return Err(format!("overlay {ident} cannot carry {name}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn refuse_conflicting_pending_schema(
+        &self,
+        record: &ObjectRecord,
+        next: &SchemaDescriptor,
+        apply: bool,
+    ) -> Result<(), String> {
+        if self.applying_admitted {
+            return Ok(());
+        }
+        let mut last = None;
+        let mut identical = false;
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.hidden
+                || pending.namespace != record.namespace
+                || pending.kind != SCHEMA_KIND
+                || pending.key != record.key
+            {
+                continue;
+            }
+            identical = identical || Self::pending_schema_eq(pending, next);
+            last = Some(pending);
+        }
+        let Some(last) = last else {
+            return Ok(());
+        };
+        if apply {
+            return Err(format!(
+                "schema {} already admitted for {}/{}",
+                record.key, record.namespace, record.key
+            ));
+        }
+        if identical {
+            return Ok(());
+        }
+        let previous = SchemaDescriptor::from_record(last)?;
+        if previous.check_replacement(next).is_ok() {
+            return Ok(());
+        }
+        Err(format!(
+            "schema {} already admitted for {}/{}",
+            record.key, record.namespace, record.key
+        ))
+    }
+
+    fn last_pending_schema(
+        &self,
+        namespace: &str,
+        kind: &str,
+    ) -> Result<Option<SchemaDescriptor>, String> {
+        let mut last = None;
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.namespace != namespace
+                || pending.kind != SCHEMA_KIND
+                || pending.key != kind
+            {
+                continue;
+            }
+            if pending.hidden {
+                last = None;
+                continue;
+            }
+            last = Some(SchemaDescriptor::from_record(pending)?);
+        }
+        Ok(last)
+    }
+
+    fn admitted_schema_eq(&self, namespace: &str, next: &SchemaDescriptor) -> bool {
+        self.pending_admitted
+            .iter()
+            .enumerate()
+            .any(|(index, pending)| {
+                !self.applied_pending.contains(&index)
+                    && pending.namespace == namespace
+                    && pending.kind == SCHEMA_KIND
+                    && pending.key == next.kind
+                    && !pending.hidden
+                    && Self::pending_schema_eq(pending, next)
+            })
+    }
+
+    fn refuse_overlay_conflict_with_pending(&self, record: &ObjectRecord) -> Result<(), String> {
+        let patch = OverlayPatch::from_record(record)?;
+        let schema = self.schema(&patch.namespace, &patch.kind).ok().flatten();
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.hidden
+                || pending.kind == SCHEMA_KIND
+                || pending.kind == OVERLAY_KIND
+                || pending.kind == SOURCE_KIND
+                || pending.kind == CHANGE_SET_KIND
+                || pending.namespace != patch.namespace
+                || pending.kind != patch.kind
+                || pending.key != patch.key
+            {
+                continue;
+            }
+            let source = self
+                .pending_source_props
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| pending.props.clone());
+            let plan = schema.as_ref().map(SchemaDescriptor::conflict_plan);
+            let (flush_props, audit) = if record.hidden {
+                (source, None)
+            } else {
+                patch.apply_with(source, plan.as_ref())?
+            };
+            if let Some(audit) = audit {
+                self.check_record_fits(&patch.to_audit_record(&audit)?)?;
+            }
+            if pending.action_id.is_some() && flush_props != pending.props {
+                return Err(format!(
+                    "action id {} body conflict",
+                    pending.action_id.as_deref().unwrap_or("")
+                ));
+            }
+            if let Some(schema) = schema.as_ref() {
+                let mut probe = pending.clone();
+                probe.props = flush_props;
+                schema.validate(&probe)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fail closed when an intervening overlay cannot be remapped by a
+    /// schema still only in an ingest buffer (ADR 0040).
+    fn pending_schemas_admit_overlay(&self, record: &ObjectRecord) -> Result<(), String> {
+        if record.hidden {
+            return Ok(());
+        }
+        let mut patch = OverlayPatch::from_record(record)?;
+        let mut encoded = record.clone();
+        let mut saw = false;
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.hidden
+                || pending.namespace != patch.namespace
+                || pending.kind != SCHEMA_KIND
+                || pending.key != patch.kind
+            {
+                continue;
+            }
+            let schema = SchemaDescriptor::from_record(pending)?;
+            if !schema.migration.is_empty() {
+                if let Err(err) = Self::preflight_overlay_step(&mut patch, &schema) {
+                    return Err(format!("cannot migrate overlays on {}: {err}", schema.kind));
+                }
+                encoded = match OverlayPatch::remapped_audit(
+                    &encoded,
+                    &schema.migration.rename,
+                    &schema.migration.drop,
+                )? {
+                    Some(audit) => patch.to_audit_record(&audit)?,
+                    None => patch.to_record()?,
+                };
+            } else {
+                let ident = format!("{}/{}/{}", patch.namespace, schema.kind, patch.key);
+                for name in patch.props.keys().chain(patch.cleared.iter()) {
+                    if !schema.properties.iter().any(|property| property == name) {
+                        return Err(format!(
+                            "cannot migrate overlays on {}: overlay {ident} cannot carry {name}",
+                            schema.kind
+                        ));
+                    }
+                }
+            }
+            saw = true;
+        }
+        if saw {
+            self.check_record_fits(&encoded)?;
+        }
+        Ok(())
+    }
+
+    /// Fail closed when an intervening instance would be invalid under a
+    /// schema still only in an ingest buffer (ADR 0040).
+    fn pending_schemas_admit_instance(&self, record: &ObjectRecord) -> Result<(), String> {
+        let mut props = record.props.clone();
+        let mut last = None;
+        for (index, pending) in self.pending_admitted.iter().enumerate() {
+            if self.applied_pending.contains(&index)
+                || pending.hidden
+                || pending.namespace != record.namespace
+                || pending.kind != SCHEMA_KIND
+                || pending.key != record.kind
+            {
+                continue;
+            }
+            let schema = SchemaDescriptor::from_record(pending)?;
+            if !schema.migration.is_empty() {
+                if let Err(err) = schema.migration.apply(&mut props, false) {
+                    return Err(format!(
+                        "cannot migrate instances on {}: {}/{}/{} {err}",
+                        schema.kind, record.namespace, record.kind, record.key
+                    ));
+                }
+            }
+            last = Some(schema);
+        }
+        if let Some(schema) = last {
+            let mut probe = record.clone();
+            probe.props = props;
+            schema.validate(&probe)?;
+        }
+        Ok(())
+    }
+
+    fn pending_schema_eq(pending: &ObjectRecord, next: &SchemaDescriptor) -> bool {
+        let Ok(mut stored) = SchemaDescriptor::from_record(pending) else {
+            return false;
+        };
+        let mut incoming = next.clone();
+        if incoming.version == 0 {
+            incoming.version = stored.effective_version();
+        }
+        stored.version = stored.effective_version();
+        incoming == stored
+    }
+
+    /// Fail closed when a later schema replacement would rewrite or reject a
+    /// record still only in an ingest buffer (ADR 0040). Live maps are
+    /// remapped by the replacement; buffered bodies are written as admitted.
+    fn pending_records_survive_schema(
+        &self,
+        namespace: &str,
+        next: &SchemaDescriptor,
+    ) -> Result<(), String> {
+        let mut instance_errors = Vec::new();
+        let mut overlay_errors = Vec::new();
+        let overlay_prefix = format!("{}/", next.kind);
+        for (index, record) in self.pending_admitted.iter().enumerate() {
+            if record.namespace != namespace
+                || record.hidden
+                || self.applied_pending.contains(&index)
+                || (self.admit_owner != 0
+                    && self.pending_owners.get(index) == Some(&self.admit_owner))
+            {
+                continue;
+            }
+            if record.kind == next.kind {
+                if !next.migration.is_empty() {
+                    if let Err(err) = Self::pending_body_survives_schema(&record.props, next) {
+                        instance_errors.push(format!(
+                            "{}/{}/{} {err}",
+                            record.namespace, record.kind, record.key
+                        ));
+                    }
+                }
+                if let Err(err) = next.validate(record) {
+                    instance_errors.push(format!(
+                        "{}/{}/{} {err}",
+                        record.namespace, record.kind, record.key
+                    ));
+                }
+            } else if record.kind == OVERLAY_KIND && record.key.starts_with(&overlay_prefix) {
+                match OverlayPatch::from_record(record) {
+                    Ok(patch) => {
+                        if let Err(err) = Self::pending_overlay_survives_schema(&patch, next) {
+                            overlay_errors.push(err);
+                        }
+                    }
+                    Err(err) => overlay_errors.push(err),
+                }
+            }
+        }
+        if !overlay_errors.is_empty() {
+            return Err(format!(
+                "cannot migrate overlays on {}: {}",
+                next.kind,
+                overlay_errors.join("; ")
+            ));
+        }
+        if !instance_errors.is_empty() {
+            return Err(format!(
+                "cannot migrate instances on {}: {}",
+                next.kind,
+                instance_errors.join("; ")
+            ));
+        }
+        Ok(())
+    }
+
+    fn pending_body_survives_schema(
+        props: &HashMap<String, String>,
+        next: &SchemaDescriptor,
+    ) -> Result<(), String> {
+        for name in props.keys() {
+            if next.migration.drop.iter().any(|dropped| dropped == name) {
+                return Err(format!("cannot carry dropped {name}"));
+            }
+        }
+        let mut props = props.clone();
+        let before = props.clone();
+        next.migration.apply(&mut props, false)?;
+        if props != before {
+            return Err("would rewrite a buffered record".into());
+        }
+        Ok(())
+    }
+
+    fn pending_overlay_survives_schema(
+        patch: &OverlayPatch,
+        next: &SchemaDescriptor,
+    ) -> Result<(), String> {
+        let ident = format!("{}/{}/{}", patch.namespace, next.kind, patch.key);
+        for name in patch.props.keys().chain(patch.cleared.iter()) {
+            if next.migration.drop.iter().any(|dropped| dropped == name) {
+                return Err(format!("overlay {ident} cannot carry dropped {name}"));
+            }
+            if !next.properties.iter().any(|property| property == name) {
+                return Err(format!("overlay {ident} cannot carry {name}"));
+            }
+        }
+        if next.migration.is_empty() {
+            return Ok(());
+        }
+        let mut props = patch.props.clone();
+        let before = props.clone();
+        next.migration
+            .apply(&mut props, false)
+            .map_err(|err| format!("overlay {ident} {err}"))?;
+        if props != before {
+            return Err(format!("overlay {ident} would rewrite a buffered overlay"));
+        }
+        let mut cleared = patch.cleared.clone();
+        cleared.sort();
+        let mut renamed = Vec::new();
+        for name in &patch.cleared {
+            let mapped = next
+                .migration
+                .rename
+                .iter()
+                .find(|(old, _)| old == name)
+                .map(|(_, new)| new.clone())
+                .unwrap_or_else(|| name.clone());
+            if !renamed.contains(&mapped) {
+                renamed.push(mapped);
+            }
+        }
+        renamed.sort();
+        if renamed != cleared {
+            return Err(format!("overlay {ident} would rewrite a buffered overlay"));
+        }
+        Ok(())
     }
 
     fn plan_overlay_migrations(

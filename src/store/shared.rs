@@ -197,6 +197,7 @@ impl Store {
                 if id.is_empty()
                     || !self.action_commits_from_log
                     || self.action_commits.contains_key(&claimed)
+                    || self.pending_action_claims.contains_key(&claimed)
                     || !action_ids.insert(claimed)
                 {
                     return None;
@@ -215,7 +216,12 @@ impl Store {
                 if overlay.is_some() {
                     return None;
                 }
-            } else if self.resolve_instance(&mut record, true).ok()?.is_some() {
+            } else if self
+                .resolve_instance(&mut record, true, true)
+                .ok()?
+                .is_some()
+                || self.pending_schemas_admit_instance(&record).is_err()
+            {
                 return None;
             }
             self.assign_gen(&mut record);

@@ -186,7 +186,8 @@ fn serve_while_stops_without_flushing_stream() {
         deny: Vec::new(),
         restriction: None,
     });
-    assert!(live.ok, "{live:?}");
+    assert!(!live.ok, "{live:?}");
+    assert!(live.load.is_none());
     let listener = Host::bind("127.0.0.1:0".parse().unwrap(), None).unwrap();
     let addr = listener.local_addr().unwrap();
     let running = Arc::new(AtomicBool::new(true));

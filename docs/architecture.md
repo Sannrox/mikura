@@ -224,8 +224,9 @@ hop/sum. `LocalCompute` answers from these maps, not from a hot object map.
 `mikura-ingest::BatchIngest::run` hands the batch to `Store::append_batch`,
 which group-commits once. A batch is all or nothing: any error drops every
 record of it and rebuilds the live projection from the committed log
-([ADR 0026](decisions/0026-atomic-ingest-batch.md)). Stream push keeps
-`Store::append_uncommitted` and its own per-push outcome. The `mikura` crate has no ingest
+([ADR 0026](decisions/0026-atomic-ingest-batch.md)). Stream push admits a
+record without updating live maps; flush appends through
+`Store::append_batch`. The `mikura` crate has no ingest
 types. Host `ingest_batch`, stream flush, `apply_action`, `apply_change_set`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Changelog source-sync offsets stay with the
@@ -257,10 +258,14 @@ of the last visible payload. Identical snapshots emit nothing.
 input to `MergeIngest`. The list is not authority.
 
 `mikura-ingest::StreamIngest` takes a bound on outstanding uncommitted
-records. `push` calls `Store::append_uncommitted` (live maps update
-immediately). A push that would exceed the bound returns an error and does
-not append. `flush` calls `Store::commit`. A crash before flush drops the
-uncommitted tail; rebuild reads only committed pages.
+records. `push` admits the record and holds it in the ingest buffer. Live
+maps and the log do not change. A later `load` / `evaluate` on this process
+sees the last commit. A push that would exceed the bound returns an error
+and does not accept the record. A later write on the same store that would
+make the buffer unflushable (Action-id remap, schema or overlay change that
+leaves buffered rows invalid, encrypted tenant ineligible to write) fails
+closed. `flush` appends the buffer and group-commits. A crash before flush
+drops the buffer; rebuild reads only committed pages.
 
 `mikura-ingest::StreamApply` applies a named source stream ordered per
 identity. Each change carries a monotone source offset. Duplicate and older
@@ -335,8 +340,8 @@ brokers stay out.
    ([ADR 0039](decisions/0039-multi-key-sort.md)). `page_size`
    slices that order; the opaque cursor binds the deny list, query (including
    sort and page size), and the live writer stamp (`committed_pages`, written
-   pages, current page used). A later write, including an uncommitted stream
-   append, a different restriction, or a different query fails closed. Reopen
+   pages, current page used). A later write that reaches the log, a different
+   restriction, or a different query fails closed. Reopen
    on the same committed head with an empty uncommitted page keeps a cursor
    valid. A paged single-key sort does not rank every result: when the
    sort property has no more distinct values than there are results, it

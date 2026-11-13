@@ -56,7 +56,7 @@ These are fail-closed process drills, not SLOs. Evidence:
 | Restriction views | `process_restriction_hides_identity_and_fails_closed_on_unknown_keys` | pass |
 | Deny-closed evaluate | `process_acl_deny_returns_error_not_guess` | pass |
 | Backup/restore, dual-read | `process_backup_restore_product_loop` | pass |
-| Shutdown, uncommitted tail | `process_product_loop_survives_shutdown_and_reopen`, `process_uncommitted_stream_push_invisible_after_reopen` | pass |
+| Shutdown, uncommitted tail | `process_product_loop_survives_shutdown_and_reopen`, `process_uncommitted_stream_push_invisible_until_commit` | pass |
 | Concurrent reads | `process_concurrent_read_completes_while_other_line_assembles` | pass |
 | Health | `process_health_reports_ready_after_ingest` | pass |
 | Source resume | `process_source_resume_replays_without_an_offset_file` | pass |

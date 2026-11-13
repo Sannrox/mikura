@@ -7,7 +7,7 @@
 - Amends: none. [#123](https://github.com/Sannrox/mikura/issues/123) stands: source offsets stay with the clerk; no public commit-position waiter.
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR 0031](0031-ordered-stream-apply.md) (last committed offset of a named `StreamApply` source is a `mikura.source` object on the log; still no ledger file or waiter)
+- Amended by: [ADR 0031](0031-ordered-stream-apply.md) (last committed offset of a named `StreamApply` source is a `mikura.source` object on the log; still no ledger file or waiter), [ADR 0040](0040-concurrent-host-readers.md) (uncommitted stream pushes are invisible until flush)
 
 ## Context
 
@@ -61,7 +61,7 @@ and a public waiter.
 | --- | --- | --- |
 | `ChangelogIngest` of snapshots A→B | Clerk advances to B. Identical A→B emits nothing. | Re-run A→B. Empty or last-wins; do not invent an offset in the log. |
 | `BatchIngest` of a full snapshot | Last-wins by `(kind, key)` in the batch, then overlay merge. Re-ingest bumps `gen` even when props match. Prefer changelog for resume. | Same. |
-| `StreamIngest::push` | Live maps update; not durable until `flush`. | Rebuild omits the uncommitted tail. Clerk re-pushes. Bound is backpressure, not a drop. |
+| `StreamIngest::push` | Admitted into the ingest buffer; live maps and the log stay on the last commit. | Crash or stdin-close drops the buffer. Clerk re-pushes. Bound is backpressure, not a drop. |
 | `StreamIngest::flush` | Group-commit. Rebuild sees the batch. | If the RPC failed after log commit, reopen recovers from the log. Sidecar persist failure is not loss. |
 | Overlay / `apply_action` | Action-id replay (ADR 0011 / 0019). | Same id + same body is a no-op. |
 | Source delete in changelog | Hide of last visible payload. Overlay stays inert with the instance. | Recreate does not revive a prior overlay. |
