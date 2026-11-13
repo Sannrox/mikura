@@ -69,6 +69,19 @@ impl Store {
         self.publish_manifest_checkpoint()
     }
 
+    /// Collect unreferenced objects under this writer's authority (ADR 0047 §11).
+    ///
+    /// Maintenance is a write: the successor snapshot is the owner record and
+    /// is checked before every delete. A second collector loses the swap and
+    /// refuses. A segment is deleted only when the current snapshot does not
+    /// name it and the writer that staged it has been fenced. Superblock logs
+    /// have no object namespace; this is a no-op there.
+    pub fn collect(&mut self) -> Result<(), String> {
+        self.require_committed()?;
+        self.ensure_writable()?;
+        self.writer.collect_unreferenced()
+    }
+
     /// Write live generations (including hidden rows) to `dst` and a log
     /// checkpoint that keeps the Action-id catalog. The source log is not
     /// modified. Default open keeps full history; this is the opt-in compact

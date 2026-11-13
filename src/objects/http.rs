@@ -165,18 +165,32 @@ impl HttpStore {
     pub(crate) fn collect(
         &self,
         live: &std::collections::BTreeSet<String>,
+        fenced_before: u64,
+        still_owner: &dyn Fn() -> Result<bool, String>,
     ) -> Result<(), StorageError> {
         self.collect.fetch_add(1, Ordering::Relaxed);
-        for name in self.list()? {
-            if live.contains(&name) {
+        let mut names = self.list()?;
+        names.sort_by(|a, b| super::collect_order(a, b));
+        for name in names {
+            if !super::collectable(&name, live, fenced_before) {
                 continue;
             }
-            let _ = self.remove(&name);
+            match still_owner() {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(StorageError::unavailable(format!(
+                        "{}: lost maintenance ownership",
+                        crate::LOG_FENCED
+                    )));
+                }
+                Err(err) => return Err(StorageError::unavailable(err)),
+            }
+            self.remove(&name)?;
         }
         Ok(())
     }
 
-    fn list(&self) -> Result<Vec<String>, StorageError> {
+    pub(crate) fn list(&self) -> Result<Vec<String>, StorageError> {
         let bytes = self.call("GET", "/?list=1", &[], b"")?;
         let text = String::from_utf8(bytes)
             .map_err(|_| StorageError::unavailable("list: object names are not utf-8"))?;

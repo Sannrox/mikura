@@ -401,9 +401,10 @@ impl LogWriter {
         let objects =
             crate::objects::ObjectStore::open(&objects_dir(path), sync.durable(), &backend)?;
         let mut manifest = load_current_manifest(&objects, encrypted)?;
-        // One writer (ADR 0047). The stub flock is local and does not cover
+        // One writer (ADR 0047). Collection is a write: the swap fences a
+        // displaced collector. The stub flock is local and does not cover
         // an HTTP namespace.
-        objects.collect(&manifest.live_keys())?;
+        let collect_fsyncs = collect_unreferenced_objects(&objects, &mut manifest, false)?;
         let probe = objects.probe()?;
         let mut writer = Self::blank(file, sync, manifest.committed_pages);
         writer.objects = Some(objects);
@@ -415,7 +416,7 @@ impl LogWriter {
         writer.prefix_key = manifest.prefix_key;
         writer.checkpoint_pages = manifest.checkpoint_pages;
         writer.encrypted_log = encrypted;
-        writer.fsync_count += probe;
+        writer.fsync_count += probe + collect_fsyncs;
         if let Some(keys) = keys {
             writer.install_keys(Arc::new(keys))?;
             if encrypted {
@@ -1051,6 +1052,28 @@ impl LogWriter {
         Ok(paged)
     }
 
+    /// Collect unreferenced objects under this writer's authority (ADR 0047 §11).
+    ///
+    /// The successor snapshot is the owner record. A process that loses the
+    /// swap refuses. Staged objects of a still-live writer stay until that
+    /// writer is fenced.
+    pub(crate) fn collect_unreferenced(&mut self) -> Result<(), String> {
+        self.ensure_usable()?;
+        if self.has_pending() {
+            return Err("uncommitted pages; commit first".into());
+        }
+        let Some(objects) = self.objects.as_ref() else {
+            return Ok(());
+        };
+        let mut snapshot = self.snapshot_manifest();
+        let collect = collect_unreferenced_objects(objects, &mut snapshot, true);
+        // Adopt the claimed version even when a later delete fails, so the
+        // next commit does not CAS against our own successor and self-fence.
+        self.manifest_version = snapshot.version;
+        self.fsync_count += collect?;
+        Ok(())
+    }
+
     /// Move the writer to a commit [`Self::write_staged`] made durable.
     pub(crate) fn adopt_staged(&mut self, staged: &StagedCommit) {
         self.written = staged.committed;
@@ -1235,7 +1258,9 @@ impl LogWriter {
             projection_key: self.projection_key.clone(),
             prefix_key: self.prefix_key.clone(),
             checkpoint_pages: self.checkpoint_pages,
-            prefix_segments: Vec::new(),
+            // Not encoded (they live in `prefix_key`); kept so live_keys
+            // protects frozen coverage during collect.
+            prefix_segments: self.prefix_segments.clone(),
         }
     }
 
@@ -1268,7 +1293,11 @@ impl LogWriter {
         let mut fsyncs = 0;
         for _ in 0..8 {
             if prefix_key.is_empty() {
-                let key = crate::objects::unique_object_key("prefix", checkpoint_pages);
+                let key = crate::objects::unique_object_key(
+                    "prefix",
+                    self.manifest_version,
+                    checkpoint_pages,
+                );
                 match store.put(&key, &prefix_bytes) {
                     Ok(n) => {
                         fsyncs += n;
@@ -1279,7 +1308,11 @@ impl LogWriter {
                 }
             }
             if checkpoint_key.is_empty() {
-                let key = crate::objects::unique_object_key("ckpt", checkpoint_pages);
+                let key = crate::objects::unique_object_key(
+                    "ckpt",
+                    self.manifest_version,
+                    checkpoint_pages,
+                );
                 match store.put(&key, checkpoint) {
                     Ok(n) => {
                         fsyncs += n;
@@ -1349,7 +1382,7 @@ impl LogWriter {
         bytes: &[u8],
     ) -> Result<(crate::objects::Segment, u64), String> {
         for _ in 0..8 {
-            let key = crate::objects::unique_object_key("seg", first_page);
+            let key = crate::objects::unique_object_key("seg", self.manifest_version, first_page);
             match store.put(&key, bytes) {
                 Ok(fsyncs) => {
                     return Ok((
@@ -1800,6 +1833,42 @@ pub(crate) fn manifest_commit_point(path: &Path) -> Result<Option<u32>, String> 
     Ok(Some(
         load_current_manifest(&store, encrypted)?.committed_pages,
     ))
+}
+
+/// Swap a successor snapshot (the maintenance owner), then delete objects
+/// the new snapshot does not name whose stager is fenced. `required` fails
+/// when the swap is refused; open-for-write still collects already-fenced
+/// leftovers and leaves the log open.
+///
+/// The successor body matches the current snapshot. Exclusive create (file)
+/// and 412 (HTTP) fence a second collector before any byte compare. A lost
+/// swap response that reads back identical bytes is the same owner and the
+/// same delete set.
+fn collect_unreferenced_objects(
+    objects: &crate::objects::ObjectStore,
+    manifest: &mut crate::objects::Manifest,
+    required: bool,
+) -> Result<u64, String> {
+    let encoded = crate::objects::encode_manifest(manifest)?;
+    let (version, fsyncs) = match objects.cas(manifest.version, &encoded) {
+        Ok(claimed) => claimed,
+        Err(err) if !required && err.contains(crate::LOG_FENCED) => {
+            // Not the owner. Do not delete the winner's successor snapshot.
+            return Ok(0);
+        }
+        Err(err) => return Err(err),
+    };
+    manifest.version = version;
+    let live = manifest.live_keys();
+    let claimed = version;
+    let still_owner = || crate::objects::owns_manifest_version(objects, claimed);
+    if required {
+        objects.collect(&live, version, &still_owner)?;
+    } else {
+        // Open must succeed if a collector was killed mid-delete; rerun finishes.
+        let _ = objects.collect(&live, version, &still_owner);
+    }
+    Ok(fsyncs)
 }
 
 fn load_current_manifest(

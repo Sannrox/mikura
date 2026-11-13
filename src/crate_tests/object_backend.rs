@@ -3,7 +3,7 @@
 use super::super::*;
 use super::helpers::*;
 use crate::crypto::{LogKeys, MemoryKeyProvider, RuntimeProfile, STORE_KEY_TENANT};
-use crate::log::{LogWriter, SyncPolicy};
+use crate::log::{objects_dir, LogWriter, SyncPolicy};
 use crate::{
     backup::{backup_log, restore_log},
     tenant_namespace, KeyPurpose, LocalObjectServer, ObjectBackend, TenantId, UnwrapGrant,
@@ -163,6 +163,38 @@ fn http_probe_refuses_a_store_that_accepts_both_writes() {
         .expect("weak store must fail the probe");
     assert!(err.contains("conditional write probe failed"), "{err}");
     assert!(err.contains("both competing puts succeeded"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn http_collect_drops_only_fenced_unreferenced_objects() {
+    let server = LocalObjectServer::start().unwrap();
+    let (dir, log) = unique_log("collect");
+    let mut store = Store::create_with(&log, backend(&server)).unwrap();
+    store.append(item("a", "1")).unwrap();
+    store.set_crash_before_swap(true);
+    let _ = store.append(item("b", "2"));
+    store.crash();
+    let mut store = Store::open(&log).unwrap();
+    store.collect().unwrap();
+    assert!(store
+        .load(NS, "Item", "a", &PropertyAcl::allow_all())
+        .is_ok());
+    assert!(store
+        .load(NS, "Item", "b", &PropertyAcl::allow_all())
+        .is_err());
+    let objects =
+        crate::objects::ObjectStore::open(&objects_dir(&log), false, &backend(&server)).unwrap();
+    let (version, bytes) = objects.current().unwrap().expect("manifest");
+    let mut manifest = crate::objects::decode_manifest(&bytes).unwrap();
+    manifest.version = version;
+    let live = manifest.live_keys();
+    for name in objects.list().unwrap() {
+        if name.starts_with('.') {
+            continue;
+        }
+        assert!(live.contains(&name), "leftover {name}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
