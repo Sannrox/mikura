@@ -6,8 +6,9 @@ use std::path::Path;
 use crate::codec::{read_str, read_u32, read_u64, take, write_str};
 use crate::crypto::{matches_tenant, Dek};
 use crate::joins::{
-    append_checksummed, check_join_crc, crc32, read_checksummed, write_checksummed, Checkpoint,
-    JoinMaps, LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
+    append_checksummed, check_join_crc, checksummed_body, crc32, read_checksummed,
+    write_checksummed, Checkpoint, JoinMaps, LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC,
+    JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
 };
 use crate::log::{read_records_after_with_keys, LogWriter};
 use crate::JOIN_FORMAT_V5;
@@ -515,15 +516,37 @@ impl Store {
         if writer.keys().is_some() && !crate::crypto::is_sealed(&bytes) {
             return Err("encrypted log requires a sealed snapshot".into());
         }
-        if crate::crypto::is_sealed(&bytes) {
+        if crate::paged::is_paged_magic(&bytes) {
+            return crate::paged::decode_path(path);
+        }
+        if crate::crypto::is_sealed(&bytes) || writer.keys().is_some() {
+            return Self::decode_projection_bytes(&bytes, writer);
+        }
+        let body = read_checksummed(path)?;
+        let mut loaded = Checkpoint {
+            pages: 0,
+            joins: HashMap::new(),
+            ns: Vec::new(),
+            identity: HashMap::new(),
+            hidden_props: HashMap::new(),
+        };
+        Self::merge_join_body(&mut loaded, &body)?;
+        Ok(loaded)
+    }
+
+    fn decode_projection_bytes(bytes: &[u8], writer: &LogWriter) -> Result<Checkpoint, String> {
+        if writer.keys().is_some() && !crate::crypto::is_sealed(bytes) {
+            return Err("encrypted log requires a sealed snapshot".into());
+        }
+        if crate::crypto::is_sealed(bytes) {
             if let Some(dek) = writer.store_dek() {
-                if let Ok((_, inner)) = crate::crypto::open_blob(dek, &bytes) {
+                if let Ok((_, inner)) = crate::crypto::open_blob(dek, bytes) {
                     if crate::paged::is_paged_magic(&inner) {
                         return Self::checkpoint_from_paged_bytes(&inner);
                     }
                 }
             }
-            let (pages, slices) = Self::open_partitioned(writer, &bytes)?;
+            let (pages, slices) = Self::open_partitioned(writer, bytes)?;
             let mut loaded = Checkpoint {
                 pages,
                 joins: HashMap::new(),
@@ -536,10 +559,10 @@ impl Store {
             }
             return Ok(loaded);
         }
-        if crate::paged::is_paged_magic(&bytes) {
-            return crate::paged::decode_path(path);
+        if crate::paged::is_paged_magic(bytes) {
+            return Self::checkpoint_from_paged_bytes(bytes);
         }
-        let body = read_checksummed(path)?;
+        let body = checksummed_body(bytes)?;
         let mut loaded = Checkpoint {
             pages: 0,
             joins: HashMap::new(),
@@ -547,7 +570,7 @@ impl Store {
             identity: HashMap::new(),
             hidden_props: HashMap::new(),
         };
-        Self::merge_join_body(&mut loaded, &body)?;
+        Self::merge_join_body(&mut loaded, body)?;
         Ok(loaded)
     }
 
@@ -718,10 +741,72 @@ impl Store {
         if self.adopt_log_checkpoint(pages)? {
             return Ok(());
         }
+        if self.adopt_derived_objects(pages)? {
+            return Ok(());
+        }
         self.replay_from_log()?;
         self.restore_action_catalog(pages)?;
         self.has_checkpoint = false;
         self.persist_projection()
+    }
+
+    /// Snapshot-named checkpoint and projection objects (ADR 0047 §9).
+    /// Missing, corrupt, or version-mismatched derived bytes are skipped.
+    fn adopt_derived_objects(&mut self, pages: u32) -> Result<bool, String> {
+        let projection = self
+            .load_named_projection()?
+            .filter(|loaded| loaded.pages <= pages);
+        let checkpoint = self
+            .load_named_checkpoint()?
+            .filter(|(loaded, _, _, _)| loaded.pages <= pages);
+        let from = if let Some(loaded) = projection {
+            let from = loaded.pages;
+            self.adopt_checkpoint(loaded)?;
+            from
+        } else if let Some((loaded, actions, history, _)) = checkpoint {
+            let from = loaded.pages;
+            self.adopt_checkpoint(loaded)?;
+            self.action_commits = actions;
+            if let Some(history) = history {
+                self.schema_history = history;
+                self.schema_history_from_checkpoint = true;
+            }
+            self.action_commits_from_log = true;
+            from
+        } else {
+            return Ok(false);
+        };
+        self.restore_action_catalog(from)?;
+        if from < pages {
+            self.replay_tail(from)?;
+            self.has_checkpoint = false;
+            self.persist_projection()?;
+        }
+        Ok(true)
+    }
+
+    fn load_named_projection(&self) -> Result<Option<Checkpoint>, String> {
+        let key = self.writer.projection_object_key();
+        if key.is_empty() || !self.writer.has_object_store() {
+            return Ok(None);
+        }
+        let bytes = match self.writer.get_object(key) {
+            Ok(bytes) => bytes,
+            Err(error) if crate::objects::object_missing(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match Self::decode_projection_bytes(&bytes, &self.writer) {
+            Ok(loaded)
+                if crate::objects::derived_covers(
+                    key,
+                    self.writer.snapshot_version(),
+                    loaded.pages,
+                ) =>
+            {
+                Ok(Some(loaded))
+            }
+            Ok(_) | Err(_) => Ok(None),
+        }
     }
 
     pub(super) fn adopt_checkpoint(&mut self, loaded: Checkpoint) -> Result<(), String> {

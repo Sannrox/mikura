@@ -372,6 +372,24 @@ pub(crate) fn unique_object_key(kind: &str, writer_version: u64, stamp: u32) -> 
     format!("{kind}.{stamp}.w{writer_version}.{nanos:x}-{seq:x}")
 }
 
+/// Page stamp encoded in a staged object key (`{kind}.{stamp}.w{version}…`).
+pub(crate) fn staged_stamp(key: &str) -> Option<u32> {
+    let rest = key.split_once('.')?.1;
+    let stamp = rest.split_once('.')?.0;
+    stamp.parse().ok()
+}
+
+/// True when a derived object was staged for `snapshot_version` and covers `pages`.
+///
+/// The key names the staging manifest version and the page stamp it claims.
+/// A mismatch is ignored at open and rebuilt from the log (ADR 0047 §9).
+pub(crate) fn derived_covers(key: &str, snapshot_version: u64, pages: u32) -> bool {
+    match (staged_writer_version(key), staged_stamp(key)) {
+        (Some(staged), Some(stamp)) => staged < snapshot_version && stamp == pages,
+        _ => false,
+    }
+}
+
 /// Manifest version encoded in a staged object key, when present.
 pub(crate) fn staged_writer_version(key: &str) -> Option<u64> {
     let mut rest = key;
@@ -1081,7 +1099,7 @@ fn already_exists(error: &str) -> bool {
     error.contains("exists") || error.contains("EEXIST")
 }
 
-fn object_missing(error: &str) -> bool {
+pub(crate) fn object_missing(error: &str) -> bool {
     error.contains("not found")
 }
 
@@ -1234,6 +1252,10 @@ mod tests {
         assert!(key.starts_with("seg.4.w7."));
         assert_eq!(staged_writer_version("probe"), None);
         assert_eq!(staged_writer_version("manifest.3"), None);
+        assert!(derived_covers(&key, 8, 4));
+        assert!(!derived_covers(&key, 7, 4));
+        assert!(!derived_covers(&key, 8, 5));
+        assert!(!derived_covers("ckpt.4", 8, 4));
     }
 
     #[test]
