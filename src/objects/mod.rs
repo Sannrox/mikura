@@ -1189,10 +1189,7 @@ mod tests {
         let steps = std::sync::atomic::AtomicU64::new(0);
         let err = store
             .collect(&BTreeSet::new(), 2, &|| {
-                if steps.fetch_add(1, Ordering::Relaxed) >= 1 {
-                    return Ok(false);
-                }
-                Ok(true)
+                Ok(steps.fetch_add(1, Ordering::Relaxed) < 1)
             })
             .unwrap_err();
         assert!(err.contains(crate::LOG_FENCED), "{err}");
