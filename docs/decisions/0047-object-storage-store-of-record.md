@@ -1,11 +1,11 @@
 # ADR 0047: Object-storage store of record with a swap-committed manifest
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-05
 - Owners: mikura maintainers
 - Related: [#335](https://github.com/Sannrox/mikura/issues/335), [#356](https://github.com/Sannrox/mikura/issues/356), [#340](https://github.com/Sannrox/mikura/issues/340), [#353](https://github.com/Sannrox/mikura/issues/353), [#357](https://github.com/Sannrox/mikura/issues/357), [#360](https://github.com/Sannrox/mikura/issues/360), [#361](https://github.com/Sannrox/mikura/issues/361), [#362](https://github.com/Sannrox/mikura/issues/362), [#363](https://github.com/Sannrox/mikura/issues/363), [#336](https://github.com/Sannrox/mikura/issues/336), [#283](https://github.com/Sannrox/mikura/issues/283), [#244](https://github.com/Sannrox/mikura/issues/244), [#190](https://github.com/Sannrox/mikura/issues/190), [ADR 0001](0001-paged-log.md), [ADR 0023](0023-single-process-availability.md), [ADR 0030](0030-unnamespaced-log-migration.md), [ADR 0034](0034-log-checkpoints.md), [ADR 0037](0037-online-backup-and-restore.md), [ADR 0040](0040-concurrent-host-readers.md), [ADR 0042](0042-api-stability.md), [ADR 0044](0044-log-encryption.md), [ADR 0046](0046-unpartitioned-store-after-synthetic-ceiling.md), [ADR 0048](0048-paged-projection-serving-budget.md)
 - Amends: [ADR 0023](0023-single-process-availability.md) — its revisit clause fires: [#335](https://github.com/Sannrox/mikura/issues/335) publishes a data-loss target restore-from-log cannot meet. One-process-at-a-time remains; restore-from-log stops being the only failure path.
-- Amended by: this file's 2026-11-12 operational rules ([#356](https://github.com/Sannrox/mikura/issues/356)); in-process serving structure ([#353](https://github.com/Sannrox/mikura/issues/353), [ADR 0048](0048-paged-projection-serving-budget.md))
+- Amended by: this file's 2026-11-12 operational rules ([#356](https://github.com/Sannrox/mikura/issues/356)); in-process serving structure ([#353](https://github.com/Sannrox/mikura/issues/353), [ADR 0048](0048-paged-projection-serving-budget.md)); acceptance evidence ([#335](https://github.com/Sannrox/mikura/issues/335), spike [016](../../spikes/016-swap-commit/NOTES.md))
 - Supersedes: none
 - Superseded by: none
 
@@ -49,9 +49,9 @@ projections live, how many sequential storage calls a commit may make, who
 may collect unreferenced objects, how a backend proves its conditional
 write, how a reader requires the write it just made, and what the `file`
 backend actually survives. [#356](https://github.com/Sannrox/mikura/issues/356)
-closes those here, while the ADR is still proposed. Filling the
-[#335](https://github.com/Sannrox/mikura/issues/335) measurement cells
-remains the acceptance gate.
+closed those here while the ADR was still proposed. Spike
+[016](../../spikes/016-swap-commit/NOTES.md) fills the
+[#335](https://github.com/Sannrox/mikura/issues/335) measurement cells.
 
 ## Decision
 
@@ -112,8 +112,12 @@ fence.**
    from the [#335](https://github.com/Sannrox/mikura/issues/335) spikes:
    the swap-commit latency/throughput envelope against the fsync baseline,
    a kill-the-writer drill with zero acknowledged-write loss, a fenced
-   displaced-writer refusal, and reopen time at the 10⁷ fixture. Filling
-   those cells with guessed numbers is forbidden, as in
+   displaced-writer refusal, and local-disk reopen time of the named
+   checkpoint object at 10⁷ class size. Remote GET and product projection
+   decode are [#360](https://github.com/Sannrox/mikura/issues/360) and
+   [#340](https://github.com/Sannrox/mikura/issues/340); they are not this
+   gate. Filling the cells this gate names with guessed numbers is
+   forbidden, as in
    [ADR 0023](0023-single-process-availability.md).
 
 9. **One object layout.** Sealed log segments, checkpoints, and
@@ -194,10 +198,10 @@ mikura.
 ## Consequences
 
 - Commit latency rises from a local fsync to a storage round trip. Group
-  commit and the existing batch and stream APIs amortize throughput; the
-  per-commit envelope is spike evidence, not a guess. If the measured
-  envelope breaks the consumer's workload, this ADR is not accepted. The
-  sequential call budget (two waves) is independent of that envelope.
+  commit and the existing batch and stream APIs amortize throughput. Spike
+  016 measured the envelope; it does not break the consumer write path
+  (Validation). The sequential call budget (two waves) is independent of
+  that envelope.
 - Durability, machine-loss recovery, and offsite copy collapse into one
   mechanism on an object-storage backend. The `file` backend does not
   gain those properties. [ADR 0037](0037-online-backup-and-restore.md)
@@ -233,22 +237,44 @@ mikura.
 
 ## Validation
 
-1. Spike evidence under [#335](https://github.com/Sannrox/mikura/issues/335)
-   recorded in this ADR before acceptance: swap-commit envelope (file and
-   remote backends) versus fsync baseline; kill-writer drill with zero
-   acknowledged-write loss; displaced-writer swap refused; reopen time at
-   10⁷.
-2. The existing crash, replay, and dual-read suites pass unchanged on the
-   `file` backend.
+1. Spike [016](../../spikes/016-swap-commit/NOTES.md) on Linux x86_64, 12
+   CPUs, AMD Ryzen 5 PRO 4650U, btrfs SSD (not tmpfs). 100 samples unless
+   noted.
+   - Restore-from-log disk loss: 1000 acked writes, backup, 50 more acked
+     writes, delete the live log; restore served 1000 and **lost 50**.
+   - Kill after put, before swap: unacked payload absent after reopen.
+   - Kill after swap: acked payloads present. Zero acknowledged-write loss.
+   - Displaced writer: compare-and-swap refused (`fenced`).
+   - `Store::append` fsync baseline: p50 **5.32 ms** / 168 commits/s.
+   - File swap (put + CAS, each wave fsyncs the object then the directory):
+     p50 **3.68 ms** / 258 commits/s.
+   - Remote swap (same file path plus 10 ms injected RTT × two waves; no
+     vendor client, [#360](https://github.com/Sannrox/mikura/issues/360)
+     is the remote backend): p50 **26.0 ms** / 38 commits/s, about 5× the
+     same-machine fsync baseline. The product-loop has no write SLO.
+   - Sync follower at the same RTT: p50 **55.9 ms**. Async follower: one
+     acknowledged write left unshipped is absent on the follower.
+   - Local-disk reopen of a 740 MiB incompressible checkpoint object
+     (10⁷ class): **850 ms** after `posix_fadvise(DONTNEED)`. This is a
+     file-backend object read, not a remote GET and not product
+     `JoinMaps` decode. Remote GET is
+     [#360](https://github.com/Sannrox/mikura/issues/360). Decode is
+     [#340](https://github.com/Sannrox/mikura/issues/340) (historical
+     `Store::open` ~12–15.5 s). Those two are not acceptance evidence
+     for this ADR.
+2. This ADR does not change the crate. Existing crash, replay, and
+   dual-read suites stay the gate on the `file` backend when
+   [#340](https://github.com/Sannrox/mikura/issues/340) implements it.
 3. After cutover, the restore drill in
    [m9-readiness.md](../plans/m9-readiness.md) is replaced by a takeover
    drill: kill under write load, start replacement, acknowledged writes
-   present, staleness reported.
+   present, staleness reported. Takeover RTO at 10⁷, including product
+   projection decode, is unmeasured until
+   [#340](https://github.com/Sannrox/mikura/issues/340).
 4. Review after the first hosted deployment or 2027-01-31, whichever is
    earlier.
-5. [#356](https://github.com/Sannrox/mikura/issues/356) is closed when this
-   file names the six operational rules (or an explicit deferral). It does
-   not wait on the #335 cells and does not flip this ADR to accepted.
+5. [#356](https://github.com/Sannrox/mikura/issues/356) closed on the
+   operational rules while this ADR was still proposed.
 
 ## Amendments
 
@@ -266,3 +292,11 @@ mikura.
   [ADR 0048](0048-paged-projection-serving-budget.md) (paged projection,
   serving memory budget). Acceptance still waits on the [#335](https://github.com/Sannrox/mikura/issues/335)
   measurements in Decision §8.
+- 2026-11-13, [#335](https://github.com/Sannrox/mikura/issues/335): spike
+  016 fills the measurement cells this ADR owns. Status becomes accepted.
+  Followers are not selected. Decision §8's reopen cell is local-disk
+  object read of the named checkpoint at 10⁷ class size. Remote GET
+  ([#360](https://github.com/Sannrox/mikura/issues/360)) and product
+  projection decode ([#340](https://github.com/Sannrox/mikura/issues/340))
+  implement the accepted layout; they cannot be required to accept it.
+  Implementation remains [#340](https://github.com/Sannrox/mikura/issues/340).

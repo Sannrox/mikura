@@ -77,9 +77,13 @@ in issues and pull requests; [ROADMAP.md](ROADMAP.md) gives direction.
   ([ADR 0006](docs/decisions/0006-action-provenance.md)).
 - A non-loopback host needs a clerk-owned bearer. Tokens are process
   secrets, not principals ([ADR 0007](docs/decisions/0007-host-bearer.md)).
-- One process remains the hosted form
+- One writer at a time remains the hosted form
   ([ADR 0003](docs/decisions/0003-hosted-service.md),
   [ADR 0023](docs/decisions/0023-single-process-availability.md)).
+  Acknowledged writes must survive machine or disk loss of the compute
+  host via a swap-committed object-storage store of record
+  ([ADR 0047](docs/decisions/0047-object-storage-store-of-record.md));
+  that cutover is not in the crate yet.
 - Compute stays in-process until a published envelope misses in-process.
 - A git tag is enough for a consumer. The 1.0 surface and bump rules are
   [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md)
