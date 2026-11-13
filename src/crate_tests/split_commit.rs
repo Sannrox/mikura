@@ -354,3 +354,71 @@ fn history_reads_during_a_torn_superblock_write_return_applied_history() {
     assert_eq!(after.len(), 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn pending_schema_blocks_split_instance_that_cannot_cast() {
+    let (dir, log) = temp_log("split-pending-schema-instance");
+    let mut store = Store::create(&log).unwrap();
+    store
+        .append(
+            SchemaDescriptor {
+                kind: "Widget".into(),
+                properties: vec!["count".into()],
+                version: 1,
+                ..Default::default()
+            }
+            .to_record(NS)
+            .unwrap(),
+        )
+        .unwrap();
+    let v2 = SchemaDescriptor {
+        kind: "Widget".into(),
+        properties: vec!["count".into()],
+        types: vec![("count".into(), PropertyType::Integer)],
+        version: 2,
+        migration: SchemaMigration {
+            cast: vec![("count".into(), PropertyType::Integer)],
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .to_record(NS)
+    .unwrap();
+    assert!(store
+        .admit_uncommitted_buffered(v2.clone(), true, false, 0)
+        .unwrap());
+    let shared = SharedStore::new(store);
+    match shared.append_batch(vec![rec("Widget", "w1", false, &[("count", "abc")])]) {
+        BatchWrite::Done(result) => panic!(
+            "split path committed an instance that cannot survive a buffered recast: {result:?}"
+        ),
+        BatchWrite::Exclusive(records) => {
+            let err = shared.write().unwrap().append_batch(records).unwrap_err();
+            assert!(
+                err.contains("cannot migrate instances") && err.contains("count"),
+                "expected exclusive path to fail closed under a buffered recast, got {err}"
+            );
+        }
+    }
+    shared
+        .write()
+        .unwrap()
+        .append_admitted_batch(vec![v2])
+        .unwrap();
+    assert_eq!(
+        shared
+            .read()
+            .unwrap()
+            .schema(NS, "Widget")
+            .unwrap()
+            .unwrap()
+            .property_type("count"),
+        Some(PropertyType::Integer)
+    );
+    assert!(shared
+        .read()
+        .unwrap()
+        .load(NS, "Widget", "w1", &PropertyAcl::allow_all())
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -47,9 +47,10 @@ limits. They are not evaluate/ingest deadlines.
 
 ### Visibility
 
-Live maps update on `append_uncommitted`. A later RPC on the **same**
-process sees uncommitted stream pushes. Rebuild after crash does not.
-A successful RPC (including `flush` / `ingest_batch` / overlay /
+A reader observes committed state only. `ingest_stream_push` admits the
+record and does not update live maps; a later `load` / `evaluate` on this
+process cannot see it until `ingest_stream_flush` commits ([ADR 0040](0040-concurrent-host-readers.md)).
+A successful RPC that commits (`flush` / `ingest_batch` / overlay /
 action / hide) is visible to the next RPC on that process. Disconnect
 after the host accepted a complete line does not roll back a commit
 already in progress; the clerk retries with ADR 0011 / 0019 / 0020.

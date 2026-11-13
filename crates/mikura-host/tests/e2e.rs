@@ -1394,7 +1394,7 @@ fn process_product_loop_survives_shutdown_and_reopen() {
 }
 
 #[test]
-fn process_uncommitted_stream_push_invisible_after_reopen() {
+fn process_uncommitted_stream_push_invisible_until_commit() {
     let tmp = TempLog::new("uncommitted-tail");
     let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
     let ingest = host.rpc(&serde_json::json!({
@@ -1418,8 +1418,8 @@ fn process_uncommitted_stream_push_invisible_after_reopen() {
         "kind": "incident",
         "key": "inc-uncommitted"
     }));
-    assert!(live.ok, "{live:?}");
-    assert_eq!(live.load.expect("live tail").key, "inc-uncommitted");
+    assert!(!live.ok, "{live:?}");
+    assert!(live.load.is_none());
     host.stop();
 
     let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
@@ -3105,7 +3105,8 @@ fn process_kill_during_writes_keeps_committed_history() {
         "kind": "Shipment",
         "key": "s-uncommitted"
     }));
-    assert!(live_tail.ok, "{live_tail:?}");
+    assert!(!live_tail.ok, "{live_tail:?}");
+    assert!(live_tail.load.is_none());
     host.kill();
 
     let started = Instant::now();

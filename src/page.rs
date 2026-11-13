@@ -2,8 +2,8 @@
 //!
 //! The token is opaque. It binds the deny list, the query (including sort
 //! and page size), and the live writer stamp (`committed_pages`, written
-//! pages, current page used). A different view or a later write, including
-//! an uncommitted stream append, fails closed.
+//! pages, current page used). A different view or a later write that
+//! reaches the log fails closed.
 
 use crate::acl::PropertyAcl;
 use crate::objectset::{EvaluateRequest, Hop, Predicate, Sort};

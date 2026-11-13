@@ -388,6 +388,7 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
 
     let mut stream = StreamIngest::new(8).unwrap();
     stream.push(&mut store, first.clone()).unwrap();
+    assert_eq!(stream.uncommitted(), 0);
     assert_eq!(
         store
             .load("ns", "Shipment", "s2", &PropertyAcl::allow_all())
@@ -397,10 +398,54 @@ fn ingest_action_id_is_unique_across_batch_and_stream() {
     );
     let stream_remap = stream.push(&mut store, remapped).unwrap_err();
     assert!(stream_remap.contains("already committed"), "{stream_remap}");
+
+    let mut queued = rec(
+        "Shipment",
+        "s4",
+        false,
+        &[("order_id", "o1"), ("amount", "1")],
+    );
+    queued.action_id = Some("act-stream-1".into());
+    stream.push(&mut store, queued.clone()).unwrap();
+    stream.push(&mut store, queued.clone()).unwrap();
+    assert_eq!(stream.uncommitted(), 1);
+    let mut queued_remap = rec(
+        "Shipment",
+        "s5",
+        false,
+        &[("order_id", "o1"), ("amount", "2")],
+    );
+    queued_remap.action_id = Some("act-stream-1".into());
+    let queued_err = stream.push(&mut store, queued_remap).unwrap_err();
+    assert!(queued_err.contains("already committed"), "{queued_err}");
+    assert!(store
+        .load("ns", "Shipment", "s4", &PropertyAcl::allow_all())
+        .is_err());
     stream.flush(&mut store).unwrap();
+    assert_eq!(
+        store
+            .load("ns", "Shipment", "s4", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("amount")
+            .map(String::as_str),
+        Some("1")
+    );
+    assert!(store
+        .load("ns", "Shipment", "s5", &PropertyAcl::allow_all())
+        .is_err());
     drop(store);
 
     let mut reopened = Store::open(tmp.path()).unwrap();
+    assert_eq!(
+        reopened
+            .load("ns", "Shipment", "s4", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("amount")
+            .map(String::as_str),
+        Some("1")
+    );
     assert!(reopened
         .load("ns", "Shipment", "s3", &PropertyAcl::allow_all())
         .is_err());
@@ -453,9 +498,11 @@ fn failed_batch_is_dropped_whole_and_keeps_a_pushed_stream_tail() {
     };
     assert!(absent(&store, "s7"));
     assert!(absent(&store, "s8"));
-    assert!(!absent(&store, "s6"));
+    assert!(absent(&store, "s6"));
+    assert_eq!(stream.uncommitted(), 1);
 
     stream.flush(&mut store).unwrap();
+    assert!(!absent(&store, "s6"));
     BatchIngest::run(
         &mut store,
         vec![rec("Shipment", "s9", false, &[("order_id", "o1")])],
@@ -638,7 +685,7 @@ fn stream_overflow_fails_closed_without_silent_drop() {
 
     let oss = ObjectSet::new(LocalCompute);
     let live = oss.evaluate(&store, &fixture_request()).unwrap();
-    assert_eq!(live.sum_amount, 13);
+    assert_eq!(live.sum_amount, 10);
     stream.flush(&mut store).unwrap();
     let committed = oss.evaluate(&store, &fixture_request()).unwrap();
     assert_eq!(committed.sum_amount, 13);
@@ -2641,7 +2688,7 @@ fn changelog_and_stream_resume_without_an_offset_ledger() {
             ),
         )
         .unwrap();
-    assert!(reopened
+    assert!(!reopened
         .joins("ns")
         .unwrap()
         .is_visible("incident", "inc-2"));

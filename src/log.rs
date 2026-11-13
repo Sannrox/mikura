@@ -340,6 +340,39 @@ impl LogWriter {
         Ok(())
     }
 
+    /// Non-writing eligibility check used by stream admission so a tenant
+    /// that cannot be encrypted is refused before the record enters a
+    /// shared buffer (ADR 0040). Does not mint a DEK.
+    pub(crate) fn check_tenant_writable_for(&self, record: &ObjectRecord) -> Result<(), String> {
+        if self.keys.is_none() {
+            return Ok(());
+        }
+        let tenant = tenant_of_namespace(&record.namespace)?;
+        self.check_tenant_writable(tenant)
+    }
+
+    fn check_tenant_writable(&self, tenant: &str) -> Result<(), String> {
+        if self.revoked.contains(tenant) {
+            return Err("encrypted writes refuse revoked tenant".into());
+        }
+        if self.withheld.contains(tenant) {
+            return Err("encrypted writes refuse tenant whose key is unavailable".into());
+        }
+        if self.deks.contains_key(tenant) {
+            return Ok(());
+        }
+        if self.catalog.contains_key(tenant) {
+            return Err("encrypted writes refuse tenant whose key is unavailable".into());
+        }
+        let Some(keys) = self.keys.as_ref() else {
+            return Ok(());
+        };
+        if keys.grant_for(tenant).is_none() {
+            return Err("encrypted writes refuse tenant without unwrap grant".into());
+        }
+        Ok(())
+    }
+
     fn ensure_tenant_dek(&mut self, tenant: &str) -> Result<(), String> {
         if self.revoked.contains(tenant) {
             return Err("encrypted writes refuse revoked tenant".into());

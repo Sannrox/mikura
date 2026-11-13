@@ -3,10 +3,11 @@
 - Status: accepted
 - Date: 2026-09-21
 - Owners: mikura maintainers
-- Related: [#226](https://github.com/Sannrox/mikura/issues/226), [ADR 0001](0001-paged-log.md), [ADR 0025](0025-ingest-action-id-uniqueness.md), [ADR 0020](0020-resumable-source-reconciliation.md)
+- Related: [#226](https://github.com/Sannrox/mikura/issues/226), [ADR 0001](0001-paged-log.md), [ADR 0025](0025-ingest-action-id-uniqueness.md), [ADR 0020](0020-resumable-source-reconciliation.md), [ADR 0040](0040-concurrent-host-readers.md)
 - Amends: none. The log format and `MIKURAV1` do not change.
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR 0040](0040-concurrent-host-readers.md) (`StreamIngest::flush` appends through `append_batch`; `append_uncommitted` stays for composition and `StreamApply`)
 
 ## Context
 
@@ -63,8 +64,9 @@ a failed push leaves earlier pushes pending until `flush`
   when no sidecar matches). Repeated failing batches on a very large store
   are therefore not free; a write still runs exclusively
   ([ADR 0021](0021-bounded-host-execution.md), [ADR 0040](0040-concurrent-host-readers.md)).
-- `Store::append_uncommitted` stays for stream ingest and composition. A
-  caller that stacks its own appends owns their abort behavior.
+- `Store::append_uncommitted` stays for composition and `StreamApply`.
+  `StreamIngest::flush` appends through `Store::append_batch`. A caller
+  that stacks its own `append_uncommitted` owns their abort behavior.
 - Multi-write store operations that append more than one record before a
   commit (`apply_overlay`, `hide` of an instance with an overlay) have the
   same partial-write shape. They are outside this decision.
