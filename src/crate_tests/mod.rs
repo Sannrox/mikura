@@ -9,6 +9,7 @@ mod durable;
 mod encrypt;
 mod evolution;
 mod fault;
+mod groups;
 mod helpers;
 mod hide;
 mod history;

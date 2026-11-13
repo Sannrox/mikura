@@ -277,6 +277,11 @@ pub(crate) const MAX_LAZY_MEASURE_LEAVES: usize = 20_000_000;
 /// Distinct undeclared `(leaf, sum)` caches per namespace. Schema-named
 /// sums do not count. Extra first-use measures fail closed.
 pub(crate) const MAX_CACHED_SUMS: usize = 32;
+/// Distinct one-property group tables per namespace. Extra first-use
+/// breakdowns walk instead of adding unbounded commit work.
+pub(crate) const MAX_GROUP_TABLES: usize = 32;
+/// Group-by absent/`""` row in a one-property breakdown table (ADR 0038).
+pub(crate) const GROUP_ABSENT: u32 = u32::MAX;
 
 pub(crate) const JOIN_MAGIC: &[u8; 8] = crate::JOIN_FORMAT;
 /// Delta frames without per-row schema versions; still read, never written.
@@ -313,7 +318,8 @@ pub(crate) struct LiveMeta {
 /// (hidden props sit on the identity row), interned Action ids, and
 /// schema-named last-hop rollups (`MKJOIN06`). Hop and sum indexes are
 /// derived. Undeclared sums build the same parent rollups on first
-/// evaluate and keep them on apply (#258).
+/// evaluate and keep them on apply (#258). One-property breakdown groups
+/// of the same measure stay current on these maps (#372).
 #[derive(Debug, Default)]
 pub struct JoinMaps {
     pub(crate) intern: Vec<String>,
@@ -330,6 +336,10 @@ pub struct JoinMaps {
     /// Rollups for [`Self::cached_sums`]. Evaluate is `&Store`, so first use
     /// fills this under the mutex; apply merges into it too.
     lazy_rollups: Mutex<HashMap<MeasureKey, MeasureTable>>,
+    /// One-property group → `(count, sum)` for `(kind, group_property, sum_property)`.
+    groups: HashMap<MeasureKey, MeasureTable>,
+    /// Groups built on first matching evaluate (`&Store`).
+    lazy_groups: Mutex<HashMap<MeasureKey, MeasureTable>>,
     lazy_dirty: AtomicBool,
     pub(crate) owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
     paged: Option<(Arc<PagedFile>, String)>,
@@ -354,6 +364,13 @@ impl Clone for JoinMaps {
             rollups: self.rollups.clone(),
             lazy_rollups: Mutex::new(
                 self.lazy_rollups
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default(),
+            ),
+            groups: self.groups.clone(),
+            lazy_groups: Mutex::new(
+                self.lazy_groups
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default(),
@@ -402,9 +419,14 @@ impl JoinMaps {
         self.amounts.shrink_to_fit();
         self.rollups.clear();
         self.rollups.shrink_to_fit();
+        self.groups.clear();
+        self.groups.shrink_to_fit();
         self.owned.clear();
         self.owned.shrink_to_fit();
         if let Ok(g) = self.lazy_rollups.get_mut() {
+            g.clear();
+        }
+        if let Ok(g) = self.lazy_groups.get_mut() {
             g.clear();
         }
         self.intern_pin = Mutex::new(InternPin::default());
@@ -454,6 +476,10 @@ impl JoinMaps {
     }
 
     pub(crate) fn rollup_entries(&self) -> Vec<(MeasureKey, MeasureTable)> {
+        self.measure_tables()
+    }
+
+    fn measure_tables(&self) -> Vec<(MeasureKey, MeasureTable)> {
         let lazy = self.lazy_rollups.lock().ok();
         let mut tables: Vec<_> = self
             .rollups
@@ -1298,6 +1324,9 @@ impl JoinMaps {
         if let Ok(lazy) = self.lazy_rollups.get_mut() {
             lazy.retain(|(leaf, _, sum), _| !(*leaf == kind_id && *sum == prop_id));
         }
+        if let Ok(lazy) = self.lazy_groups.get_mut() {
+            lazy.retain(|(leaf, _, sum), _| !(*leaf == kind_id && *sum == prop_id));
+        }
     }
 
     fn drop_cached_kind(&mut self, kind_id: u32) {
@@ -1307,15 +1336,22 @@ impl JoinMaps {
         if let Ok(lazy) = self.lazy_rollups.get_mut() {
             lazy.retain(|(leaf, _, _), _| *leaf != kind_id);
         }
+        if let Ok(lazy) = self.lazy_groups.get_mut() {
+            lazy.retain(|(leaf, _, _), _| *leaf != kind_id);
+        }
     }
 
     /// Move first-use tables into [`Self::rollups`] after a sidecar write.
     pub(crate) fn adopt_lazy_rollups(&mut self) {
-        let Ok(lazy) = self.lazy_rollups.get_mut() else {
-            return;
-        };
-        for (key, table) in lazy.drain() {
-            self.rollups.entry(key).or_insert(table);
+        if let Ok(lazy) = self.lazy_rollups.get_mut() {
+            for (key, table) in lazy.drain() {
+                self.rollups.entry(key).or_insert(table);
+            }
+        }
+        if let Ok(lazy) = self.lazy_groups.get_mut() {
+            for (key, table) in lazy.drain() {
+                self.groups.entry(key).or_insert(table);
+            }
         }
         self.lazy_dirty.store(false, Ordering::Relaxed);
     }
@@ -1335,6 +1371,40 @@ impl JoinMaps {
             .filter(|(kind, _)| *kind == kind_id)
             .map(|(_, prop)| *prop)
             .collect()
+    }
+
+    fn group_sum_ids(&self, kind_id: u32) -> Vec<u32> {
+        let mut ids = HashSet::new();
+        for (kind, _, sum) in self.groups.keys() {
+            if *kind == kind_id {
+                ids.insert(*sum);
+            }
+        }
+        if let Ok(lazy) = self.lazy_groups.lock() {
+            for (kind, _, sum) in lazy.keys() {
+                if *kind == kind_id {
+                    ids.insert(*sum);
+                }
+            }
+        }
+        ids.into_iter().collect()
+    }
+
+    fn group_keys_for_leaf(&self, leaf_id: u32) -> Vec<MeasureKey> {
+        let mut keys: Vec<_> = self
+            .groups
+            .keys()
+            .copied()
+            .filter(|(kind, _, _)| *kind == leaf_id)
+            .collect();
+        if let Ok(lazy) = self.lazy_groups.lock() {
+            for key in lazy.keys() {
+                if key.0 == leaf_id && !keys.contains(key) {
+                    keys.push(*key);
+                }
+            }
+        }
+        keys
     }
 
     fn owned_amount(intern: &[String], owned: &[(u32, u32)], sum_prop: u32) -> i64 {
@@ -1383,40 +1453,118 @@ impl JoinMaps {
 
     fn add_leaf_contribution(&mut self, kind_id: u32, key_id: u32) {
         let sums = self.leaf_sum_ids(kind_id);
-        if sums.is_empty() {
+        let group_sums = self.group_sum_ids(kind_id);
+        if sums.is_empty() && group_sums.is_empty() {
             return;
         }
         let Some(owned) = self.owned.get(&(kind_id, key_id)).cloned() else {
             return;
         };
-        for sum_prop in sums {
-            let amount = Self::owned_amount(&self.intern, &owned, sum_prop);
+        for sum_prop in &sums {
+            let amount = Self::owned_amount(&self.intern, &owned, *sum_prop);
             for &(prop_id, parent_id) in &owned {
-                if prop_id == sum_prop || !self.key_is_visible(parent_id) {
+                if prop_id == *sum_prop || !self.key_is_visible(parent_id) {
                     continue;
                 }
-                self.bump_rollup((kind_id, prop_id, sum_prop), parent_id, 1, amount);
+                self.bump_rollup((kind_id, prop_id, *sum_prop), parent_id, 1, amount);
             }
+        }
+        let mut seen = HashSet::new();
+        for sum_prop in sums.into_iter().chain(group_sums) {
+            if !seen.insert(sum_prop) {
+                continue;
+            }
+            let amount = Self::owned_amount(&self.intern, &owned, sum_prop);
+            self.add_group_contribution(kind_id, sum_prop, &owned, 1, amount);
         }
     }
 
     fn sub_leaf_contribution(&mut self, kind_id: u32, owned: &[(u32, u32)]) {
         let sums = self.leaf_sum_ids(kind_id);
-        if sums.is_empty() {
+        let group_sums = self.group_sum_ids(kind_id);
+        if sums.is_empty() && group_sums.is_empty() {
             return;
         }
-        for sum_prop in sums {
-            let amount = Self::owned_amount(&self.intern, owned, sum_prop);
+        for sum_prop in &sums {
+            let amount = Self::owned_amount(&self.intern, owned, *sum_prop);
             for &(prop_id, parent_id) in owned {
-                if prop_id == sum_prop {
+                if prop_id == *sum_prop {
                     continue;
                 }
                 self.bump_rollup(
-                    (kind_id, prop_id, sum_prop),
+                    (kind_id, prop_id, *sum_prop),
                     parent_id,
                     -1,
                     amount.wrapping_neg(),
                 );
+            }
+        }
+        let mut seen = HashSet::new();
+        for sum_prop in sums.into_iter().chain(group_sums) {
+            if !seen.insert(sum_prop) {
+                continue;
+            }
+            let amount = Self::owned_amount(&self.intern, owned, sum_prop);
+            self.add_group_contribution(kind_id, sum_prop, owned, -1, amount.wrapping_neg());
+        }
+    }
+
+    fn group_id(&self, value_id: u32) -> u32 {
+        match self.intern_get(value_id) {
+            Some("") => GROUP_ABSENT,
+            _ => value_id,
+        }
+    }
+
+    fn add_group_contribution(
+        &mut self,
+        kind_id: u32,
+        sum_prop: u32,
+        owned: &[(u32, u32)],
+        dcount: i32,
+        dsum: i64,
+    ) {
+        let mut seen = HashSet::new();
+        for &(prop_id, value_id) in owned {
+            if prop_id == sum_prop {
+                continue;
+            }
+            seen.insert(prop_id);
+            let group = self.group_id(value_id);
+            self.bump_group((kind_id, prop_id, sum_prop), group, dcount, dsum);
+        }
+        for prop_id in self.group_prop_ids(kind_id, sum_prop) {
+            if !seen.contains(&prop_id) {
+                self.bump_group((kind_id, prop_id, sum_prop), GROUP_ABSENT, dcount, dsum);
+            }
+        }
+    }
+
+    fn group_prop_ids(&self, kind_id: u32, sum_prop: u32) -> Vec<u32> {
+        let mut props: HashSet<u32> = self
+            .groups
+            .keys()
+            .filter(|(kind, _, sum)| *kind == kind_id && *sum == sum_prop)
+            .map(|(_, prop, _)| *prop)
+            .collect();
+        if let Ok(lazy) = self.lazy_groups.lock() {
+            for (kind, prop, sum) in lazy.keys() {
+                if *kind == kind_id && *sum == sum_prop {
+                    props.insert(*prop);
+                }
+            }
+        }
+        props.into_iter().collect()
+    }
+
+    fn bump_group(&mut self, table: MeasureKey, group: u32, dcount: i32, dsum: i64) {
+        if self.groups.contains_key(&table) {
+            Self::bump_table(&mut self.groups, table, group, dcount, dsum);
+            return;
+        }
+        if let Ok(mut lazy) = self.lazy_groups.lock() {
+            if lazy.contains_key(&table) {
+                Self::bump_table(&mut lazy, table, group, dcount, dsum);
             }
         }
     }
@@ -1548,41 +1696,51 @@ impl JoinMaps {
     }
 
     fn rebuild_leaf_rollups(&mut self, leaf_id: u32) {
+        let group_keys = self.group_keys_for_leaf(leaf_id);
         self.rollups.retain(|(kind, _, _), _| *kind != leaf_id);
+        self.groups.retain(|(kind, _, _), _| *kind != leaf_id);
         if let Ok(lazy) = self.lazy_rollups.get_mut() {
             lazy.retain(|(kind, _, _), _| *kind != leaf_id);
         }
-        let sums = self.leaf_sum_ids(leaf_id);
-        if sums.is_empty() {
-            return;
+        if let Ok(lazy) = self.lazy_groups.get_mut() {
+            lazy.retain(|(kind, _, _), _| *kind != leaf_id);
         }
-        let joins: Vec<(u32, HashMap<u32, Vec<u32>>)> = self
-            .by_prop
-            .iter()
-            .filter(|((kind, _), _)| *kind == leaf_id)
-            .map(|((_, join), by_val)| (*join, by_val.clone()))
-            .collect();
-        for sum_prop in sums {
-            let amounts = self.amounts.get(&(leaf_id, sum_prop)).cloned();
-            for (join_id, by_val) in &joins {
-                if *join_id == sum_prop {
-                    continue;
-                }
-                for (parent_id, children) in by_val {
-                    if children.is_empty() || !self.key_is_visible(*parent_id) {
+        let sums = self.leaf_sum_ids(leaf_id);
+        if !sums.is_empty() {
+            let joins: Vec<(u32, HashMap<u32, Vec<u32>>)> = self
+                .by_prop
+                .iter()
+                .filter(|((kind, _), _)| *kind == leaf_id)
+                .map(|((_, join), by_val)| (*join, by_val.clone()))
+                .collect();
+            for sum_prop in sums {
+                let amounts = self.amounts.get(&(leaf_id, sum_prop)).cloned();
+                for (join_id, by_val) in &joins {
+                    if *join_id == sum_prop {
                         continue;
                     }
-                    let mut total = 0i64;
-                    for child in children {
-                        if let Some(amount) = amounts.as_ref().and_then(|map| map.get(child)) {
-                            total = total.wrapping_add(*amount);
+                    for (parent_id, children) in by_val {
+                        if children.is_empty() || !self.key_is_visible(*parent_id) {
+                            continue;
                         }
+                        let mut total = 0i64;
+                        for child in children {
+                            if let Some(amount) = amounts.as_ref().and_then(|map| map.get(child)) {
+                                total = total.wrapping_add(*amount);
+                            }
+                        }
+                        self.rollups
+                            .entry((leaf_id, *join_id, sum_prop))
+                            .or_default()
+                            .insert(*parent_id, (children.len() as u32, total));
                     }
-                    self.rollups
-                        .entry((leaf_id, *join_id, sum_prop))
-                        .or_default()
-                        .insert(*parent_id, (children.len() as u32, total));
                 }
+            }
+        }
+        for (kind, prop, sum) in group_keys {
+            let table = self.materialize_group_table(kind, prop, sum);
+            if !table.is_empty() {
+                self.groups.insert((kind, prop, sum), table);
             }
         }
     }
@@ -1590,19 +1748,7 @@ impl JoinMaps {
     /// Serialize declared and lazy tables. Does not clear [`Self::lazy_dirty`]:
     /// log checkpoints reuse this encoder, and reopen prefers the join sidecar.
     pub(crate) fn write_measures(&self, body: &mut Vec<u8>) -> Result<(), String> {
-        let lazy = self.lazy_rollups.lock().ok();
-        let mut tables: Vec<(MeasureKey, MeasureTable)> = self
-            .rollups
-            .iter()
-            .map(|(key, parents)| (*key, parents.clone()))
-            .collect();
-        if let Some(guard) = lazy.as_ref() {
-            for (key, parents) in guard.iter() {
-                if !self.rollups.contains_key(key) {
-                    tables.push((*key, parents.clone()));
-                }
-            }
-        }
+        let mut tables = self.measure_tables();
         tables.sort_by_key(|(key, _)| *key);
         let n = u32::try_from(tables.len()).map_err(|_| "too many measure tables".to_string())?;
         body.extend_from_slice(&n.to_le_bytes());
@@ -1610,7 +1756,10 @@ impl JoinMaps {
             body.extend_from_slice(&leaf.to_le_bytes());
             body.extend_from_slice(&join.to_le_bytes());
             body.extend_from_slice(&sum.to_le_bytes());
-            let mut rows: Vec<_> = parents.iter().collect();
+            let mut rows: Vec<_> = parents
+                .iter()
+                .filter(|(parent, _)| **parent != GROUP_ABSENT)
+                .collect();
             rows.sort_by_key(|(parent, _)| *parent);
             let pn =
                 u32::try_from(rows.len()).map_err(|_| "too many measure parents".to_string())?;
@@ -1643,7 +1792,7 @@ impl JoinMaps {
                 let parent = crate::codec::read_u32(cur)?;
                 let count = crate::codec::read_u32(cur)?;
                 let total = crate::codec::read_i64(cur)?;
-                if self.intern.get(parent as usize).is_none() {
+                if parent != GROUP_ABSENT && self.intern.get(parent as usize).is_none() {
                     return Err("bad intern measure parent".into());
                 }
                 parents.insert(parent, (count, total));
@@ -1651,6 +1800,120 @@ impl JoinMaps {
             self.rollups.insert((leaf, join, sum), parents);
         }
         Ok(())
+    }
+
+    /// First matching one-property breakdown builds group tables. Returns
+    /// whether a new table was built.
+    pub(crate) fn ensure_group_table(
+        &self,
+        kind: &str,
+        group_property: &str,
+        sum_property: &str,
+    ) -> Result<bool, String> {
+        if self.has_group_table(kind, group_property, sum_property) {
+            return Ok(false);
+        }
+        if self.group_table_count() >= MAX_GROUP_TABLES {
+            return Ok(false);
+        }
+        let Some(kind_id) = self.intern_existing(kind) else {
+            return Ok(false);
+        };
+        let Some(sum_id) = self.intern_existing(sum_property) else {
+            return Ok(false);
+        };
+        let Some(prop_id) = self.intern_existing(group_property) else {
+            return Ok(false);
+        };
+        let table = self.materialize_group_table(kind_id, prop_id, sum_id);
+        {
+            let mut lazy = self
+                .lazy_groups
+                .lock()
+                .map_err(|_| "lazy group lock poisoned".to_string())?;
+            lazy.insert((kind_id, prop_id, sum_id), table);
+        }
+        Ok(true)
+    }
+
+    fn group_table_count(&self) -> usize {
+        let lazy = self.lazy_groups.lock().map(|g| g.len()).unwrap_or(0);
+        self.groups.len() + lazy
+    }
+
+    pub(crate) fn has_group_table(
+        &self,
+        kind: &str,
+        group_property: &str,
+        sum_property: &str,
+    ) -> bool {
+        self.measure_key(kind, group_property, sum_property)
+            .is_some_and(|key| {
+                self.groups.contains_key(&key)
+                    || self
+                        .lazy_groups
+                        .lock()
+                        .map(|g| g.contains_key(&key))
+                        .unwrap_or(false)
+            })
+    }
+
+    /// Group rows as `(value intern, count, sum)`. `GROUP_ABSENT` is the
+    /// absent/`""` group.
+    pub(crate) fn group_rows(
+        &self,
+        kind: &str,
+        group_property: &str,
+        sum_property: &str,
+    ) -> Option<Vec<(u32, u32, i64)>> {
+        let key = self.measure_key(kind, group_property, sum_property)?;
+        if let Some(table) = self.groups.get(&key) {
+            return Some(table.iter().map(|(g, (c, s))| (*g, *c, *s)).collect());
+        }
+        if let Ok(guard) = self.lazy_groups.lock() {
+            if let Some(table) = guard.get(&key) {
+                return Some(table.iter().map(|(g, (c, s))| (*g, *c, *s)).collect());
+            }
+        }
+        None
+    }
+
+    fn materialize_group_table(&self, kind_id: u32, prop_id: u32, sum_id: u32) -> MeasureTable {
+        let mut table = MeasureTable::new();
+        let mut assigned = HashSet::new();
+        for (value_id, children) in self.prop_parent_lists(kind_id, prop_id) {
+            if children.is_empty() {
+                continue;
+            }
+            let mut total = 0i64;
+            for child in &children {
+                assigned.insert(*child);
+                if let Some(amount) = self.amount_id(kind_id, sum_id, *child) {
+                    total = total.wrapping_add(amount);
+                }
+            }
+            let group = self.group_id(value_id);
+            let entry = table.entry(group).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(children.len() as u32);
+            entry.1 = entry.1.wrapping_add(total);
+        }
+        let mut absent_count = 0u32;
+        let mut absent_sum = 0i64;
+        for key in self.visible_id_set(kind_id) {
+            if assigned.contains(&key) {
+                continue;
+            }
+            absent_count += 1;
+            if let Some(amount) = self.amount_id(kind_id, sum_id, key) {
+                absent_sum = absent_sum.wrapping_add(amount);
+            }
+        }
+        if absent_count > 0 {
+            let entry = table.entry(GROUP_ABSENT).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(absent_count);
+            entry.1 = entry.1.wrapping_add(absent_sum);
+        }
+        table
     }
 }
 

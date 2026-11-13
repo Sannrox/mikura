@@ -381,8 +381,12 @@ each parent-rollup entry 16 bytes.
 roots by up to two root properties and reports per group count, sum,
 contributing values, min, max, an exact `(sum, n)` average, and a distinct
 count, under the ADR 0018 contribution rules and a `max_groups` bound that
-fails closed ([ADR 0038](decisions/0038-breakdown-aggregates.md)). It reads
-the interned `amounts` map per path and needs no sidecar change. Last-hop count and sum for
+fails closed ([ADR 0038](decisions/0038-breakdown-aggregates.md)). A
+one-property, zero-hop, unrestricted breakdown of the request measure
+reads group count and sum kept current at commit on interned `JoinMaps`
+([#372](https://github.com/Sannrox/mikura/issues/372),
+[ADR 0049](decisions/0049-maintained-breakdown-justified.md)). Other
+breakdowns still walk surviving paths. Last-hop count and sum for
 a schema-named or first-use leaf property persist as parent rollups on `MKJOIN06` (and on `MKJOIN07` when a serving budget is set)
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151),

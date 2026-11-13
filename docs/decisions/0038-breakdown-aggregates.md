@@ -54,6 +54,17 @@ distinct count. `CountAndSum` and its response fields do not change.**
 - A breakdown walks every surviving path; it does not use the declared
   rollups.
 
+## Amendments
+
+- 2026-11-13, [#372](https://github.com/Sannrox/mikura/issues/372):
+  A one-property, zero-hop, unrestricted `Breakdown` of the request
+  measure reads group count and sum kept current at commit on interned
+  `JoinMaps`. Two-property group-by, hops, filters, predicates,
+  restriction-hidden roots, and distinct still walk. Min, max, n, and
+  avg stay unset on the maintained path so live and reopen match.
+  Last-hop persist is unchanged (`MKJOIN06` / `MKJOIN07`).
+  [ADR 0049](0049-maintained-breakdown-justified.md).
+
 ## Validation
 
 - Crate tests: fixture queries A1-A3, G1-G4, H1, D1 (aggregate cases), O1,
