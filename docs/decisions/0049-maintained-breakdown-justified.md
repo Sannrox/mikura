@@ -4,8 +4,7 @@
 - Date: 2026-11-12
 - Owners: mikura maintainers
 - Related: [#365](https://github.com/Sannrox/mikura/issues/365), [#372](https://github.com/Sannrox/mikura/issues/372), [spike 015](../../spikes/015-maintained-view/NOTES.md), [ADR 0010](0010-last-hop-measures.md), [ADR 0027](0027-overlay-apply-keeps-rematerialization.md), [ADR 0038](0038-breakdown-aggregates.md)
-- Amends: none. Evaluate still walks surviving paths for a `Breakdown` until
-  [#372](https://github.com/Sannrox/mikura/issues/372) lands.
+- Amends: [ADR 0038](0038-breakdown-aggregates.md)
 - Supersedes: none
 - Superseded by: none
 
@@ -73,6 +72,14 @@ cannot dual-read, reopens this as no-action.
   implementation, sidecar layout, and any amendment to ADR 0038.
 - Two-property group-by, min/max/avg, distinct, and hop-property grouping
   stay out until a follow-up names them with a fixture.
+
+## Amendments
+
+- 2026-11-13, [#372](https://github.com/Sannrox/mikura/issues/372):
+  One-property, zero-hop, unrestricted count and sum stay current at
+  commit on interned `JoinMaps`. Groups rematerialize from those maps
+  after `Store::open`. ADR 0038 is amended. The evaluate-time walk
+  remains for every other breakdown.
 
 ## Validation
 

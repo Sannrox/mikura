@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::acl::AclError;
-use crate::joins::JoinMaps;
+use crate::joins::{JoinMaps, GROUP_ABSENT};
 use crate::objectset::{
     Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, Group, Hop, Predicate, Sort,
     MAX_GROUPS,
@@ -592,6 +592,100 @@ struct GroupFold {
     distinct: HashSet<String>,
 }
 
+/// One-property, zero-hop, unrestricted count+sum from commit-time groups.
+fn matching_group_property<'a>(
+    request: &EvaluateRequest,
+    breakdown: &'a Breakdown,
+) -> Option<&'a str> {
+    if breakdown.group_by.len() != 1
+        || breakdown.distinct.is_some()
+        || !request.hops.is_empty()
+        || request.filter.is_some()
+        || request.predicate.is_some()
+        || request.acl.hides_objects()
+        || request.root_kind != request.sum_kind
+        || breakdown.group_by[0] == request.sum_property
+    {
+        return None;
+    }
+    Some(breakdown.group_by[0].as_str())
+}
+
+fn maintained_group_property<'a>(
+    store: &Store,
+    request: &EvaluateRequest,
+    breakdown: &'a Breakdown,
+) -> Option<&'a str> {
+    let property = matching_group_property(request, breakdown)?;
+    if store.omits_current_property(&request.namespace, &request.root_kind, property)
+        || store.omits_current_property(
+            &request.namespace,
+            &request.sum_kind,
+            &request.sum_property,
+        )
+    {
+        return None;
+    }
+    Some(property)
+}
+
+/// Count and sum from commit-time groups. Min/max/n stay unset; those
+/// fields are filled only when the request still walks.
+fn groups_from_rollups(
+    maps: &JoinMaps,
+    request: &EvaluateRequest,
+    breakdown: &Breakdown,
+    group_property: &str,
+    max_groups: usize,
+) -> Result<Option<Vec<Group>>, ComputeError> {
+    let Some(rows) = maps.group_rows(&request.root_kind, group_property, &request.sum_property)
+    else {
+        return Ok(None);
+    };
+    let mut merged: HashMap<Option<String>, (usize, i64)> = HashMap::new();
+    for (value_id, count, sum) in rows {
+        if count == 0 {
+            continue;
+        }
+        let key = if value_id == GROUP_ABSENT {
+            None
+        } else {
+            match maps.intern_get(value_id) {
+                Some("") | None => None,
+                Some(value) => Some(value.to_string()),
+            }
+        };
+        let entry = merged.entry(key).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(count as usize);
+        entry.1 = entry.1.wrapping_add(sum);
+    }
+    if merged.len() > max_groups {
+        return Err(ComputeError::TooManyGroups { max: max_groups });
+    }
+    let mut out: Vec<Group> = merged
+        .into_iter()
+        .map(|(key, (count, sum))| Group {
+            key: vec![key],
+            count,
+            sum,
+            n: 0,
+            min: None,
+            max: None,
+            avg: (sum, 0),
+            distinct: breakdown.distinct.as_ref().map(|_| 0),
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let rank = |key: &[Option<String>]| -> Vec<(bool, String)> {
+            key.iter()
+                .map(|part| (part.is_none(), part.clone().unwrap_or_default()))
+                .collect()
+        };
+        rank(&a.key).cmp(&rank(&b.key))
+    });
+    Ok(Some(out))
+}
+
 /// Fold surviving paths into groups keyed by root properties (ADR 0038).
 fn breakdown_groups(
     store: &Store,
@@ -605,6 +699,11 @@ fn breakdown_groups(
         0 => MAX_GROUPS,
         asked => asked.min(MAX_GROUPS),
     };
+    if let Some(property) = maintained_group_property(store, request, breakdown) {
+        if let Some(groups) = groups_from_rollups(maps, request, breakdown, property, max_groups)? {
+            return Ok(groups);
+        }
+    }
     let roots = root_ids(store, request)?;
     let (paths, frontier_kind) = surviving_paths(store, request, &roots)?;
     let root_value = |root: u32, property: &str| -> Option<String> {
@@ -761,7 +860,19 @@ fn evaluate_local(
         };
     let (objects, cursor) = page_objects(store, request, ids)?;
     let groups = match &request.breakdown {
-        Some(breakdown) => breakdown_groups(store, request, breakdown)?,
+        Some(breakdown) => {
+            if let Some(property) = maintained_group_property(store, request, breakdown) {
+                store
+                    .ensure_lazy_groups(
+                        &request.namespace,
+                        &request.root_kind,
+                        property,
+                        &request.sum_property,
+                    )
+                    .map_err(ComputeError::Load)?;
+            }
+            breakdown_groups(store, request, breakdown)?
+        }
         None => Vec::new(),
     };
     Ok(EvaluateResponse {

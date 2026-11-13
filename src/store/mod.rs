@@ -3522,6 +3522,21 @@ impl Store {
         Ok(())
     }
 
+    /// Build one-property breakdown groups on first matching evaluate.
+    pub(crate) fn ensure_lazy_groups(
+        &self,
+        namespace: &str,
+        kind: &str,
+        group_property: &str,
+        sum_property: &str,
+    ) -> Result<(), String> {
+        let Some(joins) = self.joins.get(namespace) else {
+            return Ok(());
+        };
+        joins.ensure_group_table(kind, group_property, sum_property)?;
+        Ok(())
+    }
+
     fn joins_for_write(&mut self, namespace: &str) -> Result<&mut JoinMaps, String> {
         self.ensure_writable()?;
         Ok(self.joins.entry(namespace.to_string()).or_default())
