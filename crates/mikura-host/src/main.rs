@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mikura::backup::{backup_log, backup_log_incremental, restore_log, verify_log, RestorePoint};
+use mikura::{ObjectBackend, OBJECT_TOKEN_ENV};
 use mikura_host::{Host, DEFAULT_REQUEST_BOUND, DEFAULT_REQUEST_TIMEOUT_MS};
 
 struct Args {
@@ -21,6 +22,7 @@ struct Args {
     request_bound: usize,
     request_timeout_ms: u64,
     bearer: Option<String>,
+    backend: ObjectBackend,
 }
 
 fn main() -> ExitCode {
@@ -45,18 +47,19 @@ fn run() -> Result<(), String> {
         Some(args) => args,
         None => {
             println!(
-                "mikura-host {} {}\nusage: mikura-host --log PATH [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\n       mikura-host backup --log SRC --to DST [--incremental]\n       mikura-host verify --log PATH\n       mikura-host restore --from BACKUP --to DST [--point ID]\nclose stdin to stop; uncommitted stream pushes are not flushed",
+                "mikura-host {} {}\nusage: mikura-host --log PATH [--backend file|object] [--object-url URL] [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\n       mikura-host backup --log SRC --to DST [--incremental]\n       mikura-host verify --log PATH\n       mikura-host restore --from BACKUP --to DST [--point ID]\nobject backend token: {OBJECT_TOKEN_ENV} (no default URL or token)\nclose stdin to stop; uncommitted stream pushes are not flushed",
                 env!("MIKURA_GIT_VERSION"),
                 env!("MIKURA_GIT_COMMIT")
             );
             return Ok(());
         }
     };
-    let (host, listener) = Host::listen(
+    let (host, listener) = Host::listen_with(
         &args.log,
         args.stream_bound,
         args.bind,
         args.bearer.as_deref(),
+        args.backend,
     )?;
     host.set_request_limits(
         args.request_bound,
@@ -103,11 +106,19 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut request_bound = DEFAULT_REQUEST_BOUND;
     let mut request_timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS;
     let mut bearer = None;
+    let mut backend_name = "file".to_string();
+    let mut object_url = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--log" => {
                 log = Some(PathBuf::from(required_value("--log", args.next())?));
+            }
+            "--backend" => {
+                backend_name = required_value("--backend", args.next())?;
+            }
+            "--object-url" => {
+                object_url = Some(required_value("--object-url", args.next())?);
             }
             "--bind" => {
                 let value = required_value("--bind", args.next())?;
@@ -141,6 +152,24 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     let log = log.ok_or_else(|| "missing --log PATH".to_string())?;
+    let backend = match backend_name.as_str() {
+        "file" => {
+            if object_url.is_some() {
+                return Err("file backend refuses --object-url".into());
+            }
+            ObjectBackend::File
+        }
+        "object" => {
+            let endpoint = object_url.ok_or_else(|| {
+                "object backend requires --object-url; this crate holds no default".to_string()
+            })?;
+            let token = std::env::var(OBJECT_TOKEN_ENV)
+                .ok()
+                .filter(|value| !value.is_empty());
+            ObjectBackend::http(endpoint, token).map_err(|e| e.to_string())?
+        }
+        other => return Err(format!("unknown --backend {other}; use file or object")),
+    };
     Ok(Some(Args {
         log,
         bind,
@@ -148,6 +177,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         request_bound,
         request_timeout_ms,
         bearer,
+        backend,
     }))
 }
 

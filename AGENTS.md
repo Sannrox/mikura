@@ -18,7 +18,7 @@ tracked. Do not treat that directory as gitignored.
 | --- | --- |
 | `src/lib.rs` | Crate root and public exports |
 | `src/log.rs` | 4 KiB CRC pages + group-commit writer; `MIKURAV4` swap-commit ([ADR 0001](docs/decisions/0001-paged-log.md), [ADR 0047](docs/decisions/0047-object-storage-store-of-record.md)) |
-| `src/objects.rs` | File-backend object namespace and exclusive-create CAS |
+| `src/objects/` | File and HTTP object backends, exclusive-create CAS, writer probe |
 | `src/codec.rs` | Shared length-prefixed string helpers for log and join sidecar |
 | `src/joins.rs` | Interned `JoinMaps`, last-hop and one-property group rollups, sidecar checksum helpers (`MKJOIN06`) |
 | `src/paged.rs` | Paged join projection (`MKJOIN07`) plus serving page cache ([ADR 0048](docs/decisions/0048-paged-projection-serving-budget.md)) |

@@ -199,12 +199,12 @@ impl Metrics {
             "mikura_open_replay_seconds {open_replay_seconds:.6}\n"
         ));
         out.push_str(
-            "# HELP mikura_storage_puts_total Writer FileStore puts since this process opened the log.\n",
+            "# HELP mikura_storage_puts_total Writer object-backend puts since this process opened the log.\n",
         );
         out.push_str("# TYPE mikura_storage_puts_total counter\n");
         out.push_str(&format!("mikura_storage_puts_total {storage_puts}\n"));
         out.push_str(
-            "# HELP mikura_storage_gets_total Writer FileStore gets since this process opened the log.\n",
+            "# HELP mikura_storage_gets_total Writer object-backend gets since this process opened the log.\n",
         );
         out.push_str("# TYPE mikura_storage_gets_total counter\n");
         out.push_str(&format!("mikura_storage_gets_total {storage_gets}\n"));
