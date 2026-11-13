@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-10-16
 - Owners: mikura maintainers
-- Related: [#243](https://github.com/Sannrox/mikura/issues/243), [#188](https://github.com/Sannrox/mikura/issues/188), [#187](https://github.com/Sannrox/mikura/issues/187), [#319](https://github.com/Sannrox/mikura/issues/319), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md)
+- Related: [#243](https://github.com/Sannrox/mikura/issues/243), [#188](https://github.com/Sannrox/mikura/issues/188), [#187](https://github.com/Sannrox/mikura/issues/187), [#319](https://github.com/Sannrox/mikura/issues/319), [#336](https://github.com/Sannrox/mikura/issues/336), [ADR 0003](0003-hosted-service.md), [ADR 0016](0016-production-workload.md), [ADR 0021](0021-bounded-host-execution.md), [ADR 0048](0048-paged-projection-serving-budget.md), spike [017](../../spikes/017-snapshot-read/NOTES.md)
 - Amends: [ADR 0021](0021-bounded-host-execution.md) (one RPC at a time). Line-assembly bounds, fail-closed overload, run-to-completion after a complete line, and unpublished mixed-load SLOs stay.
 - Supersedes: none
 - Superseded by: none
@@ -264,5 +264,58 @@ same rule.
   ([ADR 0026](0026-atomic-ingest-batch.md)) and a permanent failure needs
   process restart.
 - No log or sidecar format change.
-- [#336](https://github.com/Sannrox/mikura/issues/336) snapshot-on-read
-  research can treat stream and batch as one committed-visibility rule.
+- Stream and batch share one committed-visibility rule. Snapshot-on-read
+  research in [#336](https://github.com/Sannrox/mikura/issues/336) closed
+  no-action in the amendment below.
+
+## Amendment 2026-11-13: keep exclusive apply; no second projection generation
+
+Related: [#336](https://github.com/Sannrox/mikura/issues/336), spike
+[017](../../spikes/017-snapshot-read/NOTES.md).
+
+### Context
+
+[#336](https://github.com/Sannrox/mikura/issues/336) asked whether host
+`load` and `evaluate` should pin the last committed snapshot so readers
+never wait on an in-flight write. The cited interference was pre-split
+`host_read_under_writes` p50 ≈ 15 ms at 10⁶ objects. After the 2026-10-28
+amendment, spike 017 on Linux x86_64 (12 CPUs) measured:
+
+| Size | idle `load` p50 / p99 | `load` under writes p50 / p95 / p99 | `load` under evaluate+writes p50 / p99 | one-hop `evaluate` beside loads and writes p50 / p99 | write-alone p50 |
+| ---: | --- | --- | --- | --- | ---: |
+| 10⁴ | 4.5 µs / 7.6 µs | 7.4 µs / 39.3 µs / 83.4 µs | 5.9 µs / 182.2 µs | 237 µs / 1.22 ms | 7.35 ms |
+| 10⁶ | 6.3 µs / 8.5 µs | 5.8 µs / 30.6 µs / 227.7 µs | 5.8 µs / 413.2 µs | 27.39 ms / 77.25 ms | 7.98 ms |
+
+Write-alone is the group-commit fsync. Point `load` under concurrent
+100-record batches stays in microseconds, including while two one-hop
+evaluate threads hold shared access. The remaining `load` tail is
+exclusive apply of that batch. Evaluate duration is the query, not fsync.
+Dual-read of live `load` against `Store::open` held. The host fixture
+`mixed_load_read_p95_stays_under_a_second` times evaluate RPCs on an
+8-record store; it is not this spike. No consumer SLO
+([ADR 0016](0016-production-workload.md)).
+
+A throwaway `HashMap<u64, u64>` clone at 10⁶ is 24 ms and a second copy
+(59.6 MiB → 93.6 MiB). Product `peak_rss` at 10⁶ is 787.8 MiB.
+
+### Decision
+
+**No-action. Keep exclusive apply of a durable batch. Do not pin a second
+generation of the live maps for snapshot-on-read or double-buffering.**
+
+Readers continue to observe the applied, committed generation. Stream
+push stays invisible until flush. The object log stays authority.
+
+### Alternatives considered
+
+| Option | Why not |
+| --- | --- |
+| Snapshot-on-read (pin a committed copy per reader) | One full projection copy per snapshot reader was already rejected ([ADR 0048](0048-paged-projection-serving-budget.md)). Remaining `load` wait is sub-millisecond even beside evaluate. |
+| Double-buffered projections swapped at commit | Same second generation at 10⁶, already rejected in the 2026-10-28 amendment. Clone of a u64 map is 24 ms, larger than the remaining `load` apply wait. |
+
+### Consequences
+
+- No log, sidecar, host wire, or `SharedStore` change.
+- Measured interference lives in
+  [docs/benchmarks.md](../benchmarks.md) and spike 017. Revisit only if a
+  consumer publishes a mixed-load target the exclusive apply misses.

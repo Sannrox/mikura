@@ -205,6 +205,35 @@ Readings:
   checkpoint rewrite, and an encrypted sidecar persist still hold readers
   out for their sync. This bench does not exercise them.
 
+## Exclusive apply stays; no snapshot-on-read
+
+[#336](https://github.com/Sannrox/mikura/issues/336), ADR 0040 amendment.
+Spike [017](../spikes/017-snapshot-read/NOTES.md) remeasured
+`host_read_under_writes` after the split commit, plus `load` beside
+one-hop `evaluate` and writes, and compared them with a throwaway HashMap
+clone / Arc-swap. Linux x86_64, 12 CPUs, AMD Ryzen 5 PRO 4650U,
+`cargo run --release` in the spike, 2026-11-13. Scratch on the worktree
+disk.
+
+| Size | idle `load` p50 / p99 | `load` under writes p50 / p95 / p99 | `load` under evaluate+writes p50 / p99 | one-hop `evaluate` beside loads and writes p50 / p99 | `host_write_alone` p50 |
+| ---: | --- | --- | --- | --- | ---: |
+| 10⁴ | 4.5 µs / 7.6 µs | 7.4 µs / 39.3 µs / 83.4 µs | 5.9 µs / 182.2 µs | 237 µs / 1.22 ms | 7.35 ms |
+| 10⁶ | 6.3 µs / 8.5 µs | 5.8 µs / 30.6 µs / 227.7 µs | 5.8 µs / 413.2 µs | 27.39 ms / 77.25 ms | 7.98 ms |
+
+Readings:
+
+- The wait point for `load` is exclusive apply, not commit fsync.
+  Write-alone is milliseconds; `load` under writes stays microseconds,
+  including while two evaluate threads hold shared access.
+- Evaluate duration is the query (one-hop declared sum), not fsync.
+- The host fixture `mixed_load_read_p95_stays_under_a_second` times
+  evaluate RPCs on an 8-record store. It is not this spike. No consumer
+  SLO ([ADR 0016](decisions/0016-production-workload.md)).
+- A second `HashMap<u64, u64>` at 10⁶ costs 24 ms to clone and tens of
+  MiB. A second live projection would add the 787.8 MiB `peak_rss`.
+- Closed no-action: keep exclusive apply. No snapshot-on-read or
+  double-buffered maps in the store.
+
 ## Nightly gate
 
 `.github/workflows/bench.yml` runs 10^4 and 10^6 every night on

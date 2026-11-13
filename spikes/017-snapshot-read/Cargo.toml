@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "mikura-snapshot-read-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: host reads under writes versus a snapshot clone. Not the store of record."
+
+[[bin]]
+name = "mikura-snapshot-read-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
+mikura-host = { path = "../../crates/mikura-host" }
+mikura-ingest = { path = "../../crates/mikura-ingest" }
