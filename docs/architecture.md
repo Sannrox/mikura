@@ -495,7 +495,9 @@ per-namespace fair share; one writer runs at a time
 the split commit of `SharedStore`: it admits and seals the batch under shared
 access, writes and syncs the log while readers continue, and holds readers
 out only to apply the durable records with the recovery replay step. Readers
-see a batch whole or not at all, and never before it is durable. Other
+see a batch whole or not at all, and never before it is durable. Snapshot-on-read
+and a second projection generation closed no-action
+([#336](https://github.com/Sannrox/mikura/issues/336), ADR 0040). Other
 writes, and batches the split path does not cover, run exclusively
 (ADR 0040 amendment, [#261](https://github.com/Sannrox/mikura/issues/261)). `--request-bound` and
 `--request-timeout-ms` bound line assembly only; after a complete line,

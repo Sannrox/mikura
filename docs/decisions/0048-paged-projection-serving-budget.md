@@ -126,8 +126,10 @@ latency SLO; the product bench records what the budgeted path costs.
 - [#359](https://github.com/Sannrox/mikura/issues/359) sizes its
   dual-projection window against this budget. [#361](https://github.com/Sannrox/mikura/issues/361)
   reuses the page layout as a derived object.
-- [#336](https://github.com/Sannrox/mikura/issues/336) may change how
-  readers pin a committed snapshot. It does not change this layout.
+- [#336](https://github.com/Sannrox/mikura/issues/336) closed no-action:
+  readers still pin the applied generation; exclusive apply stays
+  ([ADR 0040](0040-concurrent-host-readers.md)). It does not change this
+  layout.
 
 ## Validation
 
