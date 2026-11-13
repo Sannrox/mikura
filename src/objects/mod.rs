@@ -359,13 +359,71 @@ fn insert_named(keys: &mut BTreeSet<String>, key: &str) {
 }
 
 /// Unique object key so a leftover put never fences the live writer.
-pub(crate) fn unique_object_key(kind: &str, stamp: u32) -> String {
+///
+/// `writer_version` is the manifest version of the process that staged the
+/// object. Collection waits until a later version has fenced that writer
+/// (ADR 0047 §11).
+pub(crate) fn unique_object_key(kind: &str, writer_version: u64, stamp: u32) -> String {
     let seq = NEXT_KEY.fetch_add(1, Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    format!("{kind}.{stamp}.{nanos:x}-{seq:x}")
+    format!("{kind}.{stamp}.w{writer_version}.{nanos:x}-{seq:x}")
+}
+
+/// Manifest version encoded in a staged object key, when present.
+pub(crate) fn staged_writer_version(key: &str) -> Option<u64> {
+    let mut rest = key;
+    while let Some(idx) = rest.find(".w") {
+        let after = &rest[idx + 2..];
+        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 {
+            let next = after.as_bytes().get(digits);
+            if next.is_none_or(|b| *b == b'.') {
+                return after[..digits].parse().ok();
+            }
+        }
+        rest = &rest[idx + 2..];
+    }
+    None
+}
+
+/// Unreferenced object whose stager is already fenced, or unversioned debris
+/// (`probe`, a leftover unversioned object or temp). Live keys, in-flight
+/// temps of a live writer, and manifests at or above `fenced_before` stay.
+pub(crate) fn collectable(key: &str, live: &BTreeSet<String>, fenced_before: u64) -> bool {
+    if live.contains(key) {
+        return false;
+    }
+    if let Some(rest) = key.strip_prefix("manifest.") {
+        return rest
+            .parse::<u64>()
+            .ok()
+            .is_some_and(|version| version < fenced_before);
+    }
+    match staged_writer_version(key) {
+        Some(version) => version < fenced_before,
+        None => true,
+    }
+}
+
+fn collect_order(a: &str, b: &str) -> std::cmp::Ordering {
+    match (a.starts_with("manifest."), b.starts_with("manifest.")) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.cmp(b),
+    }
+}
+
+/// True while `manifest.{claimed+1}` does not exist: this writer still owns
+/// the claimed snapshot. Checked before every delete.
+pub(crate) fn owns_manifest_version(store: &ObjectStore, claimed: u64) -> Result<bool, String> {
+    match store.get(&format!("manifest.{}", claimed + 1)) {
+        Ok(_) => Ok(false),
+        Err(err) if object_missing(&err) => Ok(true),
+        Err(err) => Err(err),
+    }
 }
 
 pub(crate) fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
@@ -778,29 +836,59 @@ impl FileStore {
         Ok(false)
     }
 
-    pub(crate) fn collect(&self, live: &BTreeSet<String>) -> Result<(), String> {
-        self.collect.fetch_add(1, Ordering::Relaxed);
+    pub(crate) fn list(&self) -> Result<Vec<String>, String> {
         if let Some(memory) = &self.memory {
-            let mut map = memory.lock().map_err(|e| e.to_string())?;
-            map.retain(|name, _| live.contains(name));
-            return Ok(());
+            let map = memory.lock().map_err(|e| e.to_string())?;
+            return Ok(map.keys().cloned().collect());
         }
+        let mut names = Vec::new();
         let entries = std::fs::read_dir(&self.root).map_err(|e| e.to_string())?;
         for entry in entries {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let name = entry.file_name();
+            let name = entry.map_err(|e| e.to_string())?.file_name();
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if live.contains(name) {
+            names.push(name.to_string());
+        }
+        Ok(names)
+    }
+
+    pub(crate) fn collect(
+        &self,
+        live: &BTreeSet<String>,
+        fenced_before: u64,
+        still_owner: &dyn Fn() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        self.collect.fetch_add(1, Ordering::Relaxed);
+        let mut names = self.list()?;
+        names.sort_by(|a, b| collect_order(a, b));
+        for name in names {
+            if !collectable(&name, live, fenced_before) {
                 continue;
             }
-            let _ = crate::fault::unlink(&entry.path());
+            if !still_owner()? {
+                return Err(format!("{}: lost maintenance ownership", crate::LOG_FENCED));
+            }
+            self.delete_unreferenced(&name)?;
         }
         if self.durable {
             crate::durable::sync_parent(&self.root.join("."))?;
         }
         Ok(())
+    }
+
+    fn delete_unreferenced(&self, key: &str) -> Result<(), String> {
+        if let Some(memory) = &self.memory {
+            let mut map = memory.lock().map_err(|e| e.to_string())?;
+            map.remove(key);
+            return Ok(());
+        }
+        let path = self.root.join(key);
+        match crate::fault::unlink(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.contains("not found") || error.contains("No such file") => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn remove(&self, key: &str) -> Result<(), String> {
@@ -947,10 +1035,25 @@ impl ObjectStore {
         }
     }
 
-    pub(crate) fn collect(&self, live: &BTreeSet<String>) -> Result<(), String> {
+    #[cfg(test)]
+    pub(crate) fn list(&self) -> Result<Vec<String>, String> {
         match self {
-            Self::File(store) => store.collect(live),
-            Self::Http(store) => store.collect(live).map_err(|e| e.to_string()),
+            Self::File(store) => store.list(),
+            Self::Http(store) => store.list().map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn collect(
+        &self,
+        live: &BTreeSet<String>,
+        fenced_before: u64,
+        still_owner: &dyn Fn() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        match self {
+            Self::File(store) => store.collect(live, fenced_before, still_owner),
+            Self::Http(store) => store
+                .collect(live, fenced_before, still_owner)
+                .map_err(|e| e.to_string()),
         }
     }
 }
@@ -1056,10 +1159,84 @@ mod tests {
         store.put("seg.2", b"drop").unwrap();
         let mut live = BTreeSet::new();
         live.insert("seg.1".into());
-        store.collect(&live).unwrap();
+        store.collect(&live, 1, &|| Ok(true)).unwrap();
         assert_eq!(store.get("seg.1").unwrap(), b"keep");
         assert!(store.get("seg.2").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_skips_a_live_writer_segment() {
+        let dir = scratch("gc-live");
+        let store = FileStore::create(&dir, false).unwrap();
+        let live_key = unique_object_key("seg", 3, 2);
+        let stale_key = unique_object_key("seg", 2, 2);
+        store.put(&live_key, b"in-flight").unwrap();
+        store.put(&stale_key, b"fenced").unwrap();
+        let live = BTreeSet::new();
+        store.collect(&live, 3, &|| Ok(true)).unwrap();
+        assert_eq!(store.get(&live_key).unwrap(), b"in-flight");
+        assert!(store.get(&stale_key).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_drops_reference_before_data() {
+        let dir = scratch("gc-order");
+        let store = FileStore::create(&dir, false).unwrap();
+        store.put("seg.1.w1.x", b"data").unwrap();
+        store.put("manifest.1", b"old").unwrap();
+        let steps = std::sync::atomic::AtomicU64::new(0);
+        let err = store
+            .collect(&BTreeSet::new(), 2, &|| {
+                if steps.fetch_add(1, Ordering::Relaxed) >= 1 {
+                    return Ok(false);
+                }
+                Ok(true)
+            })
+            .unwrap_err();
+        assert!(err.contains(crate::LOG_FENCED), "{err}");
+        assert!(
+            store.get("manifest.1").is_err(),
+            "old manifest must go first"
+        );
+        assert_eq!(store.get("seg.1.w1.x").unwrap(), b"data");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collectable_keeps_newer_manifests_and_temps() {
+        let live = BTreeSet::new();
+        assert!(!collectable("manifest.3", &live, 3));
+        assert!(collectable("manifest.2", &live, 3));
+        assert!(!collectable(".tmp-1-2-seg.1.w3.x", &live, 3));
+        assert!(collectable(".tmp-1-2-seg.1.w1.x", &live, 3));
+        let mut named = BTreeSet::new();
+        named.insert("seg.keep".into());
+        assert!(!collectable("seg.keep", &named, 3));
+    }
+
+    #[test]
+    fn collect_drops_a_fenced_writer_temp() {
+        let dir = scratch("gc-tmp");
+        let store = FileStore::create(&dir, false).unwrap();
+        let live_tmp = format!(".tmp-1-2-{}", unique_object_key("seg", 3, 2));
+        let stale_tmp = format!(".tmp-1-2-{}", unique_object_key("seg", 2, 2));
+        std::fs::write(dir.join(&live_tmp), b"live").unwrap();
+        std::fs::write(dir.join(&stale_tmp), b"stale").unwrap();
+        store.collect(&BTreeSet::new(), 3, &|| Ok(true)).unwrap();
+        assert!(dir.join(&live_tmp).is_file());
+        assert!(!dir.join(&stale_tmp).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn staged_key_encodes_writer_version() {
+        let key = unique_object_key("seg", 7, 4);
+        assert_eq!(staged_writer_version(&key), Some(7));
+        assert!(key.starts_with("seg.4.w7."));
+        assert_eq!(staged_writer_version("probe"), None);
+        assert_eq!(staged_writer_version("manifest.3"), None);
     }
 
     #[test]

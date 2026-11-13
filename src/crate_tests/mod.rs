@@ -4,6 +4,7 @@ mod associates;
 mod backup;
 mod batch;
 mod change_set;
+mod collect;
 mod delta;
 mod durable;
 mod encrypt;

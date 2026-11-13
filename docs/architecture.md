@@ -172,9 +172,14 @@ those pages are read. `Store::storage_calls` exposes the counts.
   (`Store::append_batch`, [ADR 0026](decisions/0026-atomic-ingest-batch.md)).
   A crash mid-batch drops the uncommitted tail; rebuild reads only pages
   the current manifest names.
-- Staged segments whose swap never landed are unreferenced garbage,
-  collected on the next open-for-write. Missing committed objects fail
-  closed.
+- Staged segments whose swap never landed are unreferenced garbage.
+  Collection is a write (`Store::collect`, and on open-for-write): the
+  successor snapshot is the owner record. A second collector is fenced
+  and refuses. A segment is collected only when it is unreferenced and
+  the writer that staged it has been fenced by a later manifest version.
+  Deletion drops the unretained manifest first, then the data, so a
+  snapshot that opens names only objects that exist. Missing committed
+  objects fail closed.
 
 JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 
