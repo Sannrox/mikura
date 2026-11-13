@@ -151,7 +151,7 @@ in [docs/architecture.md](docs/architecture.md).
 | Report a vulnerability | [SECURITY.md](SECURITY.md) |
 
 Everything else is in the [documentation index](docs/README.md). Spikes
-001–011 under [`spikes/`](spikes/README.md) are throwaway measurements, not
+under [`spikes/`](spikes/README.md) are throwaway measurements, not
 the store of record.
 
 ## Status
@@ -164,9 +164,12 @@ place; interfaces may change between minor releases under the
 principal-aware ACL on the wire, and multi-process hosting. Pre-namespace
 logs migrate with `Store::migrate_unnamespaced`, which writes a new log and
 leaves the source unchanged
-([ADR 0030](docs/decisions/0030-unnamespaced-log-migration.md)). One process
-owns one log today
-([ADR 0023](docs/decisions/0023-single-process-availability.md)); work is
+([ADR 0030](docs/decisions/0030-unnamespaced-log-migration.md)). One writer owns one log today
+([ADR 0023](docs/decisions/0023-single-process-availability.md)).
+Acknowledged writes surviving machine or disk loss is accepted as a
+swap-committed object-storage store of record
+([ADR 0047](docs/decisions/0047-object-storage-store-of-record.md)) and
+is not in this crate yet. Work is
 tracked in [GitHub Issues](https://github.com/Sannrox/mikura/issues).
 
 Suitable for local experiments and for contributing to the kernel. Not a

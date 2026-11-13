@@ -584,13 +584,27 @@ keys. `MIKURAV1` fails closed
 ([ADR 0028](decisions/0028-store-namespace.md)) until migrated
 ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)).
 
+Acknowledgement still ends at this process's superblock fsync. On disk
+loss, recovery is the last backup copy
+([ADR 0023](decisions/0023-single-process-availability.md),
+[ADR 0037](decisions/0037-online-backup-and-restore.md)). The accepted
+path that survives machine and disk loss of the compute host is a
+swap-committed manifest on object storage
+([ADR 0047](decisions/0047-object-storage-store-of-record.md),
+[#335](https://github.com/Sannrox/mikura/issues/335)); it is not in
+this crate yet
+([#340](https://github.com/Sannrox/mikura/issues/340)).
+
 ## What v1 does not do
 
-- Multi-process replication (researched no-action: one process remains enough;
-  restore from the object log; unpublished RPO/RTO is not a miss;
+- Multi-process replication (still out: one writer at a time; followers
+  were not selected. The published data-loss miss is
+  [ADR 0047](decisions/0047-object-storage-store-of-record.md), not a
+  replica protocol;
   [#56](https://github.com/Sannrox/mikura/issues/56),
   [#190](https://github.com/Sannrox/mikura/issues/190),
   [#244](https://github.com/Sannrox/mikura/issues/244),
+  [#335](https://github.com/Sannrox/mikura/issues/335),
   [ADR 0023](decisions/0023-single-process-availability.md))
 - Encrypt logs
 - Incremental join WAL (dirty commits write a delta; not a per-op WAL)

@@ -23,6 +23,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 | [013-row-filter-envelope](013-row-filter-envelope/NOTES.md) | 10⁷ two-hop with a 1 % restriction row filter vs open two-hop and root predicate | HOLD on root (104 ms); hop-target filter 7.9 s MISS |
 | [014-paged-projection](014-paged-projection/NOTES.md) | Paged 4 KiB cache vs in-memory maps; RSS at 10⁴ and 10⁶ | HOLD: paged RSS stays near the cache; mmap-and-decode does not |
 | [015-maintained-view](015-maintained-view/NOTES.md) | sabun view vs evaluate-time breakdown; 10⁶ warm **221 ns vs 1.80 s**; commit +8.6 %; replay inside open | HOLD: miss; follow-up [#372](https://github.com/Sannrox/mikura/issues/372), not a view engine in the store |
+| [016-swap-commit](016-swap-commit/NOTES.md) | Swap-committed manifest vs restore-from-log; disk-loss RPO is backup lag; remote swap 26 ms at 10 ms RTT | VALIDATED: accept [ADR 0047](../docs/decisions/0047-object-storage-store-of-record.md); no followers; takeover RTO and remote GET unmeasured ([#340](https://github.com/Sannrox/mikura/issues/340), [#360](https://github.com/Sannrox/mikura/issues/360)) |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.

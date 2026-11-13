@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-swap-commit-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: swap-committed manifest versus fsync superblock. Not the store of record."
+
+[[bin]]
+name = "mikura-swap-commit-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }

@@ -38,6 +38,11 @@ holds 500 ms at 10⁷. A miss is not an engine pick. Scale-out after this
 ceiling closed no-action
 ([#248](https://github.com/Sannrox/mikura/issues/248),
 [ADR 0046](docs/decisions/0046-unpartitioned-store-after-synthetic-ceiling.md)).
+The published availability miss (acknowledged writes survive machine or
+disk loss) is a swap-committed object-storage store of record, not a
+replica ([#335](https://github.com/Sannrox/mikura/issues/335),
+[ADR 0047](docs/decisions/0047-object-storage-store-of-record.md)).
+Implementation is [#340](https://github.com/Sannrox/mikura/issues/340).
 
 Out until an ADR: per-op join WAL; principals or tenants in this crate; a
 query language; a cluster compute backend; group-by or other aggregates
