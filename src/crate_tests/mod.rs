@@ -28,6 +28,7 @@ mod paged;
 mod pages;
 mod persist;
 mod predicates;
+mod projection_switch;
 mod restriction;
 mod row_filter;
 mod schema;

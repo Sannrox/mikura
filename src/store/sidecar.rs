@@ -45,14 +45,12 @@ impl Store {
             if !self.writer.withheld().is_empty() {
                 return Ok(());
             }
-            self.persist_paged_checkpoint(pages)?;
-            self.sidecar_checkpoint_stamp = pages;
-            self.sidecar_delta_stamp = None;
-            let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
-            self.dirty.clear();
-            self.has_checkpoint = true;
-            self.delta_bytes = 0;
-            self.finish_projection_persist();
+            if self.paged.is_some() && self.dirty.is_empty() && self.has_checkpoint {
+                self.finish_projection_persist();
+                return Ok(());
+            }
+            self.publish_paged_checkpoint(pages)?;
+            self.adopt_published_projection(pages)?;
             return Ok(());
         }
         if self.writer.keys().is_some() {
@@ -63,12 +61,10 @@ impl Store {
                 return Ok(());
             }
             self.rewrite_checkpoint(pages)?;
-            self.finish_projection_persist();
             return Ok(());
         }
         if self.needs_checkpoint_rewrite() {
             self.rewrite_checkpoint(pages)?;
-            self.finish_projection_persist();
             return Ok(());
         }
         let bytes = self.write_delta(pages)?;
@@ -93,7 +89,6 @@ impl Store {
         self.dirty.clear();
         if self.delta_bytes > self.delta_compact_bytes {
             self.rewrite_checkpoint(pages)?;
-            self.finish_projection_persist();
             return Ok(());
         }
         self.note_projection_persisted();
@@ -138,14 +133,33 @@ impl Store {
 
     fn rewrite_checkpoint(&mut self, pages: u32) -> Result<(), String> {
         self.persist_checkpoint(pages)?;
+        self.adopt_published_projection(pages)
+    }
+
+    /// Publish a complete replacement sidecar (`{log}.joins.tmp` then rename)
+    /// without touching the serving maps. Callers adopt after the name switch.
+    pub(super) fn publish_checkpoint(&self, pages: u32) -> Result<(), String> {
+        self.persist_checkpoint(pages)
+    }
+
+    /// Switch metadata (and the budgeted page file) to a sidecar already
+    /// published beside the previous one. The previous maps or `PagedFile`
+    /// stay reachable until this store drops them.
+    pub(super) fn adopt_published_projection(&mut self, pages: u32) -> Result<(), String> {
         self.sidecar_checkpoint_stamp = pages;
         self.sidecar_delta_stamp = None;
         let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
         self.dirty.clear();
         self.has_checkpoint = true;
         self.delta_bytes = 0;
-        self.ensure_schema_history()?;
-        self.persist_log_checkpoint()
+        if let Some(budget) = self.serving_budget {
+            self.attach_serving_sidecar(&Self::join_map_path(&self.log), budget)?;
+        } else {
+            self.ensure_schema_history()?;
+            self.persist_log_checkpoint()?;
+        }
+        self.finish_projection_persist();
+        Ok(())
     }
 
     pub(super) fn encode_projection_after_magic(&self, body: &mut Vec<u8>) -> Result<(), String> {
@@ -226,7 +240,7 @@ impl Store {
 
     fn persist_checkpoint(&self, pages: u32) -> Result<(), String> {
         if self.serving_budget.is_some() {
-            return self.persist_paged_checkpoint(pages);
+            return self.publish_paged_checkpoint(pages);
         }
         if let Some(store_dek) = self.writer.store_dek() {
             let mut plains = BTreeMap::new();
@@ -254,10 +268,19 @@ impl Store {
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
-    pub(super) fn persist_paged_checkpoint(&self, pages: u32) -> Result<(), String> {
-        if self.paged.is_some() {
-            return Ok(());
+    pub(super) fn persist_paged_checkpoint(&mut self, pages: u32) -> Result<(), String> {
+        if self.writer.withheld().is_empty() {
+            self.publish_paged_checkpoint(pages)?;
+            self.adopt_published_projection(pages)
+        } else {
+            Ok(())
         }
+    }
+
+    /// Encode the live maps into a new page file beside `{log}.joins` and
+    /// publish it with one rename. Serving maps stay as they are until
+    /// [`Self::adopt_published_projection`].
+    pub(super) fn publish_paged_checkpoint(&self, pages: u32) -> Result<(), String> {
         if self.writer.keys().is_some() {
             return Err("serving budget is not available on encrypted stores".into());
         }
@@ -272,7 +295,6 @@ impl Store {
             &self.joins,
         )?;
         crate::paged::persist_pages(&Self::join_map_path(&self.log), &bytes)?;
-        let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
         Ok(())
     }
 

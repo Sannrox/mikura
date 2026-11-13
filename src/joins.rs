@@ -1944,10 +1944,16 @@ pub(crate) fn append_checksummed(path: &Path, body: &[u8]) -> Result<(), String>
 
 pub(crate) fn write_checksummed(path: &Path, body: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    let mut file = crate::fault::create(&tmp)?;
-    write_body_and_crc(&mut file, body)?;
-    crate::fault::sync_data(&file)?;
-    crate::durable::rename(&tmp, path)
+    let result = (|| {
+        let mut file = crate::fault::create(&tmp)?;
+        write_body_and_crc(&mut file, body)?;
+        crate::fault::sync_data(&file)?;
+        crate::durable::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub(crate) fn read_checksummed(path: &Path) -> Result<Vec<u8>, String> {

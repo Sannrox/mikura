@@ -67,6 +67,10 @@ enum Persist {
     None,
     /// Append a delta frame stamped at these committed pages.
     Delta(u32),
+    /// Write a replacement checkpoint beside the serving sidecar, then adopt.
+    Rewrite(u32),
+    /// Write a replacement paged sidecar beside the serving one, then adopt.
+    Paged(u32),
 }
 
 const POISONED: &str = "store lock poisoned; reopen the store";
@@ -153,6 +157,8 @@ impl SharedStore {
         let persisted = persist.and_then(|persist| match persist {
             Persist::None => Ok(()),
             Persist::Delta(pages) => self.persist_delta(pages),
+            Persist::Rewrite(pages) => self.persist_rewrite(pages),
+            Persist::Paged(pages) => self.persist_paged(pages),
         });
         drop(writer);
         BatchWrite::Done(persisted.map_err(|error| {
@@ -167,6 +173,25 @@ impl SharedStore {
             .write()
             .map_err(|_| POISONED.to_string())?
             .adopt_delta(pages, bytes)
+    }
+
+    /// Encode and publish a replacement `{log}.joins` while readers still
+    /// hold the previous maps, then switch stamps under exclusive access.
+    fn persist_rewrite(&self, pages: u32) -> Result<(), String> {
+        self.read()?.publish_checkpoint(pages)?;
+        self.store
+            .write()
+            .map_err(|_| POISONED.to_string())?
+            .adopt_published_projection(pages)
+    }
+
+    /// Same split for a budgeted `MKJOIN07` replacement.
+    fn persist_paged(&self, pages: u32) -> Result<(), String> {
+        self.read()?.publish_paged_checkpoint(pages)?;
+        self.store
+            .write()
+            .map_err(|_| POISONED.to_string())?
+            .adopt_published_projection(pages)
     }
 }
 
@@ -254,13 +279,20 @@ impl Store {
         if self.has_pending() || !self.projection_persist_due(false) {
             return Ok(Persist::None);
         }
-        if self.writer.keys().is_some() || self.needs_checkpoint_rewrite() {
-            // Encrypted sidecars and checkpoint rewrites keep the exclusive
-            // persist. A failed persist leaves the dirty set for the next.
+        let pages = self.writer.committed_pages();
+        if self.writer.keys().is_some() {
+            // Encrypted sidecars keep the exclusive persist (partitioned
+            // seal). A failed persist leaves the dirty set for the next.
             self.persist_projection()?;
             return Ok(Persist::None);
         }
-        Ok(Persist::Delta(self.writer.committed_pages()))
+        if self.serving_budget.is_some() {
+            return Ok(Persist::Paged(pages));
+        }
+        if self.needs_checkpoint_rewrite() {
+            return Ok(Persist::Rewrite(pages));
+        }
+        Ok(Persist::Delta(pages))
     }
 }
 
