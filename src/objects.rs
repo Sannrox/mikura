@@ -430,7 +430,15 @@ impl FileStore {
                 .ok_or_else(|| format!("get {key}: not found"));
         }
         let path = self.object_path(key)?;
-        let mut file = crate::fault::open_read(&path)?;
+        let mut file = match crate::fault::open_read(&path) {
+            Ok(file) => file,
+            Err(error) => match std::fs::metadata(&path) {
+                Err(meta) if meta.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(format!("get {key}: not found"));
+                }
+                _ => return Err(format!("get {key}: {error}")),
+            },
+        };
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
             .map_err(|e| format!("get {key}: {e}"))?;
@@ -466,6 +474,8 @@ impl FileStore {
     }
 
     /// A lost swap response is resolved by reading the successor manifest.
+    /// When that read is unavailable the outcome is unknown, never success
+    /// or a definite fence (ADR 0047, #358).
     fn resolve_cas(
         &self,
         expected: u64,
@@ -476,12 +486,17 @@ impl FileStore {
         match self.get(&format!("manifest.{next}")) {
             Ok(landed) if landed == bytes => Ok((next, 0)),
             Ok(_) => Err(format!("{}: manifest {next} exists", crate::LOG_FENCED)),
-            Err(_) => match self.current()? {
-                Some((version, _)) if version > expected => {
+            Err(get_err) if object_missing(&get_err) => match self.current() {
+                Ok(Some((version, _))) if version > expected => {
                     Err(format!("{}: manifest {next} exists", crate::LOG_FENCED))
                 }
-                _ => Err(error),
+                Ok(_) => Err(error),
+                Err(current_err) => Err(format!(
+                    "{}: {error}; {current_err}",
+                    crate::UNCERTAIN_COMMIT
+                )),
             },
+            Err(get_err) => Err(format!("{}: {error}; {get_err}", crate::UNCERTAIN_COMMIT)),
         }
     }
 
@@ -568,7 +583,7 @@ impl FileStore {
             if live.contains(name) {
                 continue;
             }
-            let _ = std::fs::remove_file(entry.path());
+            let _ = crate::fault::unlink(&entry.path());
         }
         if self.durable {
             crate::durable::sync_parent(&self.root.join("."))?;
@@ -618,6 +633,10 @@ fn valid_key(key: &str) -> bool {
 
 fn already_exists(error: &str) -> bool {
     error.contains("exists") || error.contains("EEXIST")
+}
+
+fn object_missing(error: &str) -> bool {
+    error.contains("not found")
 }
 
 fn crc32(bytes: &[u8]) -> u32 {

@@ -87,6 +87,10 @@ pub const LOG_IN_USE: &str = "log in use";
 /// Prefix of the error a displaced writer returns when exclusive create of
 /// the next snapshot fails (ADR 0047).
 pub const LOG_FENCED: &str = "fenced";
+/// A commit or rollback finished without a durable outcome the writer can
+/// name. Reopen the store and read the successor that exists (ADR 0047).
+pub(crate) const UNCERTAIN_COMMIT: &str =
+    "log state uncertain after a failed commit or rollback; reopen the store";
 
 pub use acl::{AclError, PropertyAcl, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND};
 pub use actions::{Action, ChangeSet, Edit, CHANGE_SET_BOUND, CHANGE_SET_KIND};

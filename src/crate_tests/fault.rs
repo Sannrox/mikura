@@ -1,16 +1,19 @@
-//! Seeded fault-injection harness for commit and recovery (#345).
+//! Seeded fault-injection harness for commit and recovery (#345, #358).
 //!
-//! Generated IO faults, not named commit stages. Oracles: acknowledged
-//! writes survive reopen; a multi-record in-flight write is all or nothing;
-//! reopen matches log replay; the same seed replays the same trace.
+//! Generated IO faults plus named manifest-commit stages. Oracles:
+//! acknowledged writes survive reopen; a multi-record in-flight write is
+//! all or nothing; reopen matches log replay; the same seed replays the
+//! same trace.
 
 use super::super::*;
 use super::helpers::*;
-use crate::fault::{allow_recovery, install, take_trace, FaultKind, Plan, CI_SEEDS};
-use crate::log::read_records;
+use crate::fault::{allow_recovery, arm_next, install, take_trace, FaultKind, Op, Plan, CI_SEEDS};
+use crate::log::{objects_dir, read_records, CommitStage};
+use crate::UNCERTAIN_COMMIT;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 fn unique_log(tag: &str) -> (PathBuf, PathBuf) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -304,5 +307,143 @@ fn displaced_writer_fails_closed() {
         Err(error) => error,
     };
     assert!(error.starts_with(LOG_IN_USE), "second writer: {error}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn assert_replay(log: &Path, present: &[&str], absent: &[&str]) {
+    let store = Store::open(log).expect("reopen");
+    let got = recovered_items(&store);
+    for key in present {
+        assert!(got.contains_key(*key), "{key} missing after reopen");
+    }
+    for key in absent {
+        assert!(!got.contains_key(*key), "{key} visible after reopen");
+    }
+    let replay = honest_items(log);
+    bodies_match(&got, &replay, "reopen vs log replay").unwrap();
+    drop(store);
+    dual_read(log, &got).unwrap();
+}
+
+fn arm_at(store: &mut Store, stage: CommitStage, op: Op, kind: FaultKind) {
+    store.set_stage_hook(Some(Arc::new(move |at| {
+        if at == stage {
+            arm_next(op, kind);
+        }
+    })));
+}
+
+#[test]
+fn after_staging_reopen_is_none_of_the_commit() {
+    let (dir, log) = unique_log("stage");
+    let mut store = Store::create(&log).unwrap();
+    store.append(item("a", "1")).unwrap();
+    store.set_crash_before_swap(true);
+    let err = store.append(item("b", "2")).unwrap_err();
+    assert!(err.contains("crash before swap"), "{err}");
+    store.crash();
+    assert_replay(&log, &["a"], &["b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn during_conditional_write_reopen_is_none_of_the_commit() {
+    let (dir, log) = unique_log("cas-before");
+    let mut store = Store::create(&log).unwrap();
+    store.append(item("a", "1")).unwrap();
+    let _guard = install(None, false);
+    arm_at(
+        &mut store,
+        CommitStage::SuperblockTorn,
+        Op::Open,
+        FaultKind::FailBefore,
+    );
+    let err = store.append(item("b", "2")).unwrap_err();
+    assert!(err.contains(crate::fault::FAILURE), "{err}");
+    assert!(!err.contains(UNCERTAIN_COMMIT), "put never landed: {err}");
+    store.crash();
+    assert_replay(&log, &["a"], &["b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lost_swap_response_is_acked_from_the_successor() {
+    let (dir, log) = unique_log("cas-after");
+    let mut store = Store::create(&log).unwrap();
+    store.append(item("a", "1")).unwrap();
+    let _guard = install(None, false);
+    arm_at(
+        &mut store,
+        CommitStage::SuperblockTorn,
+        Op::Rename,
+        FaultKind::FailAfter,
+    );
+    store.append(item("b", "2")).unwrap();
+    store.crash();
+    assert_replay(&log, &["a", "b"], &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lost_swap_response_is_unknown_when_the_successor_cannot_be_read() {
+    let (dir, log) = unique_log("cas-crash");
+    let mut store = Store::create(&log).unwrap();
+    store.append(item("a", "1")).unwrap();
+    let _guard = install(None, false);
+    arm_at(
+        &mut store,
+        CommitStage::SuperblockTorn,
+        Op::Rename,
+        FaultKind::Crash,
+    );
+    let err = store.append(item("b", "2")).unwrap_err();
+    assert!(err.contains(UNCERTAIN_COMMIT), "{err}");
+    allow_recovery();
+    store.crash();
+    assert_replay(&log, &["a", "b"], &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn projection_persist_interrupt_rebuilds_from_the_log() {
+    let (dir, log) = unique_log("proj");
+    let mut store = Store::create(&log).unwrap();
+    let _guard = install(None, false);
+    arm_at(
+        &mut store,
+        CommitStage::Durable,
+        Op::Rename,
+        FaultKind::FailBefore,
+    );
+    let err = store.append(item("a", "1")).unwrap_err();
+    assert!(
+        err.contains(crate::fault::FAILURE) || err.contains("projection sidecar not persisted"),
+        "{err}"
+    );
+    store.crash();
+    assert_replay(&log, &["a"], &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn collect_interrupt_keeps_live_objects() {
+    let (dir, log) = unique_log("collect");
+    let mut store = Store::create(&log).unwrap();
+    store.append(item("a", "1")).unwrap();
+    store.set_crash_before_swap(true);
+    let _ = store.append(item("b", "2"));
+    store.crash();
+    let _guard = install(None, false);
+    arm_next(Op::Unlink, FaultKind::FailBefore);
+    let reopened = Store::open(&log).unwrap();
+    assert!(load_item(&reopened, "a").is_some());
+    assert!(load_item(&reopened, "b").is_none());
+    drop(reopened);
+    let during = std::fs::read_dir(objects_dir(&log)).unwrap().count();
+    drop(_guard);
+    assert_replay(&log, &["a"], &["b"]);
+    drop(Store::open(&log).unwrap());
+    let after = std::fs::read_dir(objects_dir(&log)).unwrap().count();
+    assert!(after < during, "next open collects remaining leftovers");
     let _ = std::fs::remove_dir_all(&dir);
 }
