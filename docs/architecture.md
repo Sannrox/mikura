@@ -199,8 +199,15 @@ persists and serves a paged `MKJOIN07` sidecar plus a bounded page cache
 so decoded projection state stays near the caller-set budget
 ([ADR 0048](decisions/0048-paged-projection-serving-budget.md)). Zero is
 invalid. Default `open` / `create` still write `MKJOIN06`. A budgeted open
-of an older sidecar rebuilds into pages. Encrypted paged bytes sit inside
-the existing seal; the on-disk sidecar stays sealed. `Store::load(namespace, kind, key, acl)`
+of an older sidecar rebuilds into pages. A compact, rebuild, or budgeted
+republish writes the replacement sidecar beside the serving file and
+publishes it with one rename. In-flight readers keep the maps or page
+file they already hold; the previous file's disk is released after the
+switch. A failed or killed write leaves the previous sidecar serving, or
+the new one after the rename, never a torn mix. Storing that file as a
+derived object is [#361](https://github.com/Sannrox/mikura/issues/361).
+Encrypted paged bytes sit inside the existing seal; the on-disk sidecar
+stays sealed. `Store::load(namespace, kind, key, acl)`
 reconstructs the live `ObjectRecord` from slim identity plus interned
 property pairs already in that sidecar
 ([ADR 0005](decisions/0005-current-object-load.md)). Missing or unknown

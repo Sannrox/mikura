@@ -142,3 +142,13 @@ latency SLO; the product bench records what the budgeted path costs.
    `peak_rss`.
 3. `python3 scripts/adr-index --check` passes.
 4. Review after the follow-up lands, or 2027-01-31, whichever is earlier.
+
+## Amendments
+
+- 2026-11-13, [#359](https://github.com/Sannrox/mikura/issues/359): a
+  replacement sidecar is encoded beside the serving file and published
+  with one rename. Split-commit checkpoint rewrites and budgeted
+  republishes do that encode under shared access so in-flight readers
+  keep the previous maps or page file. A failed write removes the temp
+  file and leaves the serving sidecar untouched. The 10⁶ dual-window RSS
+  is the product bench, not the default crate suite.

@@ -683,8 +683,7 @@ impl Store {
         let path = Self::join_map_path(&self.log);
         if !self.sidecar_is_matching_paged(&path, self.writer.committed_pages())? {
             self.persist_paged_checkpoint(self.writer.committed_pages())?;
-            self.has_checkpoint = true;
-            self.finish_projection_persist();
+            return Ok(());
         }
         self.attach_serving_sidecar(&path, budget)
     }

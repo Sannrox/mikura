@@ -1262,10 +1262,16 @@ pub(crate) fn persist_pages(path: &Path, bytes: &[u8]) -> Result<(), String> {
         return Err("paged projection is not page aligned".into());
     }
     let tmp = path.with_extension("tmp");
-    let mut file = crate::fault::create(&tmp)?;
-    crate::fault::write_all(&mut file, bytes)?;
-    crate::fault::sync_data(&file)?;
-    crate::durable::rename(&tmp, path)
+    let result = (|| {
+        let mut file = crate::fault::create(&tmp)?;
+        crate::fault::write_all(&mut file, bytes)?;
+        crate::fault::sync_data(&file)?;
+        crate::durable::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub(crate) fn decode_path(path: &Path) -> Result<crate::joins::Checkpoint, String> {
