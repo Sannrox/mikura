@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::acl::PropertyAcl;
@@ -12,6 +13,7 @@ use crate::log::{
     read_records_after_with_keys, read_records_with_keys, read_v1_records, LogWriter, SyncPolicy,
 };
 use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
+use crate::paged::{PagedFile, ServingBudget};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
 
 mod checkpoint;
@@ -170,6 +172,9 @@ pub struct Store {
     /// Visible schema rows by (namespace, kind), oldest version first.
     schema_history: HashMap<(String, String), Vec<SchemaDescriptor>>,
     schema_history_from_checkpoint: bool,
+    serving_budget: Option<ServingBudget>,
+    paged: Option<Arc<PagedFile>>,
+    paged_scratch: Option<PathBuf>,
 }
 
 fn abandoned_stream_owners() -> std::sync::MutexGuard<'static, HashSet<u64>> {
@@ -323,7 +328,17 @@ impl Store {
     }
 
     pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        Self::open_writer(log, LogWriter::open(log, sync)?)
+        Self::open_writer(log, LogWriter::open(log, sync)?, None)
+    }
+
+    /// Open serving `load` and `evaluate` from paged projection pages whose
+    /// decoded cache stays inside `budget` (ADR 0048). Zero is invalid.
+    pub fn open_with_serving_budget(log: &Path, budget: ServingBudget) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open(log, SyncPolicy::Group(32))?,
+            Some(budget),
+        )
     }
 
     /// Open a `MIKURAV3` log. Revoked or ungranted tenants are omitted.
@@ -331,19 +346,42 @@ impl Store {
         Self::open_with_keys_sync(log, SyncPolicy::Group(32), keys)
     }
 
+    pub fn open_with_keys_and_serving_budget(
+        log: &Path,
+        keys: LogKeys,
+        budget: ServingBudget,
+    ) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_with_keys(log, SyncPolicy::Group(32), keys)?,
+            Some(budget),
+        )
+    }
+
     pub fn open_with_keys_sync(
         log: &Path,
         sync: SyncPolicy,
         keys: LogKeys,
     ) -> Result<Self, String> {
-        Self::open_writer(log, LogWriter::open_with_keys(log, sync, keys)?)
+        Self::open_writer(log, LogWriter::open_with_keys(log, sync, keys)?, None)
     }
 
-    fn open_writer(log: &Path, writer: LogWriter) -> Result<Self, String> {
+    fn open_writer(
+        log: &Path,
+        writer: LogWriter,
+        serving_budget: Option<ServingBudget>,
+    ) -> Result<Self, String> {
         let mut store = Self::empty(log.to_path_buf(), writer);
+        store.serving_budget = serving_budget;
+        if store.serving_budget.is_some() && store.writer.keys().is_some() {
+            return Err("serving budget is not available on encrypted stores".into());
+        }
         store.install_projection()?;
         store.drop_revoked_tenants();
         store.ensure_schema_history()?;
+        if store.serving_budget.is_some() {
+            store.adopt_paged_serving()?;
+        }
         store.ready = true;
         Ok(store)
     }
@@ -427,6 +465,9 @@ impl Store {
             applying_admitted: false,
             schema_history: HashMap::new(),
             schema_history_from_checkpoint: false,
+            serving_budget: None,
+            paged: None,
+            paged_scratch: None,
         };
         if cfg!(test) {
             store.sidecar_persist_commits = 1;
@@ -449,10 +490,10 @@ impl Store {
         self.ns.get(id as usize).map(String::as_str).unwrap_or("")
     }
 
-    fn intern_live(&mut self, namespace: &str, kind: &str, key: &str) -> LiveId {
+    fn intern_live(&mut self, namespace: &str, kind: &str, key: &str) -> Result<LiveId, String> {
         let ns_id = self.intern_ns(namespace);
-        let joins = self.joins_for_write(namespace);
-        (ns_id, joins.intern(kind), joins.intern(key))
+        let joins = self.joins_for_write(namespace)?;
+        Ok((ns_id, joins.intern(kind), joins.intern(key)))
     }
 
     fn find_live(&self, namespace: &str, kind: &str, key: &str) -> Option<LiveId> {
@@ -463,6 +504,188 @@ impl Store {
             joins.intern_existing(kind)?,
             joins.intern_existing(key)?,
         ))
+    }
+
+    fn live_meta(&self, id: LiveId) -> Option<LiveMeta> {
+        if let Some(paged) = &self.paged {
+            return paged.identity(id).map(|(meta, _)| meta);
+        }
+        self.identity.get(&id).cloned()
+    }
+
+    fn hidden_owned(&self, id: LiveId) -> Option<Vec<(u32, u32)>> {
+        if let Some(paged) = &self.paged {
+            let (meta, owned) = paged.identity(id)?;
+            return meta.hidden.then_some(owned);
+        }
+        self.hidden_props.get(&id).cloned()
+    }
+
+    fn ensure_writable(&mut self) -> Result<(), String> {
+        let Some(paged) = self.paged.take() else {
+            return Ok(());
+        };
+        match paged.decode_all() {
+            Ok(loaded) => {
+                self.adopt_checkpoint(loaded)?;
+                Ok(())
+            }
+            Err(err) => {
+                self.paged = Some(paged);
+                Err(err)
+            }
+        }
+    }
+
+    fn adopt_paged_serving(&mut self) -> Result<(), String> {
+        let Some(budget) = self.serving_budget else {
+            return Ok(());
+        };
+        if self.paged.is_some() {
+            return Ok(());
+        }
+        if self.writer.keys().is_some() {
+            return Err("serving budget is not available on encrypted stores".into());
+        }
+        if !self.writer.withheld().is_empty() {
+            return Ok(());
+        }
+        let path = Self::join_map_path(&self.log);
+        if !self.sidecar_is_matching_paged(&path, self.writer.committed_pages())? {
+            self.persist_paged_checkpoint(self.writer.committed_pages())?;
+            self.has_checkpoint = true;
+            self.finish_projection_persist();
+        }
+        self.attach_serving_sidecar(&path, budget)
+    }
+
+    fn try_adopt_existing_paged(&mut self, path: &Path, pages: u32) -> Result<bool, String> {
+        let Some(budget) = self.serving_budget else {
+            return Ok(false);
+        };
+        if !self.sidecar_is_matching_paged(path, pages)? {
+            return Ok(false);
+        }
+        self.attach_serving_sidecar(path, budget)?;
+        Ok(true)
+    }
+
+    fn sidecar_is_matching_paged(&self, path: &Path, pages: u32) -> Result<bool, String> {
+        if !path.exists() {
+            return Ok(false);
+        }
+        if self.writer.keys().is_some() {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            if !crate::crypto::is_sealed(&bytes) {
+                return Ok(false);
+            }
+            let Some(dek) = self.writer.store_dek() else {
+                return Ok(false);
+            };
+            let Ok((_, inner)) = crate::crypto::open_blob(dek, &bytes) else {
+                return Ok(false);
+            };
+            if !crate::paged::is_paged_magic(&inner) {
+                return Ok(false);
+            }
+            return Ok(crate::paged::peek_log_pages_bytes(&inner)? == pages);
+        }
+        let mut magic = [0u8; 8];
+        std::fs::File::open(path)
+            .and_then(|mut file| {
+                use std::io::Read;
+                file.read_exact(&mut magic)
+            })
+            .map_err(|e| e.to_string())?;
+        if magic != *crate::JOIN_FORMAT_PAGED {
+            return Ok(false);
+        }
+        Ok(crate::paged::peek_log_pages(path)? == pages)
+    }
+
+    fn attach_serving_sidecar(&mut self, path: &Path, budget: ServingBudget) -> Result<(), String> {
+        let open_path = if self.writer.keys().is_some() {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let dek = self
+                .writer
+                .store_dek()
+                .ok_or_else(|| "encrypted log requires a sealed snapshot".to_string())?;
+            let (_, inner) = crate::crypto::open_blob(dek, &bytes)?;
+            if !crate::paged::is_paged_magic(&inner) {
+                return Err("encrypted snapshot is not a paged projection".into());
+            }
+            self.write_paged_scratch(&inner)?
+        } else {
+            path.to_path_buf()
+        };
+        let file = Arc::new(PagedFile::open(&open_path, budget)?);
+        let mut joins = HashMap::new();
+        self.ns = file.ns_names().to_vec();
+        self.rebuild_ns_ix();
+        for name in file.ns_names() {
+            if name.is_empty() {
+                continue;
+            }
+            let mut maps = JoinMaps::default();
+            maps.attach_paged(Arc::clone(&file), name.clone());
+            joins.insert(name.clone(), maps);
+        }
+        self.joins = joins;
+        self.identity.clear();
+        self.hidden_props.clear();
+        self.paged = Some(Arc::clone(&file));
+        self.has_checkpoint = true;
+        self.sidecar_checkpoint_stamp = file.log_pages();
+        self.sidecar_delta_stamp = None;
+        Ok(())
+    }
+
+    /// Encrypted serving unseals MKJOIN07 into a process-private scratch file.
+    /// The on-disk sidecar stays sealed; Drop removes the scratch.
+    fn write_paged_scratch(&mut self, bytes: &[u8]) -> Result<PathBuf, String> {
+        self.drop_paged_scratch();
+        let dir = std::env::temp_dir().join(format!(
+            "mikura-paged-serve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| e.to_string())?;
+        let path = dir.join("joins");
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| e.to_string())?;
+            file.write_all(bytes).map_err(|e| e.to_string())?;
+            file.sync_data().map_err(|e| e.to_string())?;
+        }
+        self.paged_scratch = Some(path.clone());
+        Ok(path)
+    }
+
+    fn drop_paged_scratch(&mut self) {
+        if let Some(path) = self.paged_scratch.take() {
+            let _ = std::fs::remove_file(&path);
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    }
+
+    fn release_paged(&mut self) {
+        self.paged = None;
+        self.joins.clear();
+        self.drop_paged_scratch();
     }
 
     fn rebuild_ns_ix(&mut self) {
@@ -496,6 +719,19 @@ impl Store {
     }
 
     fn materialize_owned(maps: &JoinMaps, owned: &[(u32, u32)]) -> HashMap<String, String> {
+        if maps.intern.is_empty() {
+            let mut props = HashMap::with_capacity(owned.len());
+            for &(prop_id, value_id) in owned {
+                let Some(prop) = maps.intern_get(prop_id) else {
+                    continue;
+                };
+                let Some(value) = maps.intern_get(value_id) else {
+                    continue;
+                };
+                props.insert(prop.to_string(), value.to_string());
+            }
+            return props;
+        }
         PropertyAcl::omit_owned(&maps.intern, 0, owned, &HashSet::new())
     }
 
@@ -522,10 +758,15 @@ impl Store {
         std::mem::forget(self);
     }
 
-    fn install_live(&mut self, id: LiveId, meta: LiveMeta, props: HashMap<String, String>) {
+    fn install_live(
+        &mut self,
+        id: LiveId,
+        meta: LiveMeta,
+        props: HashMap<String, String>,
+    ) -> Result<(), String> {
         let ns = self.ns_name(id.0).to_string();
         {
-            let joins = self.joins_for_write(&ns);
+            let joins = self.joins_for_write(&ns)?;
             let kind = joins.intern_get(id.1).unwrap_or("").to_string();
             let key = joins.intern_get(id.2).unwrap_or("").to_string();
             joins.remove(&kind, &key);
@@ -533,7 +774,7 @@ impl Store {
         let hidden = meta.hidden;
         self.identity.insert(id, meta);
         if hidden {
-            let joins = self.joins_for_write(&ns);
+            let joins = self.joins_for_write(&ns)?;
             let owned: Vec<(u32, u32)> = props
                 .iter()
                 .map(|(name, value)| (joins.intern(name), joins.intern(value)))
@@ -541,11 +782,12 @@ impl Store {
             self.hidden_props.insert(id, owned);
         } else {
             self.hidden_props.remove(&id);
-            let joins = self.joins_for_write(&ns);
+            let joins = self.joins_for_write(&ns)?;
             let kind = joins.intern_get(id.1).unwrap_or("").to_string();
             let key = joins.intern_get(id.2).unwrap_or("").to_string();
             joins.index(&kind, &key, false, props);
         }
+        Ok(())
     }
 
     fn remember_action(&mut self, record: &ObjectRecord) {
@@ -672,7 +914,7 @@ impl Store {
                 Ok(())
             };
         };
-        match self.identity.get(&id) {
+        match self.live_meta(id) {
             Some(meta) if meta.gen != expected => Err(format!(
                 "stale generation: expected {expected}, live {}",
                 meta.gen
@@ -684,7 +926,7 @@ impl Store {
         }
     }
 
-    fn apply_record(&mut self, record: ObjectRecord) {
+    fn apply_record(&mut self, record: ObjectRecord) -> Result<(), String> {
         self.remember_action(&record);
         let schema_remap = if record.kind == SCHEMA_KIND && !record.hidden {
             SchemaDescriptor::from_record(&record).ok().inspect(|desc| {
@@ -693,12 +935,16 @@ impl Store {
         } else {
             None
         };
-        let id = self.intern_live(&record.namespace, &record.kind, &record.key);
+        let id = self.intern_live(&record.namespace, &record.kind, &record.key)?;
         let action_id = record
             .action_id
             .as_deref()
             .filter(|id| !id.is_empty())
-            .map(|id| self.joins_for_write(&record.namespace).intern(id));
+            .map(|id| {
+                self.joins_for_write(&record.namespace)
+                    .map(|joins| joins.intern(id))
+            })
+            .transpose()?;
         let namespace = record.namespace.clone();
         self.install_live(
             id,
@@ -713,13 +959,14 @@ impl Store {
                 },
             },
             record.props,
-        );
+        )?;
         self.dirty.insert(id);
         if let Some(desc) = schema_remap {
             if !desc.migration.is_empty() {
-                self.remap_kind(&namespace, &desc);
+                self.remap_kind(&namespace, &desc)?;
             }
         }
+        Ok(())
     }
 
     fn require_action_id(id: &str, empty: &'static str) -> Result<(), String> {
@@ -824,7 +1071,7 @@ impl Store {
         let Some(id) = self.find_live(namespace, kind, key) else {
             return Ok(None);
         };
-        let Some(meta) = self.identity.get(&id) else {
+        let Some(meta) = self.live_meta(id) else {
             return Ok(None);
         };
         if meta.hidden {
@@ -868,8 +1115,20 @@ impl Store {
                 return Err(missing());
             }
         }
-        let id = self.find_live(namespace, kind, key).ok_or_else(missing)?;
-        let meta = self.identity.get(&id).ok_or_else(missing)?;
+        let id = match self.find_live(namespace, kind, key) {
+            Some(id) => id,
+            None => {
+                self.paged_fail_closed()?;
+                return Err(missing());
+            }
+        };
+        let meta = match self.live_meta(id) {
+            Some(meta) => meta,
+            None => {
+                self.paged_fail_closed()?;
+                return Err(missing());
+            }
+        };
         let maps = self.joins_in(namespace)?;
         let denied_buf;
         let denied = match denied {
@@ -909,6 +1168,7 @@ impl Store {
             },
         };
         self.apply_schema_view(&mut record, None)?;
+        self.paged_fail_closed()?;
         if !acl.object_visible(kind, key, |property| {
             record.props.get(property).map(String::as_str)
         }) {
@@ -990,9 +1250,9 @@ impl Store {
         self.require_expected_gen(&patch.namespace, &patch.kind, &patch.key, expected_gen)?;
         patch.action_id = Some(action_id.clone());
         let instance_hidden = id
-            .and_then(|id| self.identity.get(&id))
+            .and_then(|id| self.live_meta(id))
             .is_some_and(|meta| meta.hidden);
-        let instance_exists = id.is_some_and(|id| self.identity.contains_key(&id));
+        let instance_exists = id.is_some_and(|id| self.live_meta(id).is_some());
         let source = if instance_exists && !instance_hidden {
             self.load(
                 &patch.namespace,
@@ -1062,6 +1322,9 @@ impl Store {
     /// value, or Action-id tokens. Unknown namespaces are left alone so a
     /// reserve cannot admit an empty namespace.
     pub fn reserve_intern(&mut self, namespace: &str, additional: usize) {
+        if self.ensure_writable().is_err() {
+            return;
+        }
         if let Some(joins) = self.joins.get_mut(namespace) {
             joins.reserve(additional);
         }
@@ -1167,6 +1430,7 @@ impl Store {
         apply: bool,
         schema_follows_pending: bool,
     ) -> Result<bool, String> {
+        self.ensure_writable()?;
         let claim_id = match action_id_write {
             ActionIdWrite::Claim => record.action_id.clone(),
             ActionIdWrite::Copy => None,
@@ -1362,7 +1626,7 @@ impl Store {
         let schema_kind = record.kind.clone();
         let schema_key = record.key.clone();
         self.note_applied_pending(&record);
-        self.apply_record(record);
+        self.apply_record(record)?;
         self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
         let overlay_result = migrated_overlays.into_iter().try_for_each(|overlay| {
             self.write_uncommitted(overlay, false, ActionIdWrite::Copy, true, false)
@@ -1407,7 +1671,7 @@ impl Store {
     ) -> Result<Option<(OverlayPatch, ConflictAudit)>, String> {
         let was_hidden = self
             .find_live(&record.namespace, &record.kind, &record.key)
-            .and_then(|id| self.identity.get(&id))
+            .and_then(|id| self.live_meta(id))
             .is_some_and(|meta| meta.hidden);
         let schema = if use_live_schema {
             self.load_reserved(
@@ -1459,7 +1723,7 @@ impl Store {
     fn assign_gen(&self, record: &mut ObjectRecord) {
         let live = self
             .find_live(&record.namespace, &record.kind, &record.key)
-            .and_then(|id| self.identity.get(&id));
+            .and_then(|id| self.live_meta(id));
         if let Some(existing) = live {
             record.gen = existing.gen.max(1) + 1;
         } else if record.gen == 0 {
@@ -1720,9 +1984,14 @@ impl Store {
         self.schema_history.clear();
         self.schema_history_from_checkpoint = false;
         self.action_commits_from_log = true;
+        self.paged = None;
+        self.drop_paged_scratch();
         self.install_projection()?;
         self.drop_revoked_tenants();
         self.ensure_schema_history()?;
+        if self.serving_budget.is_some() {
+            self.adopt_paged_serving()?;
+        }
         self.sidecar_commits_since_persist = 0;
         self.sidecar_last_persist = Instant::now();
         Ok(())
@@ -1922,7 +2191,7 @@ impl Store {
                 .check_record_fits(&marker)
                 .map_err(|error| format!("change set too large: {error}"))?;
             store.writer.append_record(&marker)?;
-            store.apply_record(marker);
+            store.apply_record(marker)?;
             for edit in edits {
                 let record = match edit {
                     Edit::Put {
@@ -2081,18 +2350,30 @@ impl Store {
                 return Err(missing());
             }
         }
-        let id = self.find_live(namespace, kind, key).ok_or_else(missing)?;
-        let meta = self.identity.get(&id).ok_or_else(missing)?;
+        let id = match self.find_live(namespace, kind, key) {
+            Some(id) => id,
+            None => {
+                self.paged_fail_closed()?;
+                return Err(missing());
+            }
+        };
+        let meta = match self.live_meta(id) {
+            Some(meta) => meta,
+            None => {
+                self.paged_fail_closed()?;
+                return Err(missing());
+            }
+        };
         let maps = self.joins_in(namespace)?;
         let _ = acl;
         let props = if meta.hidden {
-            self.hidden_props
-                .get(&id)
-                .map(|owned| Self::materialize_owned(maps, owned))
+            self.hidden_owned(id)
+                .map(|owned| Self::materialize_owned(maps, &owned))
                 .unwrap_or_default()
         } else {
             maps.row_props(kind, key)
         };
+        self.paged_fail_closed()?;
         Ok(ObjectRecord {
             gen: meta.gen,
             namespace: namespace.to_string(),
@@ -2126,11 +2407,16 @@ impl Store {
         if self.schema_history_from_checkpoint {
             return Ok(());
         }
-        if !self
-            .identity
-            .keys()
-            .any(|&id| self.live_kind(id) == Some(SCHEMA_KIND))
-        {
+        let has_schema = if self.paged.is_some() {
+            self.live_ids()?
+                .into_iter()
+                .any(|id| self.live_kind(id) == Some(SCHEMA_KIND))
+        } else {
+            self.identity
+                .keys()
+                .any(|&id| self.live_kind(id) == Some(SCHEMA_KIND))
+        };
+        if !has_schema {
             return Ok(());
         }
         self.schema_history.clear();
@@ -2194,9 +2480,8 @@ impl Store {
         let ns_id = self.ns_ix.get(namespace).copied();
         let mut overlay_errors = Vec::new();
         let overlay_ids: Vec<_> = self
-            .identity
-            .keys()
-            .copied()
+            .live_ids()?
+            .into_iter()
             .filter(|&id| {
                 Some(id.0) == ns_id
                     && self.live_kind(id) == Some(OVERLAY_KIND)
@@ -2281,13 +2566,12 @@ impl Store {
             .get(namespace)
             .and_then(|joins| joins.intern_existing(kind));
         let instance_ids: Vec<_> = self
-            .identity
-            .keys()
-            .copied()
+            .live_ids()?
+            .into_iter()
             .filter(|&id| Some(id.0) == ns_id && Some(id.1) == kind_id)
             .collect();
         for id in instance_ids {
-            let Some(meta) = self.identity.get(&id) else {
+            let Some(meta) = self.live_meta(id) else {
                 continue;
             };
             if skip_instance_keys
@@ -2301,12 +2585,11 @@ impl Store {
                 .map(|(ns, kind, key)| format!("{ns}/{kind}/{key}"))
                 .unwrap_or_else(|_| format!("{}/{}/{}", id.0, id.1, id.2));
             let mut props = if meta.hidden {
-                self.hidden_props
-                    .get(&id)
+                self.hidden_owned(id)
                     .and_then(|owned| {
                         self.joins
                             .get(namespace)
-                            .map(|joins| Self::materialize_owned(joins, owned))
+                            .map(|joins| Self::materialize_owned(joins, &owned))
                     })
                     .unwrap_or_default()
             } else {
@@ -2908,7 +3191,7 @@ impl Store {
         Ok(())
     }
 
-    fn remap_kind(&mut self, namespace: &str, desc: &SchemaDescriptor) {
+    fn remap_kind(&mut self, namespace: &str, desc: &SchemaDescriptor) -> Result<(), String> {
         let ns_id = self.ns_ix.get(namespace).copied();
         let kind_id = self
             .joins
@@ -2973,10 +3256,11 @@ impl Store {
                 for (name, value) in extras {
                     props.entry(name).or_insert(value);
                 }
-                self.install_live(id, meta, props);
+                self.install_live(id, meta, props)?;
                 self.dirty.insert(id);
             }
         }
+        Ok(())
     }
 
     fn apply_schema_view(
@@ -3089,7 +3373,7 @@ impl Store {
 
     fn live_schema_hidden(&self, namespace: &str, kind: &str) -> bool {
         self.find_live(namespace, SCHEMA_KIND, kind)
-            .and_then(|id| self.identity.get(&id))
+            .and_then(|id| self.live_meta(id))
             .is_some_and(|meta| meta.hidden)
     }
 
@@ -3110,13 +3394,24 @@ impl Store {
         id: &LiveId,
         denied: &HashSet<(u32, u32)>,
     ) -> HashMap<String, String> {
-        let Some(owned) = self.hidden_props.get(id) else {
+        let Some(owned) = self.hidden_owned(*id) else {
             return HashMap::new();
         };
-        match maps.intern_existing(kind) {
-            Some(kind_id) => PropertyAcl::omit_owned(&maps.intern, kind_id, owned, denied),
-            None => PropertyAcl::omit_owned(&maps.intern, 0, owned, &HashSet::new()),
+        let mut props = HashMap::with_capacity(owned.len());
+        let kind_id = maps.intern_existing(kind).unwrap_or(0);
+        for (prop_id, value_id) in owned {
+            if !denied.is_empty() && denied.contains(&(kind_id, prop_id)) {
+                continue;
+            }
+            let Some(prop) = maps.intern_get(prop_id) else {
+                continue;
+            };
+            let Some(value) = maps.intern_get(value_id) else {
+                continue;
+            };
+            props.insert(prop.to_string(), value.to_string());
         }
+        props
     }
 
     fn replay_from_log(&mut self) -> Result<(), String> {
@@ -3129,6 +3424,7 @@ impl Store {
         self.action_commits.clear();
         self.schema_history.clear();
         self.schema_history_from_checkpoint = false;
+        self.paged = None;
         self.replay_tail(0)?;
         self.schema_history_from_checkpoint = true;
         self.action_commits_from_log = true;
@@ -3151,7 +3447,7 @@ impl Store {
         let schema_namespace = record.namespace.clone();
         let schema_kind = record.kind.clone();
         let schema_key = record.key.clone();
-        self.apply_record(record);
+        self.apply_record(record)?;
         self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)
     }
 
@@ -3171,7 +3467,7 @@ impl Store {
         let schema = self.schema(namespace, kind)?;
         match schema {
             Some(schema) => self
-                .joins_for_write(namespace)
+                .joins_for_write(namespace)?
                 .set_declared_sums(&schema.kind, &schema.sums),
             None => {
                 if let Some(joins) = self.joins.get_mut(namespace) {
@@ -3197,7 +3493,7 @@ impl Store {
             let schema = self.schema(&namespace, &kind)?;
             match schema {
                 Some(schema) => self
-                    .joins_for_write(&namespace)
+                    .joins_for_write(&namespace)?
                     .adopt_declared_sums(&schema.kind, &schema.sums),
                 None => {
                     if let Some(joins) = self.joins.get_mut(&namespace) {
@@ -3226,14 +3522,33 @@ impl Store {
         Ok(())
     }
 
-    fn joins_for_write(&mut self, namespace: &str) -> &mut JoinMaps {
-        self.joins.entry(namespace.to_string()).or_default()
+    fn joins_for_write(&mut self, namespace: &str) -> Result<&mut JoinMaps, String> {
+        self.ensure_writable()?;
+        Ok(self.joins.entry(namespace.to_string()).or_default())
     }
 
     fn joins_in(&self, namespace: &str) -> Result<&JoinMaps, String> {
         self.joins
             .get(namespace)
             .ok_or_else(|| format!("unknown namespace {namespace}"))
+    }
+
+    fn live_ids(&self) -> Result<Vec<LiveId>, String> {
+        if let Some(paged) = &self.paged {
+            return Ok(paged
+                .identities()?
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect());
+        }
+        Ok(self.identity.keys().copied().collect())
+    }
+
+    pub(crate) fn paged_fail_closed(&self) -> Result<(), String> {
+        match &self.paged {
+            Some(paged) => paged.fail_closed(),
+            None => Ok(()),
+        }
     }
 
     fn require_known_namespace<'a>(&self, namespace: &'a str) -> Result<&'a str, String> {
@@ -3253,10 +3568,10 @@ impl Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
-        if std::thread::panicking() || self.writer.is_failed() || !self.ready {
-            return;
+        if !std::thread::panicking() && !self.writer.is_failed() && self.ready {
+            let _ = self.maybe_persist_projection(true);
         }
-        let _ = self.maybe_persist_projection(true);
+        self.release_paged();
     }
 }
 

@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use crate::paged::{NsDir, PagedFile};
 
 use crate::value::PropertyType;
 
@@ -20,26 +22,19 @@ struct CountScratch {
 }
 
 impl CountScratch {
-    fn hop_index<'a>(
-        maps: &'a JoinMaps,
-        far_kind: &str,
-        join_property: &str,
-    ) -> Option<&'a HashMap<u32, Vec<u32>>> {
-        let far_id = *maps.intern_ix.get(far_kind)?;
-        let prop_id = *maps.intern_ix.get(join_property)?;
-        maps.by_prop.get(&(far_id, prop_id))
-    }
-
-    fn expand(&mut self, index: Option<&HashMap<u32, Vec<u32>>>) {
+    fn expand(&mut self, maps: &JoinMaps, far_kind: &str, join_property: &str) {
         self.next.clear();
-        if let Some(index) = index {
-            for &(root, parent) in &self.paths {
-                let Some(children) = index.get(&parent) else {
-                    continue;
-                };
-                for &child in children {
-                    self.next.push((root, child));
-                }
+        let Some(far_id) = maps.intern_existing(far_kind) else {
+            std::mem::swap(&mut self.paths, &mut self.next);
+            return;
+        };
+        let Some(prop_id) = maps.intern_existing(join_property) else {
+            std::mem::swap(&mut self.paths, &mut self.next);
+            return;
+        };
+        for &(root, parent) in &self.paths {
+            for child in maps.outgoing_children(far_id, prop_id, parent) {
+                self.next.push((root, child));
             }
         }
         std::mem::swap(&mut self.paths, &mut self.next);
@@ -53,27 +48,26 @@ impl CountScratch {
         far_kind: &str,
     ) {
         self.next.clear();
-        let Some(&kind_id) = maps.intern_ix.get(frontier_kind) else {
+        let Some(kind_id) = maps.intern_existing(frontier_kind) else {
             std::mem::swap(&mut self.paths, &mut self.next);
             return;
         };
-        let Some(&prop_id) = maps.intern_ix.get(join_property) else {
+        let Some(prop_id) = maps.intern_existing(join_property) else {
             std::mem::swap(&mut self.paths, &mut self.next);
             return;
         };
-        let Some(&far_kind_id) = maps.intern_ix.get(far_kind) else {
+        let Some(far_kind_id) = maps.intern_existing(far_kind) else {
             std::mem::swap(&mut self.paths, &mut self.next);
             return;
         };
-        let visible = maps.by_kind.get(&far_kind_id);
         for &(root, parent) in &self.paths {
-            let Some(owned) = maps.owned.get(&(kind_id, parent)) else {
+            let Some(owned) = maps.owned_pairs(kind_id, parent) else {
                 continue;
             };
             let Some((_, value_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
                 continue;
             };
-            if visible.is_some_and(|keys| keys.contains(value_id)) {
+            if maps.kind_contains(far_kind_id, *value_id) {
                 self.next.push((root, *value_id));
             }
         }
@@ -84,7 +78,7 @@ impl CountScratch {
         if hop.2 {
             self.expand_follow(maps, frontier_kind, hop.1, hop.0);
         } else {
-            self.expand(Self::hop_index(maps, hop.0, hop.1));
+            self.expand(maps, hop.0, hop.1);
         }
     }
 
@@ -97,18 +91,8 @@ impl CountScratch {
         }
     }
 
-    fn amounts_table<'a>(
-        maps: &'a JoinMaps,
-        sum_kind: &str,
-        sum_property: &str,
-    ) -> Option<&'a HashMap<u32, i64>> {
-        match (
-            maps.intern_ix.get(sum_kind),
-            maps.intern_ix.get(sum_property),
-        ) {
-            (Some(&kind_id), Some(&prop_id)) => maps.amounts.get(&(kind_id, prop_id)),
-            _ => None,
-        }
+    fn amount_of(maps: &JoinMaps, sum_kind: &str, sum_property: &str, key: u32) -> Option<i64> {
+        maps.leaf_amount(sum_kind, key, sum_property)
     }
 
     fn mark_root(reachable: &mut [u64], root: u32) -> bool {
@@ -129,33 +113,13 @@ impl CountScratch {
         join_property: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        self.reset_reachable(maps.intern.len());
-        if let Some(rollup) = maps.measure_table(leaf_kind, join_property, sum_property) {
-            return self.fold_rollup_table(rollup);
-        }
-        let Ok(guard) = maps.lazy_rollups.lock() else {
-            return (0, 0);
-        };
-        let Some(kind_id) = maps.intern_ix.get(leaf_kind) else {
-            return (0, 0);
-        };
-        let Some(join_id) = maps.intern_ix.get(join_property) else {
-            return (0, 0);
-        };
-        let Some(sum_id) = maps.intern_ix.get(sum_property) else {
-            return (0, 0);
-        };
-        let Some(rollup) = guard.get(&(*kind_id, *join_id, *sum_id)) else {
-            return (0, 0);
-        };
-        self.fold_rollup_table(rollup)
-    }
-
-    fn fold_rollup_table(&mut self, rollup: &MeasureTable) -> (usize, i64) {
+        self.reset_reachable(maps.intern_len());
         let mut reachable = 0usize;
         let mut total = 0i64;
         for &(root, parent) in &self.paths {
-            let Some(&(count, sum)) = rollup.get(&parent) else {
+            let Some((count, sum)) =
+                maps.rollup_parent(leaf_kind, join_property, sum_property, parent)
+            else {
                 continue;
             };
             if count == 0 {
@@ -172,21 +136,18 @@ impl CountScratch {
     fn fold_leaves(
         &mut self,
         maps: &JoinMaps,
-        index: Option<&HashMap<u32, Vec<u32>>>,
         leaf_kind: &str,
+        join_property: &str,
         sum_kind: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        self.reset_reachable(maps.intern.len());
-        let amounts = Self::amounts_table(maps, sum_kind, sum_property);
+        self.reset_reachable(maps.intern_len());
         let sum_leaves = leaf_kind == sum_kind;
         let mut reachable = 0usize;
         let mut total = 0i64;
-        if let Some(index) = index {
+        {
             for &(root, parent) in &self.paths {
-                let Some(children) = index.get(&parent) else {
-                    continue;
-                };
+                let children = maps.hop_targets("", parent, leaf_kind, join_property, false);
                 if children.is_empty() {
                     continue;
                 }
@@ -195,8 +156,8 @@ impl CountScratch {
                 }
                 if sum_leaves {
                     for child in children {
-                        if let Some(amount) = amounts.and_then(|map| map.get(child)) {
-                            total = total.wrapping_add(*amount);
+                        if let Some(amount) = Self::amount_of(maps, sum_kind, sum_property, child) {
+                            total = total.wrapping_add(amount);
                         }
                     }
                 }
@@ -214,37 +175,35 @@ impl CountScratch {
         sum_kind: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        self.reset_reachable(maps.intern.len());
-        let amounts = Self::amounts_table(maps, sum_kind, sum_property);
+        self.reset_reachable(maps.intern_len());
         let sum_leaves = far_kind == sum_kind;
         let mut reachable = 0usize;
         let mut total = 0i64;
-        let Some(&kind_id) = maps.intern_ix.get(frontier_kind) else {
+        let Some(kind_id) = maps.intern_existing(frontier_kind) else {
             return (0, 0);
         };
-        let Some(&prop_id) = maps.intern_ix.get(join_property) else {
+        let Some(prop_id) = maps.intern_existing(join_property) else {
             return (0, 0);
         };
-        let Some(&far_kind_id) = maps.intern_ix.get(far_kind) else {
+        let Some(far_kind_id) = maps.intern_existing(far_kind) else {
             return (0, 0);
         };
-        let visible = maps.by_kind.get(&far_kind_id);
         for &(root, parent) in &self.paths {
-            let Some(owned) = maps.owned.get(&(kind_id, parent)) else {
+            let Some(owned) = maps.owned_pairs(kind_id, parent) else {
                 continue;
             };
             let Some((_, value_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
                 continue;
             };
-            if !visible.is_some_and(|keys| keys.contains(value_id)) {
+            if !maps.kind_contains(far_kind_id, *value_id) {
                 continue;
             }
             if Self::mark_root(&mut self.reachable, root) {
                 reachable += 1;
             }
             if sum_leaves {
-                if let Some(amount) = amounts.and_then(|map| map.get(value_id)) {
-                    total = total.wrapping_add(*amount);
+                if let Some(amount) = Self::amount_of(maps, sum_kind, sum_property, *value_id) {
+                    total = total.wrapping_add(amount);
                 }
             }
         }
@@ -263,12 +222,11 @@ impl CountScratch {
         self.paths.clear();
         self.paths.extend(roots.iter().map(|&key| (key, key)));
         let Some((last, rest)) = hops.split_last() else {
-            let amounts = Self::amounts_table(maps, sum_kind, sum_property);
             let mut total = 0i64;
             if root_kind == sum_kind {
                 for &(_, leaf) in &self.paths {
-                    if let Some(amount) = amounts.and_then(|map| map.get(&leaf)) {
-                        total = total.wrapping_add(*amount);
+                    if let Some(amount) = Self::amount_of(maps, sum_kind, sum_property, leaf) {
+                        total = total.wrapping_add(amount);
                     }
                 }
             }
@@ -284,13 +242,7 @@ impl CountScratch {
         } else if last.0 == sum_kind && maps.has_last_hop_table(last.0, last.1, sum_property) {
             self.fold_rollups(maps, last.0, last.1, sum_property)
         } else {
-            self.fold_leaves(
-                maps,
-                Self::hop_index(maps, last.0, last.1),
-                last.0,
-                sum_kind,
-                sum_property,
-            )
+            self.fold_leaves(maps, last.0, last.1, sum_kind, sum_property)
         }
     }
 
@@ -335,6 +287,14 @@ pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 type MeasureKey = (u32, u32, u32);
 type MeasureTable = HashMap<u32, (u32, i64)>;
+type ParentIndex = HashMap<u32, Vec<u32>>;
+type ChildLists = Vec<(u32, Vec<u32>)>;
+
+#[derive(Debug, Default)]
+struct InternPin {
+    strings: Vec<Box<str>>,
+    by_id: HashMap<u32, usize>,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct LiveMeta {
@@ -372,6 +332,8 @@ pub struct JoinMaps {
     lazy_rollups: Mutex<HashMap<MeasureKey, MeasureTable>>,
     lazy_dirty: AtomicBool,
     pub(crate) owned: HashMap<(u32, u32), Vec<(u32, u32)>>,
+    paged: Option<(Arc<PagedFile>, String)>,
+    intern_pin: Mutex<InternPin>,
 }
 
 impl Clone for JoinMaps {
@@ -398,29 +360,164 @@ impl Clone for JoinMaps {
             ),
             lazy_dirty: AtomicBool::new(self.lazy_dirty.load(Ordering::Relaxed)),
             owned: self.owned.clone(),
+            paged: self.paged.clone(),
+            intern_pin: Mutex::new(InternPin::default()),
         }
     }
 }
 
 impl JoinMaps {
-    pub fn is_visible(&self, kind: &str, key: &str) -> bool {
-        let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
-        else {
-            return false;
+    pub(crate) fn attach_paged(&mut self, file: Arc<PagedFile>, namespace: String) {
+        self.paged = Some((file, namespace));
+        let (declared, cached) = if let Some((_, dir)) = self.paged_ns() {
+            let declared: HashSet<_> = dir.declared.iter().copied().collect();
+            let cached = dir
+                .rollups
+                .iter()
+                .filter_map(|((leaf, _, sum), _)| {
+                    (!declared.contains(&(*leaf, *sum))).then_some((*leaf, *sum))
+                })
+                .collect();
+            (declared, cached)
+        } else {
+            (HashSet::new(), HashSet::new())
         };
+        self.declared_sums = declared;
+        if let Ok(g) = self.cached_sums.get_mut() {
+            *g = cached;
+        }
+        self.drop_heap();
+    }
+
+    fn drop_heap(&mut self) {
+        self.intern.clear();
+        self.intern.shrink_to_fit();
+        self.intern_ix.clear();
+        self.intern_ix.shrink_to_fit();
+        self.by_kind.clear();
+        self.by_kind.shrink_to_fit();
+        self.by_prop.clear();
+        self.by_prop.shrink_to_fit();
+        self.amounts.clear();
+        self.amounts.shrink_to_fit();
+        self.rollups.clear();
+        self.rollups.shrink_to_fit();
+        self.owned.clear();
+        self.owned.shrink_to_fit();
+        if let Ok(g) = self.lazy_rollups.get_mut() {
+            g.clear();
+        }
+        self.intern_pin = Mutex::new(InternPin::default());
+    }
+
+    fn paged_ns(&self) -> Option<(&PagedFile, &NsDir)> {
+        let (file, name) = self.paged.as_ref()?;
+        Some((file.as_ref(), file.ns_dir(name)?))
+    }
+
+    pub(crate) fn intern_len(&self) -> usize {
+        if let Some((_, dir)) = self.paged_ns() {
+            dir.intern_len as usize
+        } else {
+            self.intern.len()
+        }
+    }
+
+    pub(crate) fn kind_contains(&self, kind_id: u32, key_id: u32) -> bool {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.kind_contains(dir, kind_id, key_id);
+        }
         self.by_kind
             .get(&kind_id)
             .is_some_and(|keys| keys.contains(&key_id))
     }
 
+    pub(crate) fn owned_pairs(&self, kind_id: u32, key_id: u32) -> Option<Vec<(u32, u32)>> {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file
+                .identity((dir.ns_id, kind_id, key_id))
+                .map(|(_, owned)| owned);
+        }
+        self.owned.get(&(kind_id, key_id)).cloned()
+    }
+
+    pub(crate) fn kind_entries(&self) -> Vec<(u32, HashSet<u32>)> {
+        self.by_kind.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    pub(crate) fn prop_entries(&self) -> Vec<((u32, u32), ParentIndex)> {
+        self.by_prop.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    pub(crate) fn amount_entries(&self) -> Vec<((u32, u32), HashMap<u32, i64>)> {
+        self.amounts.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    pub(crate) fn rollup_entries(&self) -> Vec<(MeasureKey, MeasureTable)> {
+        let lazy = self.lazy_rollups.lock().ok();
+        let mut tables: Vec<_> = self
+            .rollups
+            .iter()
+            .map(|(key, parents)| (*key, parents.clone()))
+            .collect();
+        if let Some(guard) = lazy.as_ref() {
+            for (key, parents) in guard.iter() {
+                if !self.rollups.contains_key(key) {
+                    tables.push((*key, parents.clone()));
+                }
+            }
+        }
+        tables
+    }
+
+    pub(crate) fn declared_entries(&self) -> Vec<(u32, u32)> {
+        self.declared_sums.iter().copied().collect()
+    }
+
+    pub(crate) fn insert_rollup(&mut self, key: MeasureKey, parent: u32, row: (u32, i64)) {
+        self.rollups.entry(key).or_default().insert(parent, row);
+    }
+
+    pub(crate) fn insert_declared(&mut self, leaf: u32, sum: u32) {
+        self.declared_sums.insert((leaf, sum));
+    }
+
+    fn pin_intern(&self, id: u32) -> Option<&str> {
+        let (file, dir) = self.paged_ns()?;
+        let mut pin = self.intern_pin.lock().ok()?;
+        if let Some(&idx) = pin.by_id.get(&id) {
+            let ptr = pin.strings[idx].as_ref() as *const str;
+            drop(pin);
+            // SAFETY: intern pins are Box<str>; Vec reallocation moves the
+            // boxes, not the string bytes. Pins are never removed while
+            // JoinMaps is shared (`drop_heap` needs exclusive &mut).
+            return Some(unsafe { &*ptr });
+        }
+        let boxed: Box<str> = file.intern_string(dir, id)?.into_boxed_str();
+        let ptr = boxed.as_ref() as *const str;
+        let idx = pin.strings.len();
+        pin.by_id.insert(id, idx);
+        pin.strings.push(boxed);
+        drop(pin);
+        Some(unsafe { &*ptr })
+    }
+
+    pub fn is_visible(&self, kind: &str, key: &str) -> bool {
+        let (Some(kind_id), Some(key_id)) = (self.intern_existing(kind), self.intern_existing(key))
+        else {
+            return false;
+        };
+        self.kind_contains(kind_id, key_id)
+    }
+
     pub fn prop(&self, kind: &str, key: &str, property: &str) -> Option<&str> {
-        let kind_id = *self.intern_ix.get(kind)?;
-        let key_id = *self.intern_ix.get(key)?;
-        let prop_id = *self.intern_ix.get(property)?;
-        let owned = self.owned.get(&(kind_id, key_id))?;
+        let kind_id = self.intern_existing(kind)?;
+        let key_id = self.intern_existing(key)?;
+        let prop_id = self.intern_existing(property)?;
+        let owned = self.owned_pairs(kind_id, key_id)?;
         for (pid, value_id) in owned {
-            if *pid == prop_id {
-                return self.intern.get(*value_id as usize).map(String::as_str);
+            if pid == prop_id {
+                return self.intern_get(value_id);
             }
         }
         None
@@ -437,16 +534,22 @@ impl JoinMaps {
         sum_kind: &str,
         sum_property: &str,
     ) -> (usize, i64) {
-        let Some(&root_kind_id) = self.intern_ix.get(root_kind) else {
+        let Some(root_kind_id) = self.intern_existing(root_kind) else {
             return (0, 0);
         };
-        let Some(roots) = self.by_kind.get(&root_kind_id) else {
+        let roots = self.visible_id_set(root_kind_id);
+        if roots.is_empty() {
             return (0, 0);
-        };
+        }
         COUNT_SCRATCH.with(|scratch| {
-            scratch
-                .borrow_mut()
-                .count_and_sum(self, roots, hops, root_kind, sum_kind, sum_property)
+            scratch.borrow_mut().count_and_sum(
+                self,
+                &roots,
+                hops,
+                root_kind,
+                sum_kind,
+                sum_property,
+            )
         })
     }
 
@@ -456,18 +559,16 @@ impl JoinMaps {
         property: &str,
         value: &str,
     ) -> HashSet<u32> {
-        let (Some(&kind_id), Some(&prop_id), Some(&value_id)) = (
-            self.intern_ix.get(root_kind),
-            self.intern_ix.get(property),
-            self.intern_ix.get(value),
+        let (Some(_kind_id), Some(_prop_id), Some(value_id)) = (
+            self.intern_existing(root_kind),
+            self.intern_existing(property),
+            self.intern_existing(value),
         ) else {
             return HashSet::new();
         };
-        self.by_prop
-            .get(&(kind_id, prop_id))
-            .and_then(|by_val| by_val.get(&value_id))
-            .map(|keys| keys.iter().copied().collect())
-            .unwrap_or_default()
+        self.hop_targets("", value_id, root_kind, property, false)
+            .into_iter()
+            .collect()
     }
 
     /// Visible keys of `kind` whose `property` value is in `[min, max]`
@@ -480,21 +581,18 @@ impl JoinMaps {
         min: Option<&str>,
         max: Option<&str>,
     ) -> Result<HashSet<u32>, String> {
-        let (Some(&kind_id), Some(&prop_id)) =
-            (self.intern_ix.get(kind), self.intern_ix.get(property))
+        let (Some(kind_id), Some(prop_id)) =
+            (self.intern_existing(kind), self.intern_existing(property))
         else {
             return Ok(HashSet::new());
         };
-        let Some(by_val) = self.by_prop.get(&(kind_id, prop_id)) else {
-            return Ok(HashSet::new());
-        };
         let mut ids = HashSet::new();
-        for (&value_id, keys) in by_val {
+        for (value_id, keys) in self.prop_parent_lists(kind_id, prop_id) {
             let Some(stored) = self.intern_get(value_id) else {
                 continue;
             };
             if ty.in_range(stored, min, max)? {
-                ids.extend(keys.iter().copied());
+                ids.extend(keys);
             }
         }
         Ok(ids)
@@ -546,13 +644,14 @@ impl JoinMaps {
     ) -> Vec<u32> {
         let roots = match filter {
             None => {
-                let Some(&root_kind_id) = self.intern_ix.get(root_kind) else {
+                let Some(root_kind_id) = self.intern_existing(root_kind) else {
                     return Vec::new();
                 };
-                match self.by_kind.get(&root_kind_id) {
-                    Some(roots) => roots.clone(),
-                    None => return Vec::new(),
+                let roots = self.visible_id_set(root_kind_id);
+                if roots.is_empty() {
+                    return Vec::new();
                 }
+                roots
             }
             Some((property, value)) => self.matching_root_ids(root_kind, property, value),
         };
@@ -586,10 +685,27 @@ impl JoinMaps {
     }
 
     pub(crate) fn visible_ids(&self, kind: &str) -> HashSet<u32> {
-        let Some(&kind_id) = self.intern_ix.get(kind) else {
+        let Some(kind_id) = self.intern_existing(kind) else {
             return HashSet::new();
         };
+        self.visible_id_set(kind_id)
+    }
+
+    fn visible_id_set(&self, kind_id: u32) -> HashSet<u32> {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.kind_ids(dir, kind_id);
+        }
         self.by_kind.get(&kind_id).cloned().unwrap_or_default()
+    }
+
+    fn prop_parent_lists(&self, kind_id: u32, prop_id: u32) -> Vec<(u32, Vec<u32>)> {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.prop_parents(dir, kind_id, prop_id);
+        }
+        self.by_prop
+            .get(&(kind_id, prop_id))
+            .map(|by_val| by_val.iter().map(|(k, v)| (*k, v.clone())).collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn hop_targets(
@@ -601,43 +717,46 @@ impl JoinMaps {
         incoming: bool,
     ) -> Vec<u32> {
         if incoming {
-            let Some(&kind_id) = self.intern_ix.get(frontier_kind) else {
+            let Some(kind_id) = self.intern_existing(frontier_kind) else {
                 return Vec::new();
             };
-            let Some(&prop_id) = self.intern_ix.get(join_property) else {
+            let Some(prop_id) = self.intern_existing(join_property) else {
                 return Vec::new();
             };
-            let Some(&far_kind_id) = self.intern_ix.get(far_kind) else {
+            let Some(far_kind_id) = self.intern_existing(far_kind) else {
                 return Vec::new();
             };
-            let Some(owned) = self.owned.get(&(kind_id, parent)) else {
+            let Some(owned) = self.owned_pairs(kind_id, parent) else {
                 return Vec::new();
             };
             let Some((_, value_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
                 return Vec::new();
             };
-            if self
-                .by_kind
-                .get(&far_kind_id)
-                .is_some_and(|keys| keys.contains(value_id))
-            {
+            if self.kind_contains(far_kind_id, *value_id) {
                 vec![*value_id]
             } else {
                 Vec::new()
             }
         } else {
-            let Some(&far_id) = self.intern_ix.get(far_kind) else {
+            let Some(far_id) = self.intern_existing(far_kind) else {
                 return Vec::new();
             };
-            let Some(&prop_id) = self.intern_ix.get(join_property) else {
+            let Some(prop_id) = self.intern_existing(join_property) else {
                 return Vec::new();
             };
-            self.by_prop
-                .get(&(far_id, prop_id))
-                .and_then(|by_val| by_val.get(&parent))
-                .cloned()
-                .unwrap_or_default()
+            self.outgoing_children(far_id, prop_id, parent)
         }
+    }
+
+    fn outgoing_children(&self, far_id: u32, prop_id: u32, parent: u32) -> Vec<u32> {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.hop_children(dir, far_id, prop_id, parent);
+        }
+        self.by_prop
+            .get(&(far_id, prop_id))
+            .and_then(|by_val| by_val.get(&parent))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Frontier keys that join to `child` on `join_property`. Incoming follows
@@ -651,36 +770,35 @@ impl JoinMaps {
         child: u32,
     ) -> Vec<u32> {
         if incoming {
-            let (Some(&kind_id), Some(&prop_id)) = (
-                self.intern_ix.get(frontier_kind),
-                self.intern_ix.get(join_property),
+            let (Some(kind_id), Some(prop_id)) = (
+                self.intern_existing(frontier_kind),
+                self.intern_existing(join_property),
             ) else {
                 return Vec::new();
             };
+            if let Some((file, dir)) = self.paged_ns() {
+                return file.hop_children(dir, kind_id, prop_id, child);
+            }
             self.by_prop
                 .get(&(kind_id, prop_id))
                 .and_then(|by_val| by_val.get(&child))
                 .cloned()
                 .unwrap_or_default()
         } else {
-            let (Some(&far_id), Some(&prop_id), Some(&frontier_id)) = (
-                self.intern_ix.get(far_kind),
-                self.intern_ix.get(join_property),
-                self.intern_ix.get(frontier_kind),
+            let (Some(far_id), Some(prop_id), Some(frontier_id)) = (
+                self.intern_existing(far_kind),
+                self.intern_existing(join_property),
+                self.intern_existing(frontier_kind),
             ) else {
                 return Vec::new();
             };
-            let Some(owned) = self.owned.get(&(far_id, child)) else {
+            let Some(owned) = self.owned_pairs(far_id, child) else {
                 return Vec::new();
             };
             let Some((_, parent_id)) = owned.iter().find(|(pid, _)| *pid == prop_id) else {
                 return Vec::new();
             };
-            if self
-                .by_kind
-                .get(&frontier_id)
-                .is_some_and(|keys| keys.contains(parent_id))
-            {
+            if self.kind_contains(frontier_id, *parent_id) {
                 vec![*parent_id]
             } else {
                 Vec::new()
@@ -689,8 +807,15 @@ impl JoinMaps {
     }
 
     pub(crate) fn leaf_amount(&self, kind: &str, key_id: u32, property: &str) -> Option<i64> {
-        let kind_id = *self.intern_ix.get(kind)?;
-        let prop_id = *self.intern_ix.get(property)?;
+        let kind_id = self.intern_existing(kind)?;
+        let prop_id = self.intern_existing(property)?;
+        self.amount_id(kind_id, prop_id, key_id)
+    }
+
+    fn amount_id(&self, kind_id: u32, prop_id: u32, key_id: u32) -> Option<i64> {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.amount(dir, kind_id, prop_id, key_id);
+        }
         self.amounts.get(&(kind_id, prop_id))?.get(&key_id).copied()
     }
 
@@ -736,22 +861,32 @@ impl JoinMaps {
         kind_id: u32,
         prop_id: u32,
     ) -> Option<&HashMap<u32, Vec<u32>>> {
+        if self.paged.is_some() {
+            return None;
+        }
         self.by_prop.get(&(kind_id, prop_id))
     }
 
     /// [`Self::prop`] by interned ids.
     pub(crate) fn owned_value(&self, kind_id: u32, key_id: u32, prop_id: u32) -> Option<&str> {
-        let owned = self.owned.get(&(kind_id, key_id))?;
+        let owned = self.owned_pairs(kind_id, key_id)?;
         let (_, value_id) = owned.iter().find(|(pid, _)| *pid == prop_id)?;
         self.intern_get(*value_id)
     }
 
     pub(crate) fn intern_existing(&self, value: &str) -> Option<u32> {
-        self.intern_ix.get(value).copied()
+        if let Some(&id) = self.intern_ix.get(value) {
+            return Some(id);
+        }
+        let (file, dir) = self.paged_ns()?;
+        file.intern_id(dir, value)
     }
 
     pub(crate) fn intern_get(&self, id: u32) -> Option<&str> {
-        self.intern.get(id as usize).map(String::as_str)
+        if let Some(value) = self.intern.get(id as usize) {
+            return Some(value.as_str());
+        }
+        self.pin_intern(id)
     }
 
     pub(crate) fn insert_visible_ids(
@@ -882,14 +1017,27 @@ impl JoinMaps {
         key: &str,
         denied: &HashSet<(u32, u32)>,
     ) -> HashMap<String, String> {
-        let (Some(&kind_id), Some(&key_id)) = (self.intern_ix.get(kind), self.intern_ix.get(key))
+        let (Some(kind_id), Some(key_id)) = (self.intern_existing(kind), self.intern_existing(key))
         else {
             return HashMap::new();
         };
-        let Some(owned) = self.owned.get(&(kind_id, key_id)) else {
+        let Some(owned) = self.owned_pairs(kind_id, key_id) else {
             return HashMap::new();
         };
-        crate::acl::PropertyAcl::omit_owned(&self.intern, kind_id, owned, denied)
+        let mut props = HashMap::with_capacity(owned.len());
+        for (prop_id, value_id) in owned {
+            if denied.contains(&(kind_id, prop_id)) {
+                continue;
+            }
+            let Some(prop) = self.intern_get(prop_id) else {
+                continue;
+            };
+            let Some(value) = self.intern_get(value_id) else {
+                continue;
+            };
+            props.insert(prop.to_string(), value.to_string());
+        }
+        props
     }
 
     #[cfg(test)]
@@ -915,10 +1063,10 @@ impl JoinMaps {
     /// would hold (one entry per join-property value that is also a visible
     /// identity). Used by the tuning advisor's memory estimate.
     pub(crate) fn measure_cache_parents(&self, leaf_kind: &str, sum_property: &str) -> u64 {
-        let Some(&kind_id) = self.intern_ix.get(leaf_kind) else {
+        let Some(kind_id) = self.intern_existing(leaf_kind) else {
             return 0;
         };
-        let sum_id = self.intern_ix.get(sum_property).copied();
+        let sum_id = self.intern_existing(sum_property);
         let mut n = 0u64;
         for ((kind, join_id), by_val) in &self.by_prop {
             if *kind != kind_id || sum_id == Some(*join_id) {
@@ -936,8 +1084,8 @@ impl JoinMaps {
 
     fn sum_ids(&self, leaf_kind: &str, sum_property: &str) -> Option<(u32, u32)> {
         Some((
-            *self.intern_ix.get(leaf_kind)?,
-            *self.intern_ix.get(sum_property)?,
+            self.intern_existing(leaf_kind)?,
+            self.intern_existing(sum_property)?,
         ))
     }
 
@@ -963,7 +1111,11 @@ impl JoinMaps {
         let Some(kind_id) = self.intern_existing(leaf_kind) else {
             return Ok(false);
         };
-        let leaves = self.by_kind.get(&kind_id).map(HashSet::len).unwrap_or(0);
+        let leaves = if let Some((file, dir)) = self.paged_ns() {
+            file.kind_len(dir, kind_id)
+        } else {
+            self.by_kind.get(&kind_id).map(HashSet::len).unwrap_or(0)
+        };
         if leaves > leaf_budget {
             return Err(format!(
                 "undeclared measure {leaf_kind}.{sum_property} has {leaves} leaves; budget is {leaf_budget}"
@@ -972,7 +1124,12 @@ impl JoinMaps {
         let Some(prop_id) = self.intern_existing(sum_property) else {
             return Ok(false);
         };
-        if !self.amounts.contains_key(&(kind_id, prop_id)) {
+        let has_amounts = if let Some((file, dir)) = self.paged_ns() {
+            file.has_amounts(dir, kind_id, prop_id)
+        } else {
+            self.amounts.contains_key(&(kind_id, prop_id))
+        };
+        if !has_amounts {
             return Ok(false);
         }
         {
@@ -1036,47 +1193,67 @@ impl JoinMaps {
         if let Some(table) = self.measure_table(leaf_kind, join_property, sum_property) {
             return table.get(&parent_id).copied();
         }
-        let kind_id = *self.intern_ix.get(leaf_kind)?;
-        let join_id = *self.intern_ix.get(join_property)?;
-        let sum_id = *self.intern_ix.get(sum_property)?;
-        self.lazy_rollups
-            .lock()
-            .ok()?
-            .get(&(kind_id, join_id, sum_id))
-            .and_then(|table| table.get(&parent_id).copied())
+        self.rollup_parent(leaf_kind, join_property, sum_property, parent_id)
     }
 
     fn has_last_hop_table(&self, leaf_kind: &str, join_property: &str, sum_property: &str) -> bool {
-        if self
-            .measure_table(leaf_kind, join_property, sum_property)
-            .is_some()
-        {
-            return true;
-        }
-        let Some(kind_id) = self.intern_ix.get(leaf_kind) else {
-            return false;
-        };
-        let Some(join_id) = self.intern_ix.get(join_property) else {
-            return false;
-        };
-        let Some(sum_id) = self.intern_ix.get(sum_property) else {
-            return false;
-        };
-        self.lazy_rollups
-            .lock()
-            .map(|g| g.contains_key(&(*kind_id, *join_id, *sum_id)))
-            .unwrap_or(false)
+        self.measure_key(leaf_kind, join_property, sum_property)
+            .is_some_and(|key| {
+                self.rollups.contains_key(&key)
+                    || self
+                        .lazy_rollups
+                        .lock()
+                        .map(|g| g.contains_key(&key))
+                        .unwrap_or(false)
+                    || self
+                        .paged_ns()
+                        .is_some_and(|(file, dir)| file.has_rollup(dir, key))
+            })
     }
 
+    fn measure_key(
+        &self,
+        leaf_kind: &str,
+        join_property: &str,
+        sum_property: &str,
+    ) -> Option<MeasureKey> {
+        Some((
+            self.intern_existing(leaf_kind)?,
+            self.intern_existing(join_property)?,
+            self.intern_existing(sum_property)?,
+        ))
+    }
+
+    fn rollup_parent(
+        &self,
+        leaf_kind: &str,
+        join_property: &str,
+        sum_property: &str,
+        parent: u32,
+    ) -> Option<(u32, i64)> {
+        let key = self.measure_key(leaf_kind, join_property, sum_property)?;
+        if let Some(table) = self.rollups.get(&key) {
+            return table.get(&parent).copied();
+        }
+        if let Ok(guard) = self.lazy_rollups.lock() {
+            if let Some(table) = guard.get(&key) {
+                return table.get(&parent).copied();
+            }
+        }
+        let (file, dir) = self.paged_ns()?;
+        file.rollup(dir, key, parent)
+    }
+
+    #[cfg(test)]
     fn measure_table(
         &self,
         leaf_kind: &str,
         join_property: &str,
         sum_property: &str,
     ) -> Option<&HashMap<u32, (u32, i64)>> {
-        let kind_id = *self.intern_ix.get(leaf_kind)?;
-        let join_id = *self.intern_ix.get(join_property)?;
-        let sum_id = *self.intern_ix.get(sum_property)?;
+        let kind_id = self.intern_existing(leaf_kind)?;
+        let join_id = self.intern_existing(join_property)?;
+        let sum_id = self.intern_existing(sum_property)?;
         self.rollups.get(&(kind_id, join_id, sum_id))
     }
 
@@ -1144,6 +1321,9 @@ impl JoinMaps {
     }
 
     fn key_is_visible(&self, key_id: u32) -> bool {
+        if let Some((file, dir)) = self.paged_ns() {
+            return file.key_visible(dir, key_id);
+        }
         self.by_kind.values().any(|keys| keys.contains(&key_id))
     }
 
@@ -1325,26 +1505,43 @@ impl JoinMaps {
         sum_prop: u32,
     ) -> HashMap<MeasureKey, MeasureTable> {
         let mut out = HashMap::new();
-        let amounts = self.amounts.get(&(leaf_id, sum_prop));
-        for ((kind, join_id), by_val) in &self.by_prop {
-            if *kind != leaf_id || *join_id == sum_prop {
-                continue;
-            }
+        let join_props: Vec<(u32, ChildLists)> = if let Some((file, dir)) = self.paged_ns() {
+            file.prop_keys(dir)
+                .into_iter()
+                .filter(|(kind, join)| *kind == leaf_id && *join != sum_prop)
+                .map(|(_, join)| (join, file.prop_parents(dir, leaf_id, join)))
+                .collect()
+        } else {
+            self.by_prop
+                .iter()
+                .filter(|((kind, join), _)| *kind == leaf_id && *join != sum_prop)
+                .map(|((_, join), by_val)| {
+                    (
+                        *join,
+                        by_val
+                            .iter()
+                            .map(|(parent, children)| (*parent, children.clone()))
+                            .collect(),
+                    )
+                })
+                .collect()
+        };
+        for (join_id, by_val) in join_props {
             let mut parents = MeasureTable::new();
             for (parent_id, children) in by_val {
-                if children.is_empty() || !self.key_is_visible(*parent_id) {
+                if children.is_empty() || !self.key_is_visible(parent_id) {
                     continue;
                 }
                 let mut total = 0i64;
-                for child in children {
-                    if let Some(amount) = amounts.and_then(|map| map.get(child)) {
-                        total = total.wrapping_add(*amount);
+                for child in &children {
+                    if let Some(amount) = self.amount_id(leaf_id, sum_prop, *child) {
+                        total = total.wrapping_add(amount);
                     }
                 }
-                parents.insert(*parent_id, (children.len() as u32, total));
+                parents.insert(parent_id, (children.len() as u32, total));
             }
             if !parents.is_empty() {
-                out.insert((leaf_id, *join_id, sum_prop), parents);
+                out.insert((leaf_id, join_id, sum_prop), parents);
             }
         }
         out

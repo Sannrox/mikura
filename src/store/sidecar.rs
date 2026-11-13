@@ -38,6 +38,23 @@ impl Store {
 
     pub(super) fn persist_projection(&mut self) -> Result<(), String> {
         let pages = self.writer.committed_pages();
+        if self.serving_budget.is_some() {
+            if self.writer.keys().is_some() {
+                return Err("serving budget is not available on encrypted stores".into());
+            }
+            if !self.writer.withheld().is_empty() {
+                return Ok(());
+            }
+            self.persist_paged_checkpoint(pages)?;
+            self.sidecar_checkpoint_stamp = pages;
+            self.sidecar_delta_stamp = None;
+            let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
+            self.dirty.clear();
+            self.has_checkpoint = true;
+            self.delta_bytes = 0;
+            self.finish_projection_persist();
+            return Ok(());
+        }
         if self.writer.keys().is_some() {
             self.writer.revalidate_catalog()?;
             self.drop_revoked_tenants();
@@ -112,7 +129,7 @@ impl Store {
         self.sidecar_last_persist = std::time::Instant::now();
     }
 
-    fn finish_projection_persist(&mut self) {
+    pub(super) fn finish_projection_persist(&mut self) {
         self.note_projection_persisted();
         for joins in self.joins.values_mut() {
             joins.adopt_lazy_rollups();
@@ -208,6 +225,9 @@ impl Store {
     }
 
     fn persist_checkpoint(&self, pages: u32) -> Result<(), String> {
+        if self.serving_budget.is_some() {
+            return self.persist_paged_checkpoint(pages);
+        }
         if let Some(store_dek) = self.writer.store_dek() {
             let mut plains = BTreeMap::new();
             for tenant in self.live_tenants() {
@@ -232,6 +252,28 @@ impl Store {
         self.encode_projection_after_magic(&mut body)?;
         self.encode_instance_schema_versions(&mut body)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
+    }
+
+    pub(super) fn persist_paged_checkpoint(&self, pages: u32) -> Result<(), String> {
+        if self.paged.is_some() {
+            return Ok(());
+        }
+        if self.writer.keys().is_some() {
+            return Err("serving budget is not available on encrypted stores".into());
+        }
+        if !self.writer.withheld().is_empty() {
+            return Ok(());
+        }
+        let bytes = crate::paged::encode(
+            pages,
+            &self.ns,
+            &self.identity,
+            &self.hidden_props,
+            &self.joins,
+        )?;
+        crate::paged::persist_pages(&Self::join_map_path(&self.log), &bytes)?;
+        let _ = std::fs::remove_file(Self::join_delta_path(&self.log));
+        Ok(())
     }
 
     pub(super) fn seal_partitioned(
@@ -452,6 +494,13 @@ impl Store {
             return Err("encrypted log requires a sealed snapshot".into());
         }
         if crate::crypto::is_sealed(&bytes) {
+            if let Some(dek) = writer.store_dek() {
+                if let Ok((_, inner)) = crate::crypto::open_blob(dek, &bytes) {
+                    if crate::paged::is_paged_magic(&inner) {
+                        return Self::checkpoint_from_paged_bytes(&inner);
+                    }
+                }
+            }
             let (pages, slices) = Self::open_partitioned(writer, &bytes)?;
             let mut loaded = Checkpoint {
                 pages,
@@ -465,6 +514,9 @@ impl Store {
             }
             return Ok(loaded);
         }
+        if crate::paged::is_paged_magic(&bytes) {
+            return crate::paged::decode_path(path);
+        }
         let body = read_checksummed(path)?;
         let mut loaded = Checkpoint {
             pages: 0,
@@ -475,6 +527,23 @@ impl Store {
         };
         Self::merge_join_body(&mut loaded, &body)?;
         Ok(loaded)
+    }
+
+    fn checkpoint_from_paged_bytes(bytes: &[u8]) -> Result<Checkpoint, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "mikura-paged-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("joins");
+        crate::paged::persist_pages(&path, bytes)?;
+        let loaded = crate::paged::decode_path(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        loaded
     }
 
     fn merge_join_body(loaded: &mut Checkpoint, body: &[u8]) -> Result<(), String> {
@@ -547,12 +616,12 @@ impl Store {
             let action_id = if row.action.is_empty() {
                 None
             } else {
-                Some(self.joins_for_write(&row.namespace).intern(&row.action))
+                Some(self.joins_for_write(&row.namespace)?.intern(&row.action))
             };
             let schema_namespace = row.namespace.clone();
             let schema_kind = row.kind.clone();
             let schema_key = row.key.clone();
-            let id = self.intern_live(&row.namespace, &row.kind, &row.key);
+            let id = self.intern_live(&row.namespace, &row.kind, &row.key)?;
             self.install_live(
                 id,
                 LiveMeta {
@@ -562,7 +631,7 @@ impl Store {
                     schema_version: row.schema_version,
                 },
                 row.props,
-            );
+            )?;
             self.maybe_refresh_schema(&schema_namespace, &schema_kind, &schema_key)?;
         }
         Ok(pages)
@@ -581,6 +650,13 @@ impl Store {
         // pages. A matching sidecar or checkpoint must not skip this check.
         let _ = read_records_after_with_keys(&self.log, pages, self.writer.keys())?;
         if sidecar.exists() {
+            if self.serving_budget.is_some()
+                && !apply_delta
+                && self.try_adopt_existing_paged(&sidecar, pages)?
+            {
+                self.restore_action_catalog(pages)?;
+                return Ok(());
+            }
             let loaded = Self::load_checkpoint(&sidecar, &self.writer)?;
             if loaded.pages == pages && !apply_delta {
                 self.adopt_checkpoint(loaded)?;

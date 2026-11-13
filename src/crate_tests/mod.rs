@@ -20,6 +20,7 @@ mod measures;
 mod migrate;
 mod namespace;
 mod overlay;
+mod paged;
 mod pages;
 mod persist;
 mod predicates;

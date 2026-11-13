@@ -164,9 +164,13 @@ JSONL is not the product format. Spikes 001–002 used it as a vehicle.
 - `LogWriter` — durable append
 
 `Store::open` loads identity and hop/sum from `{log}.joins` when present.
-It does not keep a hot payload map. A serving memory budget that pages
-this projection is [ADR 0048](decisions/0048-paged-projection-serving-budget.md);
-that path is not implemented yet. `Store::load(namespace, kind, key, acl)`
+It does not keep a hot payload map. `Store::open_with_serving_budget`
+persists and serves a paged `MKJOIN07` sidecar plus a bounded page cache
+so decoded projection state stays near the caller-set budget
+([ADR 0048](decisions/0048-paged-projection-serving-budget.md)). Zero is
+invalid. Default `open` / `create` still write `MKJOIN06`. A budgeted open
+of an older sidecar rebuilds into pages. Encrypted paged bytes sit inside
+the existing seal; the on-disk sidecar stays sealed. `Store::load(namespace, kind, key, acl)`
 reconstructs the live `ObjectRecord` from slim identity plus interned
 property pairs already in that sidecar
 ([ADR 0005](decisions/0005-current-object-load.md)). Missing or unknown
@@ -184,7 +188,7 @@ delta, loads `{log}.ckpt` when present and replays only pages after that
 stamp; otherwise it rebuilds from the log
 ([ADR 0034](decisions/0034-log-checkpoints.md)).
 Checksum mismatch, truncation, or bad magic (current `MKJOIN06` /
-`MKJOIN6D`; `MKJOIN05` / `MKJOIN5D` still read; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
+`MKJOIN6D`; budgeted `MKJOIN07`; `MKJOIN05` / `MKJOIN5D` still read; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
 the sidecar recovers from a `MIKURAV2` log. A torn `{log}.ckpt` falls
 back to `{log}.ckpt.prev` or full replay; it does not fail closed. Pre-namespace logs are
 migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schema-named last-hop
@@ -379,7 +383,7 @@ contributing values, min, max, an exact `(sum, n)` average, and a distinct
 count, under the ADR 0018 contribution rules and a `max_groups` bound that
 fails closed ([ADR 0038](decisions/0038-breakdown-aggregates.md)). It reads
 the interned `amounts` map per path and needs no sidecar change. Last-hop count and sum for
-a schema-named or first-use leaf property persist as parent rollups on `MKJOIN06`
+a schema-named or first-use leaf property persist as parent rollups on `MKJOIN06` (and on `MKJOIN07` when a serving budget is set)
 ([ADR 0010](decisions/0010-last-hop-measures.md),
 [#151](https://github.com/Sannrox/mikura/issues/151),
 [ADR 0028](decisions/0028-store-namespace.md)). Zero-hop evaluate

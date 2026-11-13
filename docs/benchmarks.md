@@ -30,10 +30,12 @@ lower-is-better, so one rule covers the gate.
 
 `MIKURA_BENCH_OUT` JSON also carries a `serving_bar` array. Each size is
 pass/fail for parity, policy, and restart, plus recorded `peak_rss` and
-`restart_ns`. A serving memory-budget row is skipped until that API exists
-([#353](https://github.com/Sannrox/mikura/issues/353)). ADR 0045
-`MemoryBudget` is not that cap. The 20% p50 latency gate does not apply to
-the oracles; a failed oracle fails the run.
+`restart_ns`. `memory_budget` is the serving RSS cap in bytes used for the
+budgeted dual-read ([#370](https://github.com/Sannrox/mikura/issues/370)).
+ADR 0045 `MemoryBudget` is not that cap. Budgeted `point_read`,
+`list_filter`, hop sums, and `open_with_sidecar` sit next to the in-memory
+rows. The 20% p50 latency gate does not apply to the oracles; a failed
+oracle fails the run.
 
 A 400-object oracle of the same parity and policy checks runs in
 `cargo test --workspace --locked`. Host kill-during-write recovery is

@@ -1327,7 +1327,7 @@ fn walk_values<'m>(
     }
     values.sort_by(|l, r| cmp_value(ty, descending, &l.0, &r.0));
     // Results not yet met in a run; what is left at the end has no value.
-    let mut pending = vec![0u64; maps.intern.len().div_ceil(64)];
+    let mut pending = vec![0u64; maps.intern_len().div_ceil(64)];
     for &id in ids {
         if let Some(word) = pending.get_mut(id as usize / 64) {
             *word |= 1 << (id % 64);
@@ -1519,7 +1519,9 @@ impl ComputeBackend for LocalCompute {
                     }
                     frontier_kind = hop.far_kind.as_str();
                 }
-                evaluate_local(store, request)
+                let answer = evaluate_local(store, request)?;
+                store.paged_fail_closed().map_err(ComputeError::Load)?;
+                Ok(answer)
             }
         }
     }
