@@ -38,7 +38,7 @@
 //!
 //! See `docs/architecture.md` in the repository for the v1 contract.
 //! Format ids on the 1.0 surface: [`LOG_FORMAT`], [`LOG_FORMAT_ENCRYPTED`],
-//! [`JOIN_FORMAT`], [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
+//! [`JOIN_FORMAT`], [`JOIN_FORMAT_PAGED`], [`JOIN_DELTA_FORMAT`], [`CHECKPOINT_FORMAT`].
 
 mod acl;
 mod actions;
@@ -53,6 +53,7 @@ mod log;
 mod objectset;
 mod overlay;
 mod page;
+mod paged;
 mod schema;
 mod store;
 mod tuning;
@@ -64,6 +65,8 @@ pub const LOG_FORMAT: &[u8; 8] = b"MIKURAV2";
 pub const LOG_FORMAT_ENCRYPTED: &[u8; 8] = b"MIKURAV3";
 /// Join sidecar magic (`MKJOIN06`). Rebuildable; unknown magic fails closed.
 pub const JOIN_FORMAT: &[u8; 8] = b"MKJOIN06";
+/// Paged join sidecar magic (`MKJOIN07`) written under a serving budget.
+pub const JOIN_FORMAT_PAGED: &[u8; 8] = b"MKJOIN07";
 /// Previous join sidecar magic this crate still reads (`MKJOIN05`).
 pub const JOIN_FORMAT_V5: &[u8; 8] = b"MKJOIN05";
 /// Join dirty-set magic this crate writes (`MKJOIN6D`).
@@ -92,6 +95,7 @@ pub use overlay::{
     ConflictAudit, OverlayPatch, OVERLAY_AT, OVERLAY_CLEARED, OVERLAY_CONFLICT, OVERLAY_KIND,
     OVERLAY_LOST_PREFIX,
 };
+pub use paged::ServingBudget;
 pub use schema::{
     ConflictPlan, ConflictStrategy, SchemaDescriptor, SchemaLink, SchemaMigration, SCHEMA_CONFLICT,
     SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS,

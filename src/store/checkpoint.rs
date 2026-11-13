@@ -49,6 +49,7 @@ impl Store {
     /// current commit point (ADR 0034).
     pub fn checkpoint(&mut self) -> Result<(), String> {
         self.require_committed()?;
+        self.ensure_writable()?;
         if !self.writer.withheld().is_empty() {
             return Err("checkpoint requires unwrap grants for every tenant".into());
         }
@@ -72,6 +73,7 @@ impl Store {
     /// (ADR 0034).
     pub fn compact_to(&mut self, dst: &Path) -> Result<usize, String> {
         self.require_committed()?;
+        self.ensure_writable()?;
         self.writer.revalidate_catalog()?;
         self.drop_revoked_tenants();
         if !self.writer.withheld().is_empty() {
@@ -234,6 +236,9 @@ impl Store {
 
     pub(super) fn persist_log_checkpoint(&self) -> Result<(), String> {
         if !self.action_commits_from_log {
+            return Ok(());
+        }
+        if self.paged.is_some() {
             return Ok(());
         }
         if !self.writer.withheld().is_empty() {

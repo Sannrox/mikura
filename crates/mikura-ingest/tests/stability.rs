@@ -10,16 +10,16 @@ use mikura::{
     ConflictAudit, ConflictPlan, ConflictStrategy, Edit, EvaluateRequest, EvaluateResponse,
     ExactMatch, Group, Hop, JoinMaps, LocalCompute, MemoryBudget, ObjectRecord, ObjectSet,
     ObjectVersion, OverlayPatch, Predicate, PropertyAcl, PropertyType, PropertyValue, QueryCost,
-    QueryRecorder, QuerySample, QueryShape, SchemaDescriptor, SchemaLink, SchemaMigration, Sort,
-    SparkCompute, Store, Suggestion, SuggestionKind, VersionOrigin, CHANGE_SET_BOUND,
-    CHANGE_SET_KIND, CHECKPOINT_FORMAT, DENORMALIZE_BYTES, HIDE_IDENTITIES_BOUND, HIDE_KINDS_BOUND,
-    JOIN_DELTA_COMPACT_BYTES, JOIN_DELTA_FORMAT, JOIN_DELTA_FORMAT_V5, JOIN_FORMAT, JOIN_FORMAT_V5,
-    LOG_FORMAT, LOG_IN_USE, MAX_GROUPS, MEASURE_CACHE_BYTES, OVERLAY_AT, OVERLAY_CLEARED,
-    OVERLAY_CONFLICT, OVERLAY_KIND, OVERLAY_LOST_PREFIX, SCHEMA_CONFLICT,
-    SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME, SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS,
-    SCHEMA_MIGRATE_CAST, SCHEMA_MIGRATE_DROP, SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET,
-    SCHEMA_PROPERTIES, SCHEMA_REQUIRED, SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION, SOURCE_KIND,
-    SOURCE_OFFSET,
+    QueryRecorder, QuerySample, QueryShape, SchemaDescriptor, SchemaLink, SchemaMigration,
+    ServingBudget, Sort, SparkCompute, Store, Suggestion, SuggestionKind, VersionOrigin,
+    CHANGE_SET_BOUND, CHANGE_SET_KIND, CHECKPOINT_FORMAT, DENORMALIZE_BYTES, HIDE_IDENTITIES_BOUND,
+    HIDE_KINDS_BOUND, JOIN_DELTA_COMPACT_BYTES, JOIN_DELTA_FORMAT, JOIN_DELTA_FORMAT_V5,
+    JOIN_FORMAT, JOIN_FORMAT_PAGED, JOIN_FORMAT_V5, LOG_FORMAT, LOG_IN_USE, MAX_GROUPS,
+    MEASURE_CACHE_BYTES, OVERLAY_AT, OVERLAY_CLEARED, OVERLAY_CONFLICT, OVERLAY_KIND,
+    OVERLAY_LOST_PREFIX, SCHEMA_CONFLICT, SCHEMA_CONFLICT_PROPERTIES, SCHEMA_CONFLICT_TIME,
+    SCHEMA_INDEXES, SCHEMA_KIND, SCHEMA_LINKS, SCHEMA_MIGRATE_CAST, SCHEMA_MIGRATE_DROP,
+    SCHEMA_MIGRATE_RENAME, SCHEMA_MIGRATE_RETARGET, SCHEMA_PROPERTIES, SCHEMA_REQUIRED,
+    SCHEMA_SUMS, SCHEMA_TYPES, SCHEMA_VERSION, SOURCE_KIND, SOURCE_OFFSET,
 };
 use mikura_ingest::{
     snapshot_changelog, ApplyStatus, BatchIngest, ChangelogIngest, MergeIngest, StreamApply,
@@ -67,6 +67,7 @@ fn listed_mikura_types_are_public() {
     let _ = std::any::type_name::<Suggestion>();
     let _ = std::any::type_name::<SuggestionKind>();
     let _ = std::any::type_name::<MemoryBudget>();
+    let _ = std::any::type_name::<ServingBudget>();
     let _ = std::any::type_name::<AppliedChange>();
     let _ = std::any::type_name::<backup::RestorePoint>();
     let _ = std::any::type_name::<backup::VerifyReport>();
@@ -79,6 +80,11 @@ fn listed_mikura_types_are_public() {
         backup::restore_point_at
             as fn(&std::path::Path, u32) -> Result<backup::RestorePoint, String>,
         mikura::tenant_namespace as fn(&str, &str) -> Result<String, String>,
+        Store::open_with_serving_budget
+            as fn(&std::path::Path, ServingBudget) -> Result<Store, String>,
+        Store::open_with_keys_and_serving_budget
+            as fn(&std::path::Path, mikura::LogKeys, ServingBudget) -> Result<Store, String>,
+        ServingBudget::from_bytes as fn(usize) -> Result<ServingBudget, String>,
         mikura::inspect_cost as fn(&Store, &EvaluateRequest) -> Result<QueryCost, String>,
         mikura::suggest as fn(&Store, &QueryRecorder) -> Result<Vec<Suggestion>, String>,
         mikura::apply as fn(&mut Store, &Suggestion) -> Result<(), String>,
@@ -130,6 +136,7 @@ fn listed_mikura_types_are_public() {
         DENORMALIZE_BYTES,
         LOG_FORMAT,
         JOIN_FORMAT,
+        JOIN_FORMAT_PAGED,
         JOIN_FORMAT_V5,
         JOIN_DELTA_FORMAT,
         JOIN_DELTA_FORMAT_V5,

@@ -3,6 +3,7 @@
 
 use super::super::*;
 use std::collections::HashSet;
+use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BAR_NS: &str = "bench";
@@ -406,5 +407,73 @@ fn serving_bar_enforces_deny_and_hide_per_request() {
         .expect("empty ACL stays the open path");
     assert_eq!(still_open.two_hop_count, open_count);
     assert_eq!(still_open.sum_amount, open_sum);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn serving_budget() -> ServingBudget {
+    ServingBudget::from_bytes(1024 * 1024).expect("nonzero")
+}
+
+fn budgeted_matches_replay(log: &std::path::Path, scale: &Scale) {
+    let oss = ObjectSet::new(LocalCompute);
+    let requests = shapes(scale);
+    let budgeted = Store::open_with_serving_budget(log, serving_budget()).unwrap();
+    let live: Vec<(&str, EvaluateResponse)> = requests
+        .iter()
+        .map(|(name, request)| {
+            (
+                *name,
+                oss.evaluate(&budgeted, request)
+                    .unwrap_or_else(|err| panic!("{name}: budgeted evaluate: {err:?}")),
+            )
+        })
+        .collect();
+    let key = visible_shipment(scale);
+    let loaded = budgeted
+        .load(BAR_NS, "Shipment", &key, &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(loaded.key, key);
+    drop(budgeted);
+    remove_projections(log);
+    let replayed = Store::open(log).unwrap();
+    for ((name, request), (_, live_answer)) in requests.iter().zip(live.iter()) {
+        let from_log = oss
+            .evaluate(&replayed, request)
+            .unwrap_or_else(|err| panic!("{name}: replay evaluate: {err:?}"));
+        answers_match(name, live_answer, &from_log).unwrap();
+    }
+    let replayed_row = replayed
+        .load(BAR_NS, "Shipment", &key, &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(loaded.props, replayed_row.props);
+}
+
+#[test]
+fn serving_bar_budgeted_matches_log_replay() {
+    let (dir, log) = bar_log("budgeted-parity");
+    let scale = Scale::new(BAR_OBJECTS);
+    let mut store = Store::create(&log).unwrap();
+    seed(&mut store, &scale);
+    drop(store);
+    let budgeted = Store::open_with_serving_budget(&log, serving_budget()).unwrap();
+    drop(budgeted);
+    let mut magic = [0u8; 8];
+    std::fs::File::open(Store::join_map_path(&log))
+        .unwrap()
+        .read_exact(&mut magic)
+        .unwrap();
+    assert_eq!(&magic, JOIN_FORMAT_PAGED);
+    budgeted_matches_replay(&log, &scale);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn serving_bar_budgeted_10k_matches_log_replay() {
+    let (dir, log) = bar_log("budgeted-10k");
+    let scale = Scale::new(10_000);
+    let mut store = Store::create(&log).unwrap();
+    seed(&mut store, &scale);
+    drop(store);
+    budgeted_matches_replay(&log, &scale);
     let _ = std::fs::remove_dir_all(&dir);
 }

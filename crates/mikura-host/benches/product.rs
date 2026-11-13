@@ -20,7 +20,7 @@ use mikura::{
     tenant_namespace, AclError, Aggregate, Breakdown, ComputeBackend, ComputeError,
     EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, KeyPurpose, LocalCompute, LogKeys,
     MemoryKeyProvider, ObjectRecord, Predicate, PropertyAcl, RuntimeProfile, SchemaDescriptor,
-    SchemaLink, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
+    SchemaLink, ServingBudget, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
 };
 use mikura_host::{Host, HostRequest};
 use mikura_ingest::BatchIngest;
@@ -47,6 +47,9 @@ const HOST_READERS: usize = 8;
 /// Writes add records, so they take a fixed count: compared runs then
 /// measure the same database size whatever their speed.
 const FIXED_WRITES: usize = 100;
+/// Serving RSS cap for budgeted open (#370). Smaller than unbudgeted `peak_rss`
+/// at 10^6. ADR 0045 `MemoryBudget` is not this.
+const SERVING_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Report {
@@ -446,6 +449,69 @@ fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<ServingBar
         objects,
         "ns/op",
         sample(|| timed(|| drop(Store::open(&fixture.log).expect("open")))),
+    ));
+    let budget = serving_budget()?;
+    {
+        let store = Store::open_with_serving_budget(&fixture.log, budget)?;
+        let allow = PropertyAcl::allow_all();
+        let mut id = 1;
+        results.push(Measurement::new(
+            "point_read_budgeted",
+            objects,
+            "ns/op",
+            sample(|| {
+                let key = next_visible(&mut id, &scale);
+                timed(|| {
+                    store.load(NS, "Shipment", &key, &allow).expect("load");
+                })
+            }),
+        ));
+        let list_filter = EvaluateRequest {
+            filter: Some(ExactMatch {
+                property: "weight".into(),
+                value: "3".into(),
+            }),
+            object_bound: scale.shipments as usize,
+            sort: Some(Sort::by("amount")),
+            page_size: 100,
+            ..hop_request("Shipment", Vec::new(), "amount")
+        };
+        let one_hop = vec![hop("Shipment", "order_id")];
+        let two_hop = vec![hop("Order", "customer_id"), hop("Shipment", "order_id")];
+        let budgeted_queries = [
+            ("list_filter_budgeted", list_filter),
+            (
+                "one_hop_sum_declared_budgeted",
+                hop_request("Order", one_hop, "amount"),
+            ),
+            (
+                "two_hop_sum_declared_budgeted",
+                hop_request("Customer", two_hop, "amount"),
+            ),
+        ];
+        for (name, request) in &budgeted_queries {
+            LocalCompute.evaluate(&store, request).expect(name);
+            results.push(Measurement::new(
+                name,
+                objects,
+                "ns/op",
+                sample(|| {
+                    timed(|| {
+                        LocalCompute.evaluate(&store, request).expect(name);
+                    })
+                }),
+            ));
+        }
+    }
+    results.push(Measurement::new(
+        "open_with_sidecar_budgeted",
+        objects,
+        "ns/op",
+        sample(|| {
+            timed(|| {
+                drop(Store::open_with_serving_budget(&fixture.log, budget).expect("budgeted open"))
+            })
+        }),
     ));
     results.push(Measurement::new(
         "open_without_sidecar",
@@ -863,9 +929,48 @@ fn serving_bar_size(
         restart_ns,
         peak_rss_bytes: peak_rss,
         peak_rss_per_million: peak_rss.saturating_mul(1_000_000) / objects.max(1),
-        memory_budget: "skipped: no serving memory budget (#353)".into(),
+        memory_budget: match serving_budgeted(log, scale) {
+            Ok(label) => label,
+            Err(err) => {
+                errors.push(err);
+                "failed".into()
+            }
+        },
         errors,
     })
+}
+
+fn serving_budget() -> Result<ServingBudget, String> {
+    ServingBudget::from_bytes(SERVING_BUDGET_BYTES)
+}
+
+fn serving_budgeted(log: &Path, scale: &Scale) -> Result<String, String> {
+    let budget = serving_budget()?;
+    let store = Store::open_with_serving_budget(log, budget)?;
+    let requests = serving_shapes(scale);
+    let live: Vec<(&str, EvaluateResponse)> = requests
+        .iter()
+        .map(|(name, request)| {
+            LocalCompute
+                .evaluate(&store, request)
+                .map(|response| (*name, response))
+                .map_err(|err| format!("{name}: budgeted evaluate: {err:?}"))
+        })
+        .collect::<Result<_, _>>()?;
+    drop(store);
+    remove_projections(log);
+    let replayed = Store::open(log)?;
+    for ((name, request), (_, live_answer)) in requests.iter().zip(live.iter()) {
+        let from_log = LocalCompute
+            .evaluate(&replayed, request)
+            .map_err(|err| format!("{name}: unbudgeted evaluate: {err:?}"))?;
+        if fingerprints(live_answer) != fingerprints(&from_log) {
+            return Err(format!(
+                "{name}: budgeted projection differs from unbudgeted"
+            ));
+        }
+    }
+    Ok(budget.bytes().to_string())
 }
 
 /// Nanosecond samples of one host mixed-load run.
