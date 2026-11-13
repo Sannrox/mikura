@@ -21,6 +21,7 @@ mod manifest;
 mod measures;
 mod migrate;
 mod namespace;
+mod object_backend;
 mod overlay;
 mod paged;
 mod pages;

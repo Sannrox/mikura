@@ -497,7 +497,11 @@ fn restore_manifest_log(backup: &Path, dst: &Path, point: RestorePoint) -> Resul
 fn restore_manifest_prefix(backup: &Path, dst: &Path, commit_point: u32) -> Result<(), String> {
     let stub = read_committed_page(backup, 0)?;
     let encrypted = stub.get(4 + 8 + 2).copied().unwrap_or(0) & 1 != 0;
-    let src = crate::objects::FileStore::open(&objects_dir(backup), false)?;
+    let src = crate::objects::ObjectStore::open(
+        &objects_dir(backup),
+        false,
+        &crate::objects::ObjectBackend::File,
+    )?;
     let mut manifest = match src.current()? {
         Some((version, bytes)) => {
             let mut parsed = crate::objects::decode_manifest(&bytes)?;
@@ -555,7 +559,8 @@ fn copy_live_objects(src: &Path, dst: &Path) -> Result<(), String> {
     let from = objects_dir(src);
     let to = objects_dir(dst);
     std::fs::create_dir_all(&to).map_err(|e| e.to_string())?;
-    let source = crate::objects::FileStore::open(&from, false)?;
+    let source =
+        crate::objects::ObjectStore::open(&from, false, &crate::objects::ObjectBackend::File)?;
     let dest = crate::objects::FileStore::open(&to, true)?;
     let live = match source.current()? {
         Some((version, bytes)) => {

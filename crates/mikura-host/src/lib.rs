@@ -36,8 +36,8 @@ use metrics::{Metrics, ProcessSnapshot};
 
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
-    Hop, LocalCompute, LogKeys, ObjectRecord, ObjectSet, OverlayPatch, Predicate, PropertyAcl,
-    SharedStore, Sort, Store,
+    Hop, LocalCompute, LogKeys, ObjectBackend, ObjectRecord, ObjectSet, OverlayPatch, Predicate,
+    PropertyAcl, SharedStore, Sort, Store,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -362,21 +362,40 @@ pub struct Host {
 
 impl Host {
     pub fn open(log: &Path, stream_bound: usize) -> Result<Self, String> {
-        Self::open_store(log, stream_bound, None)
+        Self::open_store(log, stream_bound, None, ObjectBackend::File)
     }
 
     /// Encrypted log (`MIKURAV3`). Same wire as [`Self::open`].
     pub fn open_with_keys(log: &Path, stream_bound: usize, keys: LogKeys) -> Result<Self, String> {
-        Self::open_store(log, stream_bound, Some(keys))
+        Self::open_store(log, stream_bound, Some(keys), ObjectBackend::File)
     }
 
-    fn open_store(log: &Path, stream_bound: usize, keys: Option<LogKeys>) -> Result<Self, String> {
+    /// Open or create the log on `backend`. Writer start probes the
+    /// conditional write (ADR 0047 §12).
+    pub fn open_with(
+        log: &Path,
+        stream_bound: usize,
+        backend: ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_store(log, stream_bound, None, backend)
+    }
+
+    fn open_store(
+        log: &Path,
+        stream_bound: usize,
+        keys: Option<LogKeys>,
+        backend: ObjectBackend,
+    ) -> Result<Self, String> {
         let started = Instant::now();
-        let store = match (log.exists(), keys) {
-            (true, Some(keys)) => Store::open_with_keys(log, keys)?,
-            (false, Some(keys)) => Store::create_with_keys(log, keys)?,
-            (true, None) => Store::open(log)?,
-            (false, None) => Store::create(log)?,
+        let store = match (log.exists(), keys, backend) {
+            (true, Some(keys), ObjectBackend::File) => Store::open_with_keys(log, keys)?,
+            (false, Some(keys), ObjectBackend::File) => Store::create_with_keys(log, keys)?,
+            (true, None, ObjectBackend::File) => Store::open(log)?,
+            (false, None, ObjectBackend::File) => Store::create(log)?,
+            (true, Some(keys), backend) => Store::open_with_keys_on(log, keys, backend)?,
+            (false, Some(keys), backend) => Store::create_with_keys_on(log, keys, backend)?,
+            (true, None, backend) => Store::open_with(log, backend)?,
+            (false, None, backend) => Store::create_with(log, backend)?,
         };
         let open_replay = started.elapsed();
         let log_bytes_at_open = std::fs::metadata(log).map(|meta| meta.len()).unwrap_or(0);
@@ -449,8 +468,18 @@ impl Host {
         addr: SocketAddr,
         bearer: Option<&str>,
     ) -> Result<(Self, TcpListener), String> {
+        Self::listen_with(log, stream_bound, addr, bearer, ObjectBackend::File)
+    }
+
+    pub fn listen_with(
+        log: &Path,
+        stream_bound: usize,
+        addr: SocketAddr,
+        bearer: Option<&str>,
+        backend: ObjectBackend,
+    ) -> Result<(Self, TcpListener), String> {
         let listener = Self::bind(addr, bearer)?;
-        let host = Self::open(log, stream_bound)?;
+        let host = Self::open_with(log, stream_bound, backend)?;
         if let Some(secret) = bearer {
             host.require_bearer(secret)?;
         }

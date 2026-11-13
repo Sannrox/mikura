@@ -216,6 +216,14 @@ impl Store {
         Self::create_with_sync(log, SyncPolicy::Group(32))
     }
 
+    /// Create a log on `backend`. [`ObjectBackend::File`] is [`Self::create`].
+    pub fn create_with(log: &Path, backend: crate::objects::ObjectBackend) -> Result<Self, String> {
+        Self::create_cleared(
+            log,
+            LogWriter::create_with_backend(log, SyncPolicy::Group(32), backend)?,
+        )
+    }
+
     pub fn create_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         Self::create_cleared(log, LogWriter::create(log, sync)?)
     }
@@ -224,6 +232,17 @@ impl Store {
     /// (`tenant_namespace`).
     pub fn create_with_keys(log: &Path, keys: LogKeys) -> Result<Self, String> {
         Self::create_with_keys_sync(log, SyncPolicy::Group(32), keys)
+    }
+
+    pub fn create_with_keys_on(
+        log: &Path,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::create_cleared(
+            log,
+            LogWriter::create_with_keys_and_backend(log, SyncPolicy::Group(32), keys, backend)?,
+        )
     }
 
     pub fn create_with_keys_sync(
@@ -417,6 +436,15 @@ impl Store {
         Self::open_with_sync(log, SyncPolicy::Group(32))
     }
 
+    /// Open a log on `backend`. A file-backend open infers an HTTP locator.
+    pub fn open_with(log: &Path, backend: crate::objects::ObjectBackend) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_with_backend(log, SyncPolicy::Group(32), backend)?,
+            None,
+        )
+    }
+
     pub fn open_with_sync(log: &Path, sync: SyncPolicy) -> Result<Self, String> {
         Self::open_writer(log, LogWriter::open(log, sync)?, None)
     }
@@ -434,6 +462,18 @@ impl Store {
     /// Open a `MIKURAV3` log. Revoked or ungranted tenants are omitted.
     pub fn open_with_keys(log: &Path, keys: LogKeys) -> Result<Self, String> {
         Self::open_with_keys_sync(log, SyncPolicy::Group(32), keys)
+    }
+
+    pub fn open_with_keys_on(
+        log: &Path,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_with_keys_and_backend(log, SyncPolicy::Group(32), keys, backend)?,
+            None,
+        )
     }
 
     pub fn open_with_keys_and_serving_budget(

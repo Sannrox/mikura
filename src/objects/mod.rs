@@ -1,10 +1,16 @@
-//! File backend of the swap-committed object protocol (ADR 0047).
+//! Swap-committed object protocol (ADR 0047).
 //!
-//! Objects are immutable files. A compare-and-swap is an exclusive create of
-//! `manifest.{expected+1}`. Acknowledgement is that create; a displaced
-//! writer sees `already exists` and is fenced.
+//! The file backend stores immutable objects on local disk. A compare-and-swap
+//! is an exclusive create of `manifest.{expected+1}`. The HTTP backend speaks
+//! the same protocol against a deployment-supplied endpoint. Acknowledgement
+//! is the successful create; a displaced writer is fenced.
+
+mod http;
+
+pub use http::LocalObjectServer;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,7 +32,7 @@ const FLAG_SNAPSHOT: u8 = 2;
 static NEXT_TMP: AtomicU64 = AtomicU64::new(1);
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 
-/// Storage-call counters for one file backend (ADR 0047 §10).
+/// Storage-call counters for one object backend (ADR 0047 §10).
 ///
 /// Sequential waves are derived: every `put` of a commit is one wave,
 /// the conditional manifest write is a second. Lost-response reads are
@@ -64,6 +70,212 @@ impl StorageCalls {
     /// Open discovery plus named-object gets, excluding writer probe/collect.
     pub fn open_named_gets(self) -> u64 {
         self.current.saturating_add(self.gets)
+    }
+}
+
+/// Deployment env for the HTTP backend bearer. Empty or unset means no auth.
+pub const OBJECT_TOKEN_ENV: &str = "MIKURA_OBJECT_TOKEN";
+
+const LOCATOR_MAGIC: &str = "MKOBJ01";
+
+/// Where sealed segments and the swap-committed snapshot live (ADR 0047).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObjectBackend {
+    /// Local disk. Survives process crash on the same machine.
+    File,
+    /// HTTP object namespace. Endpoint and token come from the deployment.
+    Http {
+        endpoint: String,
+        token: Option<String>,
+    },
+}
+
+impl ObjectBackend {
+    /// HTTP backend at `endpoint`. No default URL or token.
+    pub fn http(endpoint: impl Into<String>, token: Option<String>) -> Result<Self, StorageError> {
+        let endpoint = normalize_endpoint(&endpoint.into())?;
+        let passed = token.filter(|value| !value.is_empty());
+        let env = env_object_token();
+        let token = match (passed, env) {
+            (Some(passed), Some(env)) if passed != env => {
+                return Err(StorageError::unavailable(
+                    "object token must match MIKURA_OBJECT_TOKEN",
+                ));
+            }
+            (Some(_), None) => {
+                return Err(StorageError::unavailable(
+                    "object token must be set in MIKURA_OBJECT_TOKEN",
+                ));
+            }
+            (_, env) => env,
+        };
+        if token.is_some() {
+            let addr = http_socket_addr(&endpoint)?;
+            if !addr.ip().is_loopback() {
+                return Err(StorageError::unavailable(
+                    "object token requires a loopback endpoint",
+                ));
+            }
+        }
+        Ok(Self::Http { endpoint, token })
+    }
+
+    pub fn is_http(&self) -> bool {
+        matches!(self, Self::Http { .. })
+    }
+}
+
+/// Typed storage failure. Callers never see a raw transport error (ADR 0047 §12).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageError {
+    Precondition { key: String },
+    NotFound { key: String },
+    Unavailable { message: String },
+    UnknownOutcome { message: String },
+}
+
+impl StorageError {
+    pub fn precondition(key: impl Into<String>) -> Self {
+        Self::Precondition { key: key.into() }
+    }
+
+    pub fn not_found(key: impl Into<String>) -> Self {
+        Self::NotFound { key: key.into() }
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::Unavailable {
+            message: message.into(),
+        }
+    }
+
+    pub fn unknown_outcome(message: impl Into<String>) -> Self {
+        Self::UnknownOutcome {
+            message: message.into(),
+        }
+    }
+
+    pub fn is_precondition(&self) -> bool {
+        matches!(self, Self::Precondition { .. })
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
+    }
+
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Precondition { .. } => "refused precondition",
+            Self::NotFound { .. } => "not found",
+            Self::Unavailable { .. } => "unavailable",
+            Self::UnknownOutcome { .. } => "unknown outcome",
+        }
+    }
+}
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Precondition { key } => {
+                write!(f, "refused precondition: {key} already exists")
+            }
+            Self::NotFound { key } => write!(f, "not found: {key}"),
+            Self::Unavailable { message } => write!(f, "unavailable: {message}"),
+            Self::UnknownOutcome { message } => {
+                write!(f, "{}: {message}", crate::UNCERTAIN_COMMIT)
+            }
+        }
+    }
+}
+
+impl std::error::Error for StorageError {}
+
+fn normalize_endpoint(endpoint: &str) -> Result<String, StorageError> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        return Err(StorageError::unavailable(
+            "object endpoint is required; this crate holds no default",
+        ));
+    }
+    let rest = endpoint
+        .strip_prefix("http://")
+        .ok_or_else(|| StorageError::unavailable("object endpoint must be an http URL"))?;
+    if rest.is_empty() || rest.contains('/') {
+        return Err(StorageError::unavailable(
+            "object endpoint must be an http host:port with no path",
+        ));
+    }
+    let _ = http_socket_addr(endpoint)?;
+    Ok(endpoint.to_string())
+}
+
+fn http_socket_addr(endpoint: &str) -> Result<std::net::SocketAddr, StorageError> {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .ok_or_else(|| StorageError::unavailable("object endpoint must be an http URL"))?;
+    rest.parse()
+        .map_err(|_| StorageError::unavailable("object endpoint host is not a socket address"))
+}
+
+fn write_locator(root: &Path, endpoint: &str, durable: bool) -> Result<(), String> {
+    if root.is_dir() {
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    } else if root.exists() {
+        std::fs::remove_file(root).map_err(|e| e.to_string())?;
+    }
+    if let Some(parent) = root.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = format!("{LOCATOR_MAGIC}\n{endpoint}\n");
+    let tmp = {
+        let mut name = root.file_name().unwrap_or_default().to_os_string();
+        name.push(".tmp");
+        root.with_file_name(name)
+    };
+    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    if durable {
+        std::fs::File::open(&tmp)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        crate::durable::rename(&tmp, root)
+    } else {
+        std::fs::rename(&tmp, root).map_err(|e| e.to_string())
+    }
+}
+
+fn read_locator(root: &Path) -> Result<String, String> {
+    let body = std::fs::read_to_string(root).map_err(|e| e.to_string())?;
+    let mut lines = body.lines();
+    let magic = lines.next().unwrap_or("");
+    if magic != LOCATOR_MAGIC {
+        return Err("bad object backend locator".into());
+    }
+    let endpoint = lines.next().unwrap_or("").trim();
+    if endpoint.is_empty() {
+        return Err("object backend locator is missing an endpoint".into());
+    }
+    Ok(endpoint.to_string())
+}
+
+fn is_locator(root: &Path) -> bool {
+    root.is_file()
+        && std::fs::read_to_string(root)
+            .ok()
+            .is_some_and(|body| body.starts_with(LOCATOR_MAGIC))
+}
+
+fn env_object_token() -> Option<String> {
+    std::env::var(OBJECT_TOKEN_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+fn connect_http(endpoint: String, token: Option<String>) -> Result<ObjectStore, String> {
+    match ObjectBackend::http(endpoint, token).map_err(|e| e.to_string())? {
+        ObjectBackend::Http { endpoint, token } => http::HttpStore::connect(&endpoint, token)
+            .map(ObjectStore::Http)
+            .map_err(|e| e.to_string()),
+        ObjectBackend::File => Err("object locator is not an http backend".into()),
     }
 }
 
@@ -618,6 +830,137 @@ impl FileStore {
             std::process::id(),
             NEXT_TMP.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+}
+
+pub(crate) enum ObjectStore {
+    File(FileStore),
+    Http(http::HttpStore),
+}
+
+impl ObjectStore {
+    pub(crate) fn create(
+        root: &Path,
+        durable: bool,
+        backend: &ObjectBackend,
+    ) -> Result<Self, String> {
+        match backend {
+            ObjectBackend::File => Ok(Self::File(FileStore::create(root, durable)?)),
+            ObjectBackend::Http { endpoint, token } => {
+                let store =
+                    http::HttpStore::connect(endpoint, token.clone()).map_err(|e| e.to_string())?;
+                if store.has_durable_objects().map_err(|e| e.to_string())? {
+                    return Err("object namespace is not empty; create refuses to reuse it".into());
+                }
+                write_locator(root, endpoint, durable)?;
+                Ok(Self::Http(store))
+            }
+        }
+    }
+
+    pub(crate) fn open(
+        root: &Path,
+        durable: bool,
+        backend: &ObjectBackend,
+    ) -> Result<Self, String> {
+        match backend {
+            ObjectBackend::File => {
+                if is_locator(root) {
+                    // Path-based readers (history, backup, catalog) authenticate
+                    // with MIKURA_OBJECT_TOKEN, the deployment credential.
+                    connect_http(read_locator(root)?, env_object_token())
+                } else {
+                    Ok(Self::File(FileStore::open(root, durable)?))
+                }
+            }
+            ObjectBackend::Http { endpoint, token } => {
+                if root.is_dir() {
+                    return Err("object backend cannot open a file-backend log".into());
+                }
+                if !is_locator(root) {
+                    return Err("missing object backend locator".into());
+                }
+                let located = read_locator(root)?;
+                if located != *endpoint {
+                    return Err(format!(
+                        "object-url does not match the log locator ({located})"
+                    ));
+                }
+                connect_http(located, token.clone())
+            }
+        }
+    }
+
+    pub(crate) fn storage_calls(&self) -> StorageCalls {
+        match self {
+            Self::File(store) => store.storage_calls(),
+            Self::Http(store) => store.storage_calls(),
+        }
+    }
+
+    pub(crate) fn probe(&self) -> Result<u64, String> {
+        match self {
+            Self::File(store) => store.probe(),
+            Self::Http(store) => store.probe().map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn put(&self, key: &str, bytes: &[u8]) -> Result<u64, String> {
+        match self {
+            Self::File(store) => store.put(key, bytes),
+            Self::Http(store) => store.put(key, bytes).map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Result<Vec<u8>, String> {
+        match self {
+            Self::File(store) => store.get(key),
+            Self::Http(store) => store.get(key).map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn object_len(&self, key: &str) -> Result<u64, String> {
+        match self {
+            Self::File(store) => store.object_len(key),
+            Self::Http(store) => store.object_len(key).map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn cas(&self, expected: u64, bytes: &[u8]) -> Result<(u64, u64), String> {
+        match self {
+            Self::File(store) => store.cas(expected, bytes),
+            Self::Http(store) => store.cas(expected, bytes).map_err(cas_error),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Result<Option<(u64, Vec<u8>)>, String> {
+        match self {
+            Self::File(store) => store.current(),
+            Self::Http(store) => store.current().map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn has_durable_objects(&self) -> Result<bool, String> {
+        match self {
+            Self::File(store) => store.has_durable_objects(),
+            Self::Http(store) => store.has_durable_objects().map_err(|e| e.to_string()),
+        }
+    }
+
+    pub(crate) fn collect(&self, live: &BTreeSet<String>) -> Result<(), String> {
+        match self {
+            Self::File(store) => store.collect(live),
+            Self::Http(store) => store.collect(live).map_err(|e| e.to_string()),
+        }
+    }
+}
+
+fn cas_error(error: StorageError) -> String {
+    match error {
+        StorageError::Precondition { key } => {
+            format!("{}: {key} exists", crate::LOG_FENCED)
+        }
+        other => other.to_string(),
     }
 }
 

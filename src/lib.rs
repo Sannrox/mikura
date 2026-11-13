@@ -100,7 +100,7 @@ pub use crypto::{
     TenantId, UnwrapGrant, WrappedDek, STORE_KEY_TENANT,
 };
 pub use joins::JoinMaps;
-pub use objects::StorageCalls;
+pub use objects::{LocalObjectServer, ObjectBackend, StorageCalls, StorageError, OBJECT_TOKEN_ENV};
 pub use objectset::{
     Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, ObjectSet,
     Predicate, Sort, MAX_GROUPS,

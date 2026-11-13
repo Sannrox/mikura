@@ -81,6 +81,9 @@ impl Store {
         if !self.writer.withheld().is_empty() {
             return Err("compact requires unwrap grants for every tenant".into());
         }
+        if crate::log::objects_dir(&self.log).is_file() {
+            return Err("cannot compact an object-backend log onto the file backend".into());
+        }
         self.ensure_action_commits()?;
         self.ensure_schema_history()?;
         for path in [

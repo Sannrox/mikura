@@ -5,8 +5,8 @@
 //! `crates/mikura-ingest/tests/integration.rs`.
 
 use mikura::{
-    Aggregate, EvaluateRequest, Hop, LocalCompute, ObjectRecord, ObjectSet, PropertyAcl,
-    PropertyType, SchemaDescriptor, SchemaLink, Store,
+    Aggregate, EvaluateRequest, Hop, LocalCompute, LocalObjectServer, ObjectRecord, ObjectSet,
+    PropertyAcl, PropertyType, SchemaDescriptor, SchemaLink, Store,
 };
 use mikura_host::HostResponse;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -3155,4 +3155,48 @@ fn process_kill_during_writes_keeps_committed_history() {
     }));
     assert!(!missing.ok, "{missing:?}");
     assert!(missing.load.is_none());
+}
+
+#[test]
+fn process_object_backend_refuses_a_store_that_accepts_both_probe_writes() {
+    let server = LocalObjectServer::start_weak().expect("weak object store");
+    let tmp = TempLog::new("object-weak-probe");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
+        .args([
+            "--log",
+            tmp.path().to_str().expect("utf-8 log path"),
+            "--bind",
+            "127.0.0.1:0",
+            "--backend",
+            "object",
+            "--object-url",
+            &server.endpoint(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn mikura-host");
+    let status = child.wait().expect("wait host");
+    assert!(!status.success(), "weak store must refuse to start");
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    assert!(
+        stderr.contains("conditional write probe failed"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn process_object_backend_serves_after_probe() {
+    let server = LocalObjectServer::start().expect("object store");
+    let tmp = TempLog::new("object-probe-ok");
+    let url = server.endpoint();
+    let extra = ["--backend", "object", "--object-url", url.as_str()];
+    let host = HostProcess::spawn_args(tmp.path(), "127.0.0.1:0", 8, None, &extra);
+    let health = host.rpc(&serde_json::json!({"op": "health"}));
+    assert!(health.ok, "{health:?}");
+    host.stop();
 }

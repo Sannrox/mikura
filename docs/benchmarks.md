@@ -256,7 +256,22 @@ Crate tests assert a LogWriter data commit is one put and one CAS at 10^4
 and 10^6 objects. After 10^5 FileStore put-then-CAS commits the wave count
 stays 2, and named-object gets of a snapshot stay bounded. A Store
 checkpoint snapshot lists the tail, not the frozen prefix. The serving-bar
-oracle in `src/crate_tests/serving_bar.rs` runs on this commit path.
+oracle in `src/crate_tests/serving_bar.rs` runs on this commit path. The
+HTTP object backend keeps the same two-wave count against a loopback store
+([#360](https://github.com/Sannrox/mikura/issues/360)).
+
+## Object-storage backend
+
+[#360](https://github.com/Sannrox/mikura/issues/360), ADR 0047 Decision §12.
+`Store::append` of one record on the swap-committed path, 100 samples,
+release, same machine. The object numbers are a loopback HTTP store, not a
+remote round trip. Spike 016's injected 10 ms RTT path was 26 ms p50.
+This is not a latency SLO.
+
+| Path | p50 | commits/s |
+| --- | ---: | ---: |
+| file | 0.077 ms | 13 000 |
+| object (loopback HTTP) | 0.354 ms | 2 800 |
 
 ## Nightly gate
 

@@ -102,11 +102,18 @@ current descriptor.
 ## Object log
 
 `src/log.rs` implements checksummed 4 KiB pages. New logs use the
-swap-committed file backend ([ADR 0047](decisions/0047-object-storage-store-of-record.md)):
-a `MIKURAV4` stub plus immutable segment objects under `{log}.obj`,
-advanced by an exclusive create of `manifest.{n}`. The successful swap
-is the acknowledgement and the fence. `src/objects.rs` is that file
-backend.
+swap-committed object protocol ([ADR 0047](decisions/0047-object-storage-store-of-record.md)):
+a `MIKURAV4` stub plus immutable segment objects, advanced by an exclusive
+create of `manifest.{n}`. The successful swap is the acknowledgement and
+the fence. `src/objects/` is that protocol: the `file` backend stores
+objects under `{log}.obj`; the `object` backend stores them at a
+deployment-supplied HTTP endpoint and writes a locator beside the stub.
+Writer start probes the conditional write (two competing puts of one
+probe object; exactly one must succeed). Create on the HTTP backend
+refuses a namespace that already holds objects. Storage errors are typed
+(refused precondition, not found, unavailable, unknown outcome). The
+endpoint is an `http` host:port with no path; credentials come from
+`MIKURA_OBJECT_TOKEN`.
 
 - Page size: 4096 bytes. Record bodies are unchanged.
 - New logs: page 0 is a `MIKURAV4` stub (CRC32, magic, page-size, encrypted
@@ -607,17 +614,20 @@ superblock log with `Store::migrate_to_manifest`.
 
 Acknowledgement is the successful manifest swap. The `file` backend
 survives process crash and restart on the same disk; durability still
-ends at that disk. An object-storage backend that survives machine and
-disk loss of the compute host is
-[#360](https://github.com/Sannrox/mikura/issues/360). On disk loss of
+ends at that disk. The `object` backend stores segments and the snapshot
+on the configured store; process crash and restart reopen through the
+local stub and locator. Reattaching a replacement host from the endpoint
+alone is later ([#360](https://github.com/Sannrox/mikura/issues/360)).
+Credentials and the storage URL come from the deployment (`--object-url`,
+`MIKURA_OBJECT_TOKEN`); this crate holds no defaults. A bearer token is
+accepted only on a loopback endpoint. On disk loss of
 the file backend, recovery is the last backup copy
 ([ADR 0037](decisions/0037-online-backup-and-restore.md)). Takeover is
 process start: open the current manifest, load the newest valid
 projection, replay the tail. Product projection decode on reopen is
 unchanged (local sidecar / checkpoint); spike 016 measured 850 ms to
 read a 740 MiB checkpoint object at 10⁷ class size after dropping the
-page cache. Remote GET and storing projections as derived objects are
-[#360](https://github.com/Sannrox/mikura/issues/360) and
+page cache. Storing projections as derived objects is
 [#361](https://github.com/Sannrox/mikura/issues/361).
 
 ## What v1 does not do

@@ -59,7 +59,9 @@ pub(crate) fn publish_log(staging: &Path, dst: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn remove_log(path: &Path) {
-    let _ = std::fs::remove_dir_all(objects_dir(path));
+    let objects = objects_dir(path);
+    let _ = std::fs::remove_dir_all(&objects);
+    let _ = std::fs::remove_file(&objects);
     let _ = std::fs::remove_file(path);
 }
 
@@ -115,7 +117,7 @@ pub struct LogWriter {
     revoked: HashSet<String>,
     withheld: HashSet<String>,
     page_tenant: Option<String>,
-    objects: Option<crate::objects::FileStore>,
+    objects: Option<crate::objects::ObjectStore>,
     manifest_version: u64,
     segments: Vec<crate::objects::Segment>,
     prefix_segments: Vec<crate::objects::Segment>,
@@ -190,11 +192,28 @@ fn lock_writer(file: &File, path: &Path) -> Result<(), String> {
 
 impl LogWriter {
     pub fn create(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        Self::create_manifest(path, sync, None)
+        Self::create_manifest(path, sync, None, crate::objects::ObjectBackend::File)
     }
 
     pub fn create_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
-        Self::create_manifest(path, sync, Some(keys))
+        Self::create_manifest(path, sync, Some(keys), crate::objects::ObjectBackend::File)
+    }
+
+    pub fn create_with_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::create_manifest(path, sync, None, backend)
+    }
+
+    pub fn create_with_keys_and_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::create_manifest(path, sync, Some(keys), backend)
     }
 
     /// Superblock `MIKURAV2` log. Used by [`crate::Store::migrate_unnamespaced`].
@@ -209,9 +228,11 @@ impl LogWriter {
         path: &Path,
         sync: SyncPolicy,
         keys: Option<LogKeys>,
+        backend: crate::objects::ObjectBackend,
     ) -> Result<Self, String> {
         let file = create_locked(path)?;
-        let objects = crate::objects::FileStore::create(&objects_dir(path), sync.durable())?;
+        let objects =
+            crate::objects::ObjectStore::create(&objects_dir(path), sync.durable(), &backend)?;
         let probe = objects.probe()?;
         let mut writer = Self::blank(file, sync, 0);
         writer.objects = Some(objects);
@@ -234,7 +255,11 @@ impl LogWriter {
         catalog: BTreeMap<String, crate::crypto::WrappedDek>,
     ) -> Result<Self, String> {
         let file = create_locked(path)?;
-        let objects = crate::objects::FileStore::create(&objects_dir(path), sync.durable())?;
+        let objects = crate::objects::ObjectStore::create(
+            &objects_dir(path),
+            sync.durable(),
+            &crate::objects::ObjectBackend::File,
+        )?;
         let probe = objects.probe()?;
         let mut writer = Self::blank(file, sync, 0);
         writer.objects = Some(objects);
@@ -259,11 +284,28 @@ impl LogWriter {
     }
 
     pub fn open(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        Self::open_inner(path, sync, None)
+        Self::open_inner(path, sync, None, crate::objects::ObjectBackend::File)
     }
 
     pub fn open_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
-        Self::open_inner(path, sync, Some(keys))
+        Self::open_inner(path, sync, Some(keys), crate::objects::ObjectBackend::File)
+    }
+
+    pub fn open_with_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_inner(path, sync, None, backend)
+    }
+
+    pub fn open_with_keys_and_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_inner(path, sync, Some(keys), backend)
     }
 
     fn blank(file: File, sync: SyncPolicy, committed: u32) -> Self {
@@ -301,7 +343,12 @@ impl LogWriter {
         }
     }
 
-    fn open_inner(path: &Path, sync: SyncPolicy, keys: Option<LogKeys>) -> Result<Self, String> {
+    fn open_inner(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: Option<LogKeys>,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
         let mut file = crate::fault::open_rw(path)?;
         lock_writer(&file, path)?;
         let mut superblock = vec![0u8; PAGE];
@@ -314,7 +361,7 @@ impl LogWriter {
             );
         }
         if magic == V4_MAGIC {
-            return Self::open_manifest(file, path, &superblock, sync, keys);
+            return Self::open_manifest(file, path, &superblock, sync, keys, backend);
         }
         if magic != MAGIC && magic != V3_MAGIC {
             return Err("bad magic".into());
@@ -342,6 +389,7 @@ impl LogWriter {
         stub: &[u8],
         sync: SyncPolicy,
         keys: Option<LogKeys>,
+        backend: crate::objects::ObjectBackend,
     ) -> Result<Self, String> {
         let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
         if encrypted && keys.is_none() {
@@ -350,8 +398,11 @@ impl LogWriter {
         if !encrypted && keys.is_some() {
             return Err("log is not encrypted".into());
         }
-        let objects = crate::objects::FileStore::open(&objects_dir(path), sync.durable())?;
+        let objects =
+            crate::objects::ObjectStore::open(&objects_dir(path), sync.durable(), &backend)?;
         let mut manifest = load_current_manifest(&objects, encrypted)?;
+        // One writer (ADR 0047). The stub flock is local and does not cover
+        // an HTTP namespace.
         objects.collect(&manifest.live_keys())?;
         let probe = objects.probe()?;
         let mut writer = Self::blank(file, sync, manifest.committed_pages);
@@ -611,7 +662,7 @@ impl LogWriter {
     pub fn storage_calls(&self) -> crate::objects::StorageCalls {
         self.objects
             .as_ref()
-            .map(crate::objects::FileStore::storage_calls)
+            .map(crate::objects::ObjectStore::storage_calls)
             .unwrap_or_default()
     }
 
@@ -1292,7 +1343,7 @@ impl LogWriter {
     /// leftover object never fences this writer. The snapshot CAS is the ack.
     fn put_segment_object(
         &self,
-        store: &crate::objects::FileStore,
+        store: &crate::objects::ObjectStore,
         first_page: u32,
         page_count: u32,
         bytes: &[u8],
@@ -1504,7 +1555,11 @@ fn visit_committed_manifest_pages(
     if encrypted && keys.is_none() {
         return Err("encrypted log requires keys".into());
     }
-    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let store = crate::objects::ObjectStore::open(
+        &objects_dir(path),
+        false,
+        &crate::objects::ObjectBackend::File,
+    )?;
     let manifest = load_current_manifest(&store, encrypted)?;
     if after_page > manifest.committed_pages {
         return Err("checkpoint page is past committed_pages".into());
@@ -1563,7 +1618,8 @@ fn visit_manifest_pages(
     deks: Option<&HashMap<String, Dek>>,
     mut visit: impl FnMut(u32, Vec<ObjectRecord>),
 ) -> Result<(), String> {
-    let store = crate::objects::FileStore::open(root, false)?;
+    let store =
+        crate::objects::ObjectStore::open(root, false, &crate::objects::ObjectBackend::File)?;
     ensure_manifest_pages(
         &store,
         cover.prefix,
@@ -1617,7 +1673,7 @@ fn visit_manifest_pages(
 /// Pages after a named checkpoint are the tail. Frozen segments are one
 /// prefix object, not a per-segment `object_len` at open (ADR 0047 §10).
 fn ensure_manifest_pages(
-    store: &crate::objects::FileStore,
+    store: &crate::objects::ObjectStore,
     prefix: &[crate::objects::Segment],
     tail: &[crate::objects::Segment],
     checkpoint_pages: u32,
@@ -1636,7 +1692,7 @@ fn ensure_manifest_pages(
 }
 
 fn ensure_span(
-    store: &crate::objects::FileStore,
+    store: &crate::objects::ObjectStore,
     segments: &[crate::objects::Segment],
     covered: u32,
     committed: u32,
@@ -1706,7 +1762,11 @@ pub(crate) fn read_committed_page(path: &Path, index: u32) -> Result<Vec<u8>, St
 }
 
 fn read_manifest_page(path: &Path, stub: &[u8], index: u32) -> Result<Vec<u8>, String> {
-    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let store = crate::objects::ObjectStore::open(
+        &objects_dir(path),
+        false,
+        &crate::objects::ObjectBackend::File,
+    )?;
     let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
     let manifest = load_current_manifest(&store, encrypted)?;
     let (segment, offset) = manifest.page_span(index)?;
@@ -1731,7 +1791,11 @@ pub(crate) fn manifest_commit_point(path: &Path) -> Result<Option<u32>, String> 
     if !is_manifest_stub(&stub) {
         return Ok(None);
     }
-    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let store = crate::objects::ObjectStore::open(
+        &objects_dir(path),
+        false,
+        &crate::objects::ObjectBackend::File,
+    )?;
     let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
     Ok(Some(
         load_current_manifest(&store, encrypted)?.committed_pages,
@@ -1739,7 +1803,7 @@ pub(crate) fn manifest_commit_point(path: &Path) -> Result<Option<u32>, String> 
 }
 
 fn load_current_manifest(
-    store: &crate::objects::FileStore,
+    store: &crate::objects::ObjectStore,
     encrypted: bool,
 ) -> Result<crate::objects::Manifest, String> {
     match store.current()? {
@@ -1899,7 +1963,11 @@ pub(crate) fn wrapped_catalog(
     file.read_exact(&mut page)
         .map_err(|_| "missing superblock".to_string())?;
     if is_manifest_stub(&page) {
-        let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+        let store = crate::objects::ObjectStore::open(
+            &objects_dir(path),
+            false,
+            &crate::objects::ObjectBackend::File,
+        )?;
         let encrypted = page.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
         return Ok(load_current_manifest(&store, encrypted)?.catalog);
     }
