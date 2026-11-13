@@ -262,10 +262,9 @@ fn same_seed_replays_the_same_trace() {
 }
 
 #[test]
-fn re_finds_orphan_pages_as_authority() {
+fn unreferenced_objects_are_not_authority() {
     let ops = count_ops();
     assert!(ops > 0);
-    let mut found = None;
     for step in 0..ops {
         for kind in [FaultKind::Crash, FaultKind::FailAfter] {
             let plan = Plan { step, kind };
@@ -281,20 +280,19 @@ fn re_finds_orphan_pages_as_authority() {
                 .unwrap_or_default();
             drop(_guard);
             let extra: BTreeSet<_> = got.difference(&honest).cloned().collect();
+            let leaked: Vec<_> = extra
+                .iter()
+                .filter(|key| !live.acked.contains_key(*key))
+                .cloned()
+                .collect();
             let _ = std::fs::remove_dir_all(&dir);
-            if !extra.is_empty() && extra.iter().any(|key| !live.acked.contains_key(key)) {
-                found = Some((step, kind, extra));
-                break;
-            }
-        }
-        if found.is_some() {
-            break;
+            assert!(
+                leaked.is_empty(),
+                "unreferenced objects became visible at step {step} {:?}: {leaked:?}",
+                kind
+            );
         }
     }
-    assert!(
-        found.is_some(),
-        "harness did not re-find orphan pages as authority across {ops} steps"
-    );
 }
 
 #[test]

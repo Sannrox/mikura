@@ -74,6 +74,16 @@ pub(crate) fn create(path: &Path) -> Result<File, String> {
     run(Op::Open, || File::create(path).map_err(|e| e.to_string()))
 }
 
+pub(crate) fn create_new(path: &Path) -> Result<File, String> {
+    run(Op::Open, || {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| e.to_string())
+    })
+}
+
 pub(crate) fn open_append(path: &Path) -> Result<File, String> {
     run(Op::Open, || {
         OpenOptions::new()

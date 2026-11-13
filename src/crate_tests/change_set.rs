@@ -228,7 +228,6 @@ fn a_crash_at_any_page_boundary_keeps_the_set_all_or_nothing() {
     let (dir, log) = temp_log("change-set-crash");
     let mut store = Store::create_with_sync(&log, SyncPolicy::Group(1)).unwrap();
     append_all(&mut store, fixture());
-    let before = std::fs::read(&log).unwrap();
     let payload = "x".repeat(1500);
     let mut edits: Vec<Edit> = (0..8)
         .map(|i| put("Item", &format!("k{i}"), &[("payload", &payload)], None))
@@ -236,39 +235,55 @@ fn a_crash_at_any_page_boundary_keeps_the_set_all_or_nothing() {
     edits.push(hide("Shipment", "s1"));
     store.apply_change_set(set("act-bulk", edits)).unwrap();
     drop(store);
-    let after = std::fs::read(&log).unwrap();
-    let (first, last) = (before.len() / PAGE, after.len() / PAGE);
-    assert!(last - first >= 4, "set spans {} pages", last - first);
-    let crashed = dir.join("crashed.mikura");
 
-    // Data pages up to `pages` reached the disk; the superblock either
-    // still names the old commit point or, only once every page is there,
-    // the new one.
-    let mut cases: Vec<(usize, bool)> = (first..=last).map(|pages| (pages, false)).collect();
-    cases.push((last, true));
-    for (pages, committed) in cases {
-        let superblock = if committed { &after } else { &before };
-        let mut bytes = superblock[..PAGE].to_vec();
-        bytes.extend_from_slice(&after[PAGE..pages * PAGE]);
-        std::fs::write(&crashed, bytes).unwrap();
-        let store = Store::open(&crashed).unwrap();
-        let present = (0..8)
-            .filter(|i| gen_of(&store, "Item", &format!("k{i}")).is_some())
-            .count();
-        let s1_hidden = store
-            .load(NS, "Shipment", "s1", &PropertyAcl::allow_all())
-            .unwrap()
-            .hidden;
-        let marker = gen_of(&store, CHANGE_SET_KIND, "act-bulk").is_some();
-        if committed {
-            assert_eq!((present, s1_hidden, marker), (8, true, true));
-        } else {
-            assert_eq!((present, s1_hidden, marker), (0, false, false), "{pages}");
-        }
-        drop(store);
-        let _ = std::fs::remove_file(Store::join_map_path(&crashed));
-        let _ = std::fs::remove_file(Store::join_delta_path(&crashed));
-    }
+    let crashed = dir.join("crashed.mikura");
+    copy_log_tree(&log, &crashed);
+    let store = Store::open(&crashed).unwrap();
+    assert_eq!(
+        (
+            (0..8)
+                .filter(|i| gen_of(&store, "Item", &format!("k{i}")).is_some())
+                .count(),
+            store
+                .load(NS, "Shipment", "s1", &PropertyAcl::allow_all())
+                .unwrap()
+                .hidden,
+            gen_of(&store, CHANGE_SET_KIND, "act-bulk").is_some()
+        ),
+        (8, true, true)
+    );
+    drop(store);
+
+    // Swap not acknowledged: the newest snapshot is gone, unreferenced
+    // segment objects are collected, and none of the set is visible.
+    let unacked = dir.join("unacked.mikura");
+    copy_log_tree(&log, &unacked);
+    let obj = crate::log::objects_dir(&unacked);
+    let newest = std::fs::read_dir(&obj)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name();
+            let name = name.to_str()?;
+            let version = name.strip_prefix("manifest.")?.parse::<u64>().ok()?;
+            Some((version, obj.join(name)))
+        })
+        .max_by_key(|(version, _)| *version)
+        .expect("manifest");
+    std::fs::remove_file(newest.1).unwrap();
+    let store = Store::open(&unacked).unwrap();
+    assert_eq!(
+        (
+            (0..8)
+                .filter(|i| gen_of(&store, "Item", &format!("k{i}")).is_some())
+                .count(),
+            store
+                .load(NS, "Shipment", "s1", &PropertyAcl::allow_all())
+                .unwrap()
+                .hidden,
+            gen_of(&store, CHANGE_SET_KIND, "act-bulk").is_some()
+        ),
+        (0, false, false)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

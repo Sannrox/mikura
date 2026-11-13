@@ -133,6 +133,60 @@ pub(super) fn temp_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, log)
 }
 
+pub(super) fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        if path == to {
+            continue;
+        }
+        let dest = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest);
+        } else if path.is_file() {
+            std::fs::copy(&path, dest).unwrap();
+        }
+    }
+}
+
+pub(super) fn copy_log_tree(from: &std::path::Path, to: &std::path::Path) {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::copy(from, to).unwrap();
+    let src_obj = crate::log::objects_dir(from);
+    let dst_obj = crate::log::objects_dir(to);
+    let _ = std::fs::remove_dir_all(&dst_obj);
+    if src_obj.is_dir() {
+        copy_dir_all(&src_obj, &dst_obj);
+    }
+}
+
+pub(super) fn log_tree_contains(path: &std::path::Path, needle: &[u8]) -> bool {
+    let in_bytes = |bytes: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    if std::fs::read(path)
+        .ok()
+        .is_some_and(|bytes| in_bytes(&bytes))
+    {
+        return true;
+    }
+    let obj = crate::log::objects_dir(path);
+    let Ok(entries) = std::fs::read_dir(&obj) else {
+        return false;
+    };
+    for entry in entries {
+        let path = entry.unwrap().path();
+        if path.is_file()
+            && std::fs::read(&path)
+                .ok()
+                .is_some_and(|bytes| in_bytes(&bytes))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn shipment_sum_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         kind: "Shipment".into(),

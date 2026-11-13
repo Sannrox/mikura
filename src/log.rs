@@ -7,8 +7,8 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::codec::{read_str, take, write_str};
@@ -21,8 +21,12 @@ use crate::store::ObjectRecord;
 pub const PAGE: usize = 4096;
 const MAGIC: &[u8; 8] = crate::LOG_FORMAT;
 const V3_MAGIC: &[u8; 8] = crate::LOG_FORMAT_ENCRYPTED;
+const V4_MAGIC: &[u8; 8] = crate::LOG_FORMAT_MANIFEST;
 /// Pre-namespace magic. Read only by [`read_v1_records`].
 const V1_MAGIC: &[u8; 8] = b"MIKURAV1";
+const STUB_FLAG_OFF: usize = CRC_LEN + 8 + 2;
+const STUB_ENCRYPTED: u8 = 1;
+
 const CRC_LEN: usize = 4;
 const USED_LEN: usize = 2;
 const PAGE_HDR: usize = CRC_LEN + USED_LEN;
@@ -32,6 +36,45 @@ const UNCERTAIN_COMMIT: &str =
 
 fn io_err(error: String) -> std::io::Error {
     std::io::Error::other(error)
+}
+
+/// Object namespace next to a `MIKURAV4` stub: `{log}.obj`.
+pub(crate) fn objects_dir(log: &Path) -> PathBuf {
+    let mut path = log.as_os_str().to_os_string();
+    path.push(".obj");
+    PathBuf::from(path)
+}
+
+/// Publish a staging log as `dst`. A V4 staging directory is renamed beside
+/// the stub so the object namespace appears with the stub or not at all.
+pub(crate) fn publish_log(staging: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::hard_link(staging, dst).map_err(|e| format!("publish {}: {e}", dst.display()))?;
+    let from = objects_dir(staging);
+    if from.exists() {
+        if let Err(error) = std::fs::rename(&from, objects_dir(dst)) {
+            let _ = std::fs::remove_file(dst);
+            return Err(format!("publish {}: {error}", dst.display()));
+        }
+    }
+    crate::durable::sync_parent(dst)
+}
+
+pub(crate) fn remove_log(path: &Path) {
+    let _ = std::fs::remove_dir_all(objects_dir(path));
+    let _ = std::fs::remove_file(path);
+}
+
+fn stub_page(encrypted: bool) -> Vec<u8> {
+    let mut page = vec![0u8; PAGE];
+    page[CRC_LEN..CRC_LEN + 8].copy_from_slice(V4_MAGIC);
+    page[CRC_LEN + 8..CRC_LEN + 10].copy_from_slice(&(PAGE as u16).to_le_bytes());
+    page[STUB_FLAG_OFF] = u8::from(encrypted) * STUB_ENCRYPTED;
+    seal_page(&mut page);
+    page
+}
+
+pub(crate) fn is_manifest_stub(page: &[u8]) -> bool {
+    superblock_magic(page).ok() == Some(V4_MAGIC)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,8 +116,15 @@ pub struct LogWriter {
     revoked: HashSet<String>,
     withheld: HashSet<String>,
     page_tenant: Option<String>,
+    objects: Option<crate::objects::FileStore>,
+    manifest_version: u64,
+    segments: Vec<crate::objects::Segment>,
+    pending_pages: Vec<Vec<u8>>,
+    encrypted_log: bool,
     #[cfg(test)]
     stage_hook: Option<StageHook>,
+    #[cfg(test)]
+    crash_before_swap: bool,
 }
 
 /// Where [`LogWriter::write_staged`] is when a test hook runs.
@@ -100,6 +150,8 @@ pub(crate) struct StagedCommit {
     superblock: Vec<u8>,
     committed: u32,
     fsyncs: u64,
+    segment: Option<crate::objects::Segment>,
+    manifest_version: u64,
 }
 
 /// Create or truncate the log at `path` for writing. The lock is taken
@@ -134,19 +186,72 @@ fn lock_writer(file: &File, path: &Path) -> Result<(), String> {
 
 impl LogWriter {
     pub fn create(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
+        Self::create_manifest(path, sync, None)
+    }
+
+    pub fn create_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
+        Self::create_manifest(path, sync, Some(keys))
+    }
+
+    /// Superblock `MIKURAV2` log. Used by [`crate::Store::migrate_unnamespaced`].
+    pub fn create_superblock(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
         let file = create_locked(path)?;
         let mut writer = Self::blank(file, sync, 0);
         writer.write_superblock()?;
         Ok(writer)
     }
 
-    pub fn create_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
+    fn create_manifest(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: Option<LogKeys>,
+    ) -> Result<Self, String> {
         let file = create_locked(path)?;
+        let objects = crate::objects::FileStore::create(&objects_dir(path), sync.durable())?;
+        let probe = objects.probe()?;
         let mut writer = Self::blank(file, sync, 0);
-        writer.install_keys(Arc::new(keys))?;
-        writer.mint_store_dek()?;
-        writer.write_superblock()?;
+        writer.objects = Some(objects);
+        writer.encrypted_log = keys.is_some();
+        writer.fsync_count += probe;
+        if let Some(keys) = keys {
+            writer.install_keys(Arc::new(keys))?;
+            writer.mint_store_dek()?;
+        }
+        writer.write_stub()?;
+        writer.swap_snapshot()?;
         Ok(writer)
+    }
+
+    /// V4 log that keeps `catalog` instead of minting a new store key.
+    pub(crate) fn create_manifest_with_catalog(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+        catalog: BTreeMap<String, crate::crypto::WrappedDek>,
+    ) -> Result<Self, String> {
+        let file = create_locked(path)?;
+        let objects = crate::objects::FileStore::create(&objects_dir(path), sync.durable())?;
+        let probe = objects.probe()?;
+        let mut writer = Self::blank(file, sync, 0);
+        writer.objects = Some(objects);
+        writer.encrypted_log = true;
+        writer.fsync_count += probe;
+        writer.install_keys(Arc::new(keys))?;
+        writer.load_manifest_catalog(&catalog)?;
+        writer.write_stub()?;
+        writer.swap_snapshot()?;
+        Ok(writer)
+    }
+
+    pub(crate) fn append_copied_pages(&mut self, pages: Vec<Vec<u8>>) -> Result<(), String> {
+        if pages.is_empty() {
+            return Ok(());
+        }
+        self.pending_pages = pages;
+        self.written = self.committed
+            + u32::try_from(self.pending_pages.len())
+                .map_err(|_| "too many copied pages".to_string())?;
+        self.commit_pending()
     }
 
     pub fn open(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
@@ -175,8 +280,15 @@ impl LogWriter {
             revoked: HashSet::new(),
             withheld: HashSet::new(),
             page_tenant: None,
+            objects: None,
+            manifest_version: 0,
+            segments: Vec::new(),
+            pending_pages: Vec::new(),
+            encrypted_log: false,
             #[cfg(test)]
             stage_hook: None,
+            #[cfg(test)]
+            crash_before_swap: false,
         }
     }
 
@@ -191,6 +303,9 @@ impl LogWriter {
             return Err(
                 "bad magic: MIKURAV1 logs need Store::migrate_unnamespaced before open".into(),
             );
+        }
+        if magic == V4_MAGIC {
+            return Self::open_manifest(file, path, &superblock, sync, keys);
         }
         if magic != MAGIC && magic != V3_MAGIC {
             return Err("bad magic".into());
@@ -210,6 +325,76 @@ impl LogWriter {
             writer.load_catalog(&superblock)?;
         }
         Ok(writer)
+    }
+
+    fn open_manifest(
+        file: File,
+        path: &Path,
+        stub: &[u8],
+        sync: SyncPolicy,
+        keys: Option<LogKeys>,
+    ) -> Result<Self, String> {
+        let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
+        if encrypted && keys.is_none() {
+            return Err("encrypted log requires keys".into());
+        }
+        if !encrypted && keys.is_some() {
+            return Err("log is not encrypted".into());
+        }
+        let objects = crate::objects::FileStore::open(&objects_dir(path), sync.durable())?;
+        let mut manifest = load_current_manifest(&objects, encrypted)?;
+        objects.collect(&manifest.live_keys())?;
+        let probe = objects.probe()?;
+        let mut writer = Self::blank(file, sync, manifest.committed_pages);
+        writer.objects = Some(objects);
+        writer.manifest_version = manifest.version;
+        writer.segments = std::mem::take(&mut manifest.segments);
+        writer.encrypted_log = encrypted;
+        writer.fsync_count += probe;
+        if let Some(keys) = keys {
+            writer.install_keys(Arc::new(keys))?;
+            if encrypted {
+                writer.load_manifest_catalog(&manifest.catalog)?;
+            } else {
+                writer.mint_store_dek()?;
+            }
+        }
+        Ok(writer)
+    }
+
+    fn load_manifest_catalog(
+        &mut self,
+        catalog: &std::collections::BTreeMap<String, crate::crypto::WrappedDek>,
+    ) -> Result<(), String> {
+        let keys = self
+            .keys
+            .clone()
+            .ok_or_else(|| "encrypted log requires keys".to_string())?;
+        for (tenant, wrapped) in catalog {
+            let dek_key = if tenant.is_empty() {
+                STORE_KEY_TENANT.to_string()
+            } else {
+                tenant.clone()
+            };
+            match keys.unwrap_status(wrapped)? {
+                DekStatus::Ready(dek) => {
+                    self.deks.insert(dek_key, dek);
+                    self.catalog.insert(tenant.clone(), wrapped.clone());
+                }
+                DekStatus::Withheld => {
+                    self.withheld.insert(dek_key);
+                    self.catalog.insert(tenant.clone(), wrapped.clone());
+                }
+                DekStatus::Shredded => {
+                    self.revoked.insert(dek_key);
+                    self.catalog.insert(tenant.clone(), wrapped.clone());
+                }
+            }
+        }
+        if !self.deks.contains_key(STORE_KEY_TENANT) {
+            return Err("encrypted log is missing a usable store key".into());
+        }
+        Ok(())
     }
 
     fn install_keys(&mut self, keys: Arc<LogKeys>) -> Result<(), String> {
@@ -472,6 +657,10 @@ impl LogWriter {
         self.page_tenant = None;
         self.written = self.committed;
         self.synced = self.committed;
+        self.pending_pages.clear();
+        if self.objects.is_some() {
+            return Ok(());
+        }
         let end = PAGE as u64 * u64::from(1 + self.committed);
         crate::fault::set_len(&self.file, end)?;
         self.file
@@ -631,12 +820,18 @@ impl LogWriter {
                 .ok()?,
         );
         let committed = self.written + pages.len() as u32;
-        let superblock = self.superblock_bytes(committed).ok()?;
+        let superblock = if self.objects.is_some() {
+            Vec::new()
+        } else {
+            self.superblock_bytes(committed).ok()?
+        };
         Some(StagedCommit {
             pages,
             superblock,
             committed,
             fsyncs: 0,
+            segment: None,
+            manifest_version: 0,
         })
     }
 
@@ -651,6 +846,9 @@ impl LogWriter {
     /// unknown and poisons the writer, as [`Self::flush`] does.
     pub(crate) fn write_staged(&self, staged: &mut StagedCommit) -> Result<(), String> {
         self.ensure_usable()?;
+        if self.objects.is_some() {
+            return self.write_staged_manifest(staged);
+        }
         let mut file = &self.file;
         let start = PAGE as u64 * u64::from(1 + self.written);
         let mut fsyncs = 0;
@@ -737,11 +935,29 @@ impl LogWriter {
                 .collect::<HashMap<_, _>>()
         });
         let mut file = crate::fault::open_read(path)?;
+        let mut paged = Vec::new();
+        if self.objects.is_some() {
+            visit_manifest_pages(
+                &objects_dir(path),
+                &self.segments,
+                0,
+                self.committed,
+                deks.as_ref(),
+                |index, records| {
+                    paged.extend(
+                        records
+                            .into_iter()
+                            .filter(|record| keep(record))
+                            .map(|record| (index, record)),
+                    );
+                },
+            )?;
+            return Ok(paged);
+        }
         let needed = PAGE as u64 * u64::from(1 + self.committed);
         if file.metadata().map_err(|e| e.to_string())?.len() < needed {
             return Err("committed pages missing".into());
         }
-        let mut paged = Vec::new();
         visit_pages(
             &mut file,
             None,
@@ -765,6 +981,16 @@ impl LogWriter {
         self.committed = staged.committed;
         self.synced = staged.committed;
         self.fsync_count += staged.fsyncs;
+        if let Some(segment) = staged.segment.clone() {
+            self.segments.push(segment);
+            self.manifest_version = staged.manifest_version;
+            self.pending_pages.clear();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_crash_before_swap(&mut self, crash: bool) {
+        self.crash_before_swap = crash;
     }
 
     #[cfg(test)]
@@ -798,21 +1024,28 @@ impl LogWriter {
             self.written + 1,
         );
         self.page = page;
-        crate::fault::write_all(&mut self.file, &sealed?)?;
+        let sealed = sealed?;
+        if self.objects.is_some() {
+            self.pending_pages.push(sealed);
+        } else {
+            crate::fault::write_all(&mut self.file, &sealed)?;
+        }
         self.written += 1;
         self.page = vec![0u8; PAGE];
         self.used = 0;
         self.page_tenant = None;
         if self.hold_commits {
-            if self.sync.durable() && self.written - self.synced >= self.sync.group_size() {
+            if self.objects.is_none()
+                && self.sync.durable()
+                && self.written - self.synced >= self.sync.group_size()
+            {
                 self.sync_data()?;
                 self.synced = self.written;
             }
             return Ok(());
         }
         if self.sync == SyncPolicy::None {
-            self.committed = self.written;
-            return self.write_superblock();
+            return self.commit_pending();
         }
         let pending = self.written - self.committed;
         if pending >= self.sync.group_size() {
@@ -824,6 +1057,21 @@ impl LogWriter {
     fn commit_pending(&mut self) -> Result<(), String> {
         if self.written == self.committed {
             return Ok(());
+        }
+        if self.objects.is_some() {
+            if let Some(segment) = self.put_pending_segment()? {
+                #[cfg(test)]
+                {
+                    if self.crash_before_swap {
+                        return Err("crash before swap".into());
+                    }
+                }
+                self.segments.push(segment);
+            }
+            let committed = self.written;
+            self.committed = committed;
+            self.synced = committed;
+            return self.swap_snapshot();
         }
         self.sync_data()?;
         self.committed = self.written;
@@ -883,6 +1131,138 @@ impl LogWriter {
         } else {
             Ok(superblock_page(committed))
         }
+    }
+
+    fn write_stub(&mut self) -> Result<(), String> {
+        let stub = stub_page(self.encrypted_log);
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| e.to_string())?;
+        crate::fault::write_all(&mut self.file, &stub)?;
+        self.sync_data()?;
+        Ok(())
+    }
+
+    fn snapshot_manifest(&self) -> crate::objects::Manifest {
+        crate::objects::Manifest {
+            version: self.manifest_version,
+            committed_pages: self.committed,
+            encrypted: self.encrypted_log,
+            segments: self.segments.clone(),
+            catalog: self.catalog.clone(),
+        }
+    }
+
+    fn swap_snapshot(&mut self) -> Result<(), String> {
+        let Some(store) = self.objects.as_ref() else {
+            return Ok(());
+        };
+        let mut snapshot = self.snapshot_manifest();
+        let bytes = crate::objects::encode_manifest(&snapshot)?;
+        let (version, fsyncs) = store.cas(self.manifest_version, &bytes).inspect_err(|_| {
+            self.failed.store(true, Ordering::Relaxed);
+        })?;
+        snapshot.version = version;
+        self.manifest_version = version;
+        self.fsync_count += fsyncs;
+        Ok(())
+    }
+
+    fn put_pending_segment(&mut self) -> Result<Option<crate::objects::Segment>, String> {
+        if self.pending_pages.is_empty() {
+            return Ok(None);
+        }
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "manifest log is missing its object namespace".to_string())?;
+        let first_page = self.committed + 1;
+        let page_count = u32::try_from(self.pending_pages.len())
+            .map_err(|_| "too many pages in one segment".to_string())?;
+        let mut bytes = Vec::with_capacity(self.pending_pages.len() * PAGE);
+        for page in &self.pending_pages {
+            bytes.extend_from_slice(page);
+        }
+        let (segment, fsyncs) = self.put_segment_object(store, first_page, page_count, &bytes)?;
+        self.fsync_count += fsyncs;
+        self.pending_pages.clear();
+        Ok(Some(segment))
+    }
+
+    /// Live coverage is `first_page`; the suffix is unique per put so a
+    /// leftover object never fences this writer. The snapshot CAS is the ack.
+    fn put_segment_object(
+        &self,
+        store: &crate::objects::FileStore,
+        first_page: u32,
+        page_count: u32,
+        bytes: &[u8],
+    ) -> Result<(crate::objects::Segment, u64), String> {
+        static SEQ: AtomicU64 = AtomicU64::new(1);
+        for _ in 0..8 {
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            let key = format!("seg.{first_page}.{nanos:x}-{seq:x}");
+            match store.put(&key, bytes) {
+                Ok(fsyncs) => {
+                    return Ok((
+                        crate::objects::Segment {
+                            key,
+                            first_page,
+                            page_count,
+                        },
+                        fsyncs,
+                    ));
+                }
+                Err(error) if error.contains("already exists") => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("could not allocate a unique segment key".into())
+    }
+
+    fn write_staged_manifest(&self, staged: &mut StagedCommit) -> Result<(), String> {
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "manifest log is missing its object namespace".to_string())?;
+        let first_page = self.committed + 1;
+        let page_count = u32::try_from(staged.pages.len())
+            .map_err(|_| "too many pages in one segment".to_string())?;
+        let mut bytes = Vec::with_capacity(staged.pages.len() * PAGE);
+        for page in &staged.pages {
+            bytes.extend_from_slice(page);
+        }
+        let (segment, mut fsyncs) =
+            self.put_segment_object(store, first_page, page_count, &bytes)?;
+        #[cfg(test)]
+        {
+            self.run_stage_hook(CommitStage::PagesWritten);
+            if self.crash_before_swap {
+                return Err("crash before swap".into());
+            }
+            self.run_stage_hook(CommitStage::SuperblockTorn);
+        }
+        let mut snapshot = self.snapshot_manifest();
+        snapshot.segments.push(segment.clone());
+        snapshot.committed_pages = staged.committed;
+        let encoded = crate::objects::encode_manifest(&snapshot)?;
+        let (version, cas_fsyncs) =
+            store
+                .cas(self.manifest_version, &encoded)
+                .inspect_err(|_| {
+                    self.failed.store(true, Ordering::Relaxed);
+                })?;
+        fsyncs += cas_fsyncs;
+        staged.fsyncs = fsyncs;
+        staged.segment = Some(segment);
+        staged.manifest_version = version;
+        #[cfg(test)]
+        self.run_stage_hook(CommitStage::Durable);
+        Ok(())
     }
 
     fn write_superblock_body(&mut self) -> Result<(), String> {
@@ -972,15 +1352,21 @@ fn visit_committed_pages(
     let mut superblock = vec![0u8; PAGE];
     file.read_exact(&mut superblock)
         .map_err(|_| "missing superblock".to_string())?;
-    #[allow(unused_mut)]
-    let mut committed = match v1_namespace {
-        None => parse_superblock(&superblock)?,
-        Some(_) => parse_v1_superblock(&superblock)?,
-    };
     let magic = if v1_namespace.is_some() {
         V1_MAGIC
     } else {
         superblock_magic(&superblock)?
+    };
+    if magic == V4_MAGIC {
+        if v1_namespace.is_some() {
+            return Err("bad magic".into());
+        }
+        return visit_committed_manifest_pages(path, &superblock, after_page, keys, visit);
+    }
+    #[allow(unused_mut)]
+    let mut committed = match v1_namespace {
+        None => parse_superblock(&superblock)?,
+        Some(_) => parse_v1_superblock(&superblock)?,
     };
     if magic == V3_MAGIC && keys.is_none() {
         return Err("encrypted log requires keys".into());
@@ -1012,6 +1398,217 @@ fn visit_committed_pages(
         deks.as_ref(),
         visit,
     )
+}
+
+fn visit_committed_manifest_pages(
+    path: &Path,
+    stub: &[u8],
+    after_page: u32,
+    keys: Option<&LogKeys>,
+    visit: impl FnMut(u32, Vec<ObjectRecord>),
+) -> Result<(), String> {
+    let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
+    if encrypted && keys.is_none() {
+        return Err("encrypted log requires keys".into());
+    }
+    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let manifest = load_current_manifest(&store, encrypted)?;
+    if after_page > manifest.committed_pages {
+        return Err("checkpoint page is past committed_pages".into());
+    }
+    let deks = if encrypted {
+        Some(unwrap_manifest_catalog(
+            keys.ok_or("encrypted log requires keys")?,
+            &manifest,
+        )?)
+    } else {
+        None
+    };
+    visit_manifest_pages(
+        &objects_dir(path),
+        &manifest.segments,
+        after_page,
+        manifest.committed_pages,
+        deks.as_ref(),
+        visit,
+    )
+}
+
+fn unwrap_manifest_catalog(
+    keys: &LogKeys,
+    manifest: &crate::objects::Manifest,
+) -> Result<HashMap<String, Dek>, String> {
+    let mut deks = HashMap::new();
+    for (tenant, wrapped) in &manifest.catalog {
+        if let Some(dek) = keys.unwrap_dek(wrapped)? {
+            let dek_key = if tenant.is_empty() {
+                STORE_KEY_TENANT.to_string()
+            } else {
+                tenant.clone()
+            };
+            deks.insert(dek_key, dek);
+        }
+    }
+    Ok(deks)
+}
+
+fn visit_manifest_pages(
+    root: &Path,
+    segments: &[crate::objects::Segment],
+    after_page: u32,
+    committed: u32,
+    deks: Option<&HashMap<String, Dek>>,
+    mut visit: impl FnMut(u32, Vec<ObjectRecord>),
+) -> Result<(), String> {
+    let store = crate::objects::FileStore::open(root, false)?;
+    ensure_manifest_pages(&store, segments, committed)?;
+    if after_page >= committed {
+        return Ok(());
+    }
+    for segment in segments {
+        let last = segment.first_page + segment.page_count - 1;
+        if last <= after_page || segment.first_page > committed {
+            continue;
+        }
+        let bytes = store
+            .get(&segment.key)
+            .map_err(|_| "committed pages missing".to_string())?;
+        let expected = PAGE * segment.page_count as usize;
+        if bytes.len() != expected {
+            return Err("committed pages missing".into());
+        }
+        for offset in 0..segment.page_count {
+            let index = segment.first_page + offset;
+            if index <= after_page || index > committed {
+                continue;
+            }
+            let start = offset as usize * PAGE;
+            let page = &bytes[start..start + PAGE];
+            verify_page(page).map_err(|e| format!("committed page {index}: {e}"))?;
+            let mut records = Vec::new();
+            if let Some(deks) = deks {
+                decode_encrypted_page(page, index, deks, &mut records)
+                    .map_err(|e| format!("committed page {index}: {e}"))?;
+            } else {
+                decode_data_page(page, None, &mut records)?;
+            }
+            visit(index, records);
+        }
+    }
+    Ok(())
+}
+
+/// Every page `1..=committed` must still have a live segment object. A
+/// matching checkpoint may skip decoding those pages; it must not skip this
+/// check (the V2 analog is `file_len >= PAGE * (1 + committed)`).
+fn ensure_manifest_pages(
+    store: &crate::objects::FileStore,
+    segments: &[crate::objects::Segment],
+    committed: u32,
+) -> Result<(), String> {
+    if committed == 0 {
+        return Ok(());
+    }
+    let mut covered = 0u32;
+    for segment in segments {
+        let expected = PAGE as u64 * u64::from(segment.page_count);
+        if store.object_len(&segment.key)? != expected {
+            return Err("committed pages missing".into());
+        }
+        if segment.first_page != covered + 1 {
+            return Err("committed pages missing".into());
+        }
+        covered = segment.first_page + segment.page_count - 1;
+    }
+    if covered != committed {
+        return Err("committed pages missing".into());
+    }
+    Ok(())
+}
+
+/// Committed page `index` of a log, V2/V3 file or V4 segment.
+pub(crate) fn read_committed_page(path: &Path, index: u32) -> Result<Vec<u8>, String> {
+    if index == 0 {
+        let mut file = crate::fault::open_read(path)?;
+        let mut page = vec![0u8; PAGE];
+        file.read_exact(&mut page)
+            .map_err(|_| "missing superblock".to_string())?;
+        verify_page(&page).map_err(|e| format!("superblock: {e}"))?;
+        return Ok(page);
+    }
+    let mut file = crate::fault::open_read(path)?;
+    let mut stub = vec![0u8; PAGE];
+    file.read_exact(&mut stub)
+        .map_err(|_| "missing superblock".to_string())?;
+    if is_manifest_stub(&stub) {
+        return read_manifest_page(path, &stub, index);
+    }
+    let committed = parse_superblock(&stub)?;
+    if index > committed {
+        return Err(format!("page {index} is not committed"));
+    }
+    file.seek(SeekFrom::Start(PAGE as u64 * u64::from(index)))
+        .map_err(|e| e.to_string())?;
+    let mut page = vec![0u8; PAGE];
+    file.read_exact(&mut page)
+        .map_err(|_| format!("committed page {index}: short read"))?;
+    verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
+    Ok(page)
+}
+
+fn read_manifest_page(path: &Path, stub: &[u8], index: u32) -> Result<Vec<u8>, String> {
+    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
+    let manifest = load_current_manifest(&store, encrypted)?;
+    let (segment, offset) = manifest.page_span(index)?;
+    let bytes = store
+        .get(&segment.key)
+        .map_err(|_| "committed pages missing".to_string())?;
+    let start = offset as usize * PAGE;
+    let end = start + PAGE;
+    if bytes.len() < end {
+        return Err("committed pages missing".into());
+    }
+    let page = bytes[start..end].to_vec();
+    verify_page(&page).map_err(|e| format!("committed page {index}: {e}"))?;
+    Ok(page)
+}
+
+pub(crate) fn manifest_commit_point(path: &Path) -> Result<Option<u32>, String> {
+    let mut file = crate::fault::open_read(path)?;
+    let mut stub = vec![0u8; PAGE];
+    file.read_exact(&mut stub)
+        .map_err(|_| "missing superblock".to_string())?;
+    if !is_manifest_stub(&stub) {
+        return Ok(None);
+    }
+    let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+    let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
+    Ok(Some(
+        load_current_manifest(&store, encrypted)?.committed_pages,
+    ))
+}
+
+fn load_current_manifest(
+    store: &crate::objects::FileStore,
+    encrypted: bool,
+) -> Result<crate::objects::Manifest, String> {
+    match store.current()? {
+        Some((version, bytes)) => {
+            let mut parsed = crate::objects::decode_manifest(&bytes)?;
+            parsed.version = version;
+            if parsed.encrypted != encrypted {
+                return Err("manifest encryption flag does not match the stub".into());
+            }
+            Ok(parsed)
+        }
+        None => {
+            if store.has_durable_objects()? {
+                return Err("committed pages missing".into());
+            }
+            Ok(crate::objects::Manifest::empty(encrypted))
+        }
+    }
 }
 
 /// Decode data pages `pages` (page 0 is the superblock and is never in the
@@ -1130,6 +1727,30 @@ pub(crate) fn superblock_magic(superblock: &[u8]) -> Result<&[u8; 8], String> {
 /// The stored CRC of a sealed page.
 pub(crate) fn page_crc(page: &[u8]) -> u32 {
     u32::from_le_bytes(page[..CRC_LEN].try_into().unwrap())
+}
+
+pub(crate) fn superblock_catalog(
+    superblock: &[u8],
+) -> Result<BTreeMap<String, crate::crypto::WrappedDek>, String> {
+    let mut cur = &superblock[SUPER_COMMIT_OFF + 4..];
+    decode_catalog(&mut cur)
+}
+
+/// Wrapped-DEK catalog of a V3 superblock or the current V4 snapshot.
+#[cfg(test)]
+pub(crate) fn wrapped_catalog(
+    path: &Path,
+) -> Result<BTreeMap<String, crate::crypto::WrappedDek>, String> {
+    let mut file = crate::fault::open_read(path)?;
+    let mut page = vec![0u8; PAGE];
+    file.read_exact(&mut page)
+        .map_err(|_| "missing superblock".to_string())?;
+    if is_manifest_stub(&page) {
+        let store = crate::objects::FileStore::open(&objects_dir(path), false)?;
+        let encrypted = page.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
+        return Ok(load_current_manifest(&store, encrypted)?.catalog);
+    }
+    superblock_catalog(&page)
 }
 
 pub(crate) fn parse_superblock(superblock: &[u8]) -> Result<u32, String> {
@@ -1376,7 +1997,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.mikura");
-        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        let mut writer = LogWriter::create_superblock(&path, SyncPolicy::None).unwrap();
         writer
             .append_record(&ObjectRecord {
                 gen: 1,
@@ -1422,7 +2043,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.mikura");
-        let mut writer = LogWriter::create(&path, SyncPolicy::Group(2)).unwrap();
+        let mut writer = LogWriter::create_superblock(&path, SyncPolicy::Group(2)).unwrap();
         writer.hold_commits(true);
         for key in 0..12 {
             writer.append_record(&wide_record(key)).unwrap();
@@ -1454,7 +2075,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.mikura");
-        let mut writer = LogWriter::create(&path, SyncPolicy::Group(2)).unwrap();
+        let mut writer = LogWriter::create_superblock(&path, SyncPolicy::Group(2)).unwrap();
         writer.append_record(&wide_record(0)).unwrap();
         writer.flush().unwrap();
         writer.hold_commits(true);
@@ -1614,7 +2235,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.mikura");
-        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        let mut writer = LogWriter::create_superblock(&path, SyncPolicy::None).unwrap();
         writer
             .append_record(&ObjectRecord {
                 gen: 1,
@@ -1646,7 +2267,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("objects.mikura");
-        let mut writer = LogWriter::create(&path, SyncPolicy::None).unwrap();
+        let mut writer = LogWriter::create_superblock(&path, SyncPolicy::None).unwrap();
         writer
             .append_record(&ObjectRecord {
                 gen: 1,

@@ -6,10 +6,9 @@
 
 use super::super::*;
 use super::helpers::*;
-use crate::crypto::{decode_catalog, LogKeys, MemoryKeyProvider, RuntimeProfile, STORE_KEY_TENANT};
+use crate::crypto::{LogKeys, MemoryKeyProvider, RuntimeProfile, STORE_KEY_TENANT};
 use crate::log::{read_records, CommitStage};
 use crate::{KeyId, KeyProvider, KeyPurpose, TenantId, UnwrapGrant};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -132,16 +131,6 @@ fn durable_batch_stays_invisible_until_applied_then_appears_whole() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_file() {
-            std::fs::copy(&path, to.join(path.file_name().unwrap())).unwrap();
-        }
-    }
-}
-
 #[test]
 fn crash_between_sync_and_apply_recovers_the_batch_once() {
     let (dir, log, shared) = seeded("split-crash");
@@ -150,7 +139,7 @@ fn crash_between_sync_and_apply_recovers_the_batch_once() {
         .map(|i| claimed(&format!("r{i}"), &format!("act-{i}")))
         .collect();
     while_paused(&shared, CommitStage::Durable, batch.clone(), |_| {
-        copy_dir(&dir, &crash)
+        copy_dir_all(&dir, &crash)
     });
     let applied = shared.read().unwrap().committed_pages();
     drop(shared);
@@ -189,7 +178,7 @@ fn crash_before_sync_loses_only_the_unacknowledged_batch() {
         &shared,
         CommitStage::PagesWritten,
         vec![shipment("r1", "3")],
-        |_| copy_dir(&dir, &crash),
+        |_| copy_dir_all(&dir, &crash),
     );
     drop(shared);
     let recovered = Store::open(&crash.join(log.file_name().unwrap())).unwrap();
@@ -290,8 +279,7 @@ fn encrypted_batches_split_until_a_key_changes() {
     let shared = SharedStore::new(store);
 
     split(&shared, vec![tenant_rec("acme", "a1", "split-secret")]);
-    let bytes = std::fs::read(&log).unwrap();
-    assert!(!bytes.windows(12).any(|w| w == b"split-secret"));
+    assert!(!log_tree_contains(&log, b"split-secret"));
 
     // A tenant without a key needs a mint: exclusive path.
     assert!(matches!(
@@ -300,8 +288,7 @@ fn encrypted_batches_split_until_a_key_changes() {
     ));
 
     // A revoked key changes the catalog: exclusive path, which refuses it.
-    let mut catalog = &bytes[18..];
-    let catalog = decode_catalog(&mut catalog).unwrap();
+    let catalog = crate::log::wrapped_catalog(&log).unwrap();
     let acme = KeyId::new(catalog.get("acme").unwrap().dek_id.as_str()).unwrap();
     provider.revoke_dek(&acme).unwrap();
     let BatchWrite::Exclusive(records) = shared.append_batch(vec![tenant_rec("acme", "a2", "x")])

@@ -153,10 +153,20 @@ fn backup_and_restore_fail_closed() {
     assert_eq!(std::fs::read(&log).unwrap(), before);
 
     // A flipped byte in a committed page fails verify.
-    let mut bytes = std::fs::read(&backup).unwrap();
-    bytes[crate::log::PAGE + 100] ^= 0xff;
     let corrupt = dir.join("corrupt.mikura");
-    std::fs::write(&corrupt, bytes).unwrap();
+    copy_log_tree(&backup, &corrupt);
+    let segment = std::fs::read_dir(crate::log::objects_dir(&corrupt))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("seg."))
+        })
+        .expect("live segment");
+    let mut bytes = std::fs::read(&segment).unwrap();
+    bytes[100] ^= 0xff;
+    std::fs::write(&segment, bytes).unwrap();
     assert!(verify_log(&corrupt).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }

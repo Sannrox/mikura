@@ -1,7 +1,7 @@
 use super::super::*;
 use super::helpers::*;
-use crate::backup::{backup_log, restore_log, verify_log};
-use crate::crypto::{decode_catalog, LogKeys, MemoryKeyProvider, RuntimeProfile, STORE_KEY_TENANT};
+use crate::backup::{backup_log, restore_log, restore_point_at, verify_log};
+use crate::crypto::{LogKeys, MemoryKeyProvider, RuntimeProfile, STORE_KEY_TENANT};
 use crate::{KeyId, KeyProvider, KeyPurpose, TenantId, UnwrapGrant};
 use std::sync::Arc;
 
@@ -45,14 +45,13 @@ fn encrypted_log_scan_finds_no_plaintext() {
         .append(secret_rec("acme", "k1", "top-secret-payload"))
         .unwrap();
     drop(store);
-    let bytes = std::fs::read(&log).unwrap();
     assert!(
-        !bytes
-            .windows(b"top-secret-payload".len())
-            .any(|w| w == b"top-secret-payload"),
+        !log_tree_contains(&log, b"top-secret-payload"),
         "plaintext leaked into the log"
     );
-    assert_eq!(&bytes[4..12], LOG_FORMAT_ENCRYPTED);
+    let bytes = std::fs::read(&log).unwrap();
+    assert_eq!(&bytes[4..12], LOG_FORMAT_MANIFEST);
+    assert_ne!(bytes[14] & 1, 0, "encrypted flag must be set on the stub");
     let err = Store::open(&log).err().expect("plaintext open must fail");
     assert!(err.contains("encrypted log requires keys"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -82,9 +81,7 @@ fn revocation_isolates_one_tenant() {
     );
     drop(store);
 
-    let bytes = std::fs::read(&log).unwrap();
-    let mut catalog = &bytes[18..];
-    let catalog = decode_catalog(&mut catalog).unwrap();
+    let catalog = crate::log::wrapped_catalog(&log).unwrap();
     let acme_id = KeyId::new(catalog.get("acme").expect("acme dek").dek_id.as_str()).unwrap();
     provider.revoke_dek(&acme_id).unwrap();
     let keys_all = LogKeys::new(
@@ -125,9 +122,7 @@ fn live_revoke_refuses_writes_and_compact_omits_tenant() {
     store
         .append(secret_rec("beta", "b1", "beta-secret"))
         .unwrap();
-    let bytes = std::fs::read(&log).unwrap();
-    let mut catalog = &bytes[18..];
-    let catalog = decode_catalog(&mut catalog).unwrap();
+    let catalog = crate::log::wrapped_catalog(&log).unwrap();
     let acme_id = KeyId::new(catalog.get("acme").expect("acme dek").dek_id.as_str()).unwrap();
     provider.revoke_dek(&acme_id).unwrap();
     let acme_ns = tenant_namespace("acme", "ns").unwrap();
@@ -179,9 +174,7 @@ fn abort_after_revocation_keeps_tenant_filtered() {
         .unwrap();
     drop(store);
 
-    let bytes = std::fs::read(&log).unwrap();
-    let mut catalog = &bytes[18..];
-    let catalog = decode_catalog(&mut catalog).unwrap();
+    let catalog = crate::log::wrapped_catalog(&log).unwrap();
     let acme_id = KeyId::new(catalog.get("acme").expect("acme dek").dek_id.as_str()).unwrap();
     provider.revoke_dek(&acme_id).unwrap();
     let keys_all = LogKeys::new(
@@ -278,9 +271,7 @@ fn store_dek_cannot_read_tenant_checkpoint_payload() {
         .unwrap();
     drop(store);
 
-    let log_bytes = std::fs::read(&log).unwrap();
-    let mut catalog = &log_bytes[18..];
-    let catalog = decode_catalog(&mut catalog).unwrap();
+    let catalog = crate::log::wrapped_catalog(&log).unwrap();
     let store_wrapped = catalog.get("").expect("store dek");
     let store_dek = keys
         .unwrap_dek(store_wrapped)
@@ -332,8 +323,41 @@ fn backup_restore_round_trip_with_keys() {
             .map(String::as_str),
         Some("keep-me")
     );
-    let bytes = std::fs::read(&backup).unwrap();
-    assert!(!bytes.windows(b"keep-me".len()).any(|w| w == b"keep-me"));
+    assert!(!log_tree_contains(&backup, b"keep-me"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn encrypted_backup_restores_earlier_point_without_keys() {
+    let (dir, log) = temp_log("enc-backup-prefix");
+    let (_provider, keys) = enc_keys(&["acme"]);
+    let mut store = Store::create_with_keys(&log, keys.clone()).unwrap();
+    store.append(secret_rec("acme", "k1", "keep-me")).unwrap();
+    store.append(secret_rec("acme", "k2", "later")).unwrap();
+    let ns = tenant_namespace("acme", "ns").unwrap();
+    let later_page = store
+        .history(&ns, "Item", "k2", &PropertyAcl::allow_all())
+        .unwrap()[0]
+        .page;
+    drop(store);
+    let backup = dir.join("backup.mikura");
+    backup_log(&log, &backup).unwrap();
+    let point = restore_point_at(&backup, later_page - 1).unwrap();
+    let restored = dir.join("restored.mikura");
+    restore_log(&backup, &restored, Some(point)).unwrap();
+    let store = Store::open_with_keys(&restored, keys).unwrap();
+    assert_eq!(
+        store
+            .load(&ns, "Item", "k1", &PropertyAcl::allow_all())
+            .unwrap()
+            .props
+            .get("secret")
+            .map(String::as_str),
+        Some("keep-me")
+    );
+    assert!(store
+        .load(&ns, "Item", "k2", &PropertyAcl::allow_all())
+        .is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

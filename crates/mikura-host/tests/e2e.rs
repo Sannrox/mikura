@@ -1172,9 +1172,32 @@ fn process_evaluate_object_bound_fails_closed() {
 
 fn copy_log_and_optional_sidecar(src: &Path, dst: &Path) {
     std::fs::copy(src, dst).expect("copy object log");
+    let src_obj = objects_dir(src);
+    if src_obj.is_dir() {
+        copy_dir(&src_obj, &objects_dir(dst));
+    }
     let src_joins = Store::join_map_path(src);
     if src_joins.is_file() {
         std::fs::copy(&src_joins, Store::join_map_path(dst)).expect("copy join sidecar");
+    }
+}
+
+fn objects_dir(log: &Path) -> PathBuf {
+    let mut path = log.as_os_str().to_os_string();
+    path.push(".obj");
+    PathBuf::from(path)
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("object namespace");
+    for entry in std::fs::read_dir(from).expect("read object namespace") {
+        let path = entry.expect("object entry").path();
+        let dest = to.join(path.file_name().expect("object name"));
+        if path.is_dir() {
+            copy_dir(&path, &dest);
+        } else if path.is_file() {
+            std::fs::copy(&path, dest).expect("copy object");
+        }
     }
 }
 
