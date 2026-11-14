@@ -5,6 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#344](https://github.com/Sannrox/mikura/issues/344), [#337](https://github.com/Sannrox/mikura/issues/337), [#347](https://github.com/Sannrox/mikura/issues/347), [spike 019](../../spikes/019-ranked-text/NOTES.md), [ADR 0015](0015-composable-object-sets.md), [ADR 0016](0016-production-workload.md), [ADR 0002](0002-join-sidecar.md)
 - Amends: [ADR 0015](0015-composable-object-sets.md) — prefix, phrase, and full text stay fail closed; a ranked inverted index is not justified while equality and lookup scans hold.
+- Amended by: [ADR 0052](0052-explorer-text-stays-eq.md) — prefix and contains stay fail closed; the Explorer fixture does not admit them.
 - Supersedes: none
 - Superseded by: none
 
@@ -58,9 +59,10 @@ predicate or an inverted projection.**
    fixture and recalled the exact page, but lookup already holds and no
    consumer named ranked relevance.
 
-5. **Prefix and substring stay a separate question.**
-   [#337](https://github.com/Sannrox/mikura/issues/337) still asks whether
-   Explorer needs those lookup predicates. This ADR does not admit them.
+5. **Prefix and substring stay fail closed.**
+   [#337](https://github.com/Sannrox/mikura/issues/337) /
+   [ADR 0052](0052-explorer-text-stays-eq.md) records that the Explorer
+   fixture does not need those lookup predicates.
 
 6. **No engine pick from a synthetic miss.** Corpus size, property count,
    and budget stay unpublished. Filling them with guessed consumer
@@ -74,7 +76,7 @@ external search engine.
 | Option | Why not |
 | --- | --- |
 | TF-IDF inverted index as a rebuildable projection | Faster here, but equality and lookup scans already hold 500 ms at the measured sizes. Adds a maintenance step, tokenizer, ranking contract, and sidecar layout the scan does not need |
-| Prefix/substring predicates without ranking | Lookup scans hold, but they are still fail-closed operators. [#337](https://github.com/Sannrox/mikura/issues/337) owns that admission |
+| Prefix/substring predicates without ranking | Lookup scans hold, but they are still fail-closed operators. [#337](https://github.com/Sannrox/mikura/issues/337) / [ADR 0052](0052-explorer-text-stays-eq.md) records that the Explorer fixture does not need them |
 | Invent a consumer corpus and SLO | Forbidden by ADR 0016 |
 
 ## Consequences
