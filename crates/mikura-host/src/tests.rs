@@ -1201,6 +1201,112 @@ fn health_reports_ready_and_counts_without_slo_gates() {
     assert!(text.contains("namespace=\"ns\""), "{text}");
     assert!(!text.contains("inc-1"), "payload key leaked: {text}");
     assert!(!text.contains("note"), "property leaked: {text}");
+    assert_eq!(health.role, "writer");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn standby_reports_role_and_refuses_writes() {
+    let (dir, log) = temp_log("standby-role");
+    let writer = Host::open(&log, 8).unwrap();
+    writer.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "a", false, &[("n", "1")])],
+    });
+    drop(writer);
+    let standby = Host::open_standby(&log, 8).unwrap();
+    let health = standby.handle(HostRequest::Health);
+    assert_eq!(health.health.expect("health").role, "standby");
+    let write = standby.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "b", false, &[("n", "2")])],
+    });
+    assert!(!write.ok, "{write:?}");
+    assert!(
+        write.error.as_deref().unwrap_or("").contains("standby"),
+        "{write:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn standby_min_version_load_sees_the_writer_commit() {
+    let (dir, log) = temp_log("standby-min");
+    let writer = Host::open(&log, 8).unwrap();
+    let first = writer.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "a", false, &[("n", "1")])],
+    });
+    assert!(first.ok, "{first:?}");
+    let version = first.manifest_version.expect("version");
+    let standby = Host::open_standby(&log, 8).unwrap();
+    standby
+        .set_min_version_timeout(Duration::from_secs(2))
+        .unwrap();
+    let got = standby.handle_line(&format!(
+        r#"{{"op":"load","namespace":"ns","kind":"Item","key":"a","min_version":{version}}}"#
+    ));
+    assert!(got.ok, "{got:?}");
+    assert_eq!(
+        got.load
+            .as_ref()
+            .and_then(|row| row.props.get("n"))
+            .map(String::as_str),
+        Some("1")
+    );
+    assert!(got.manifest_version.unwrap() >= version);
+    let miss = standby.handle_line(
+        r#"{"op":"load","namespace":"ns","kind":"Item","key":"a","min_version":999999}"#,
+    );
+    assert!(!miss.ok, "{miss:?}");
+    assert!(
+        miss.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("minimum manifest version"),
+        "{miss:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn promote_fences_the_in_process_writer() {
+    let (dir, log) = temp_log("standby-promote");
+    let writer = Host::open(&log, 8).unwrap();
+    writer.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "a", false, &[("n", "1")])],
+    });
+    let standby = Host::open_standby(&log, 8).unwrap();
+    standby
+        .set_min_version_timeout(Duration::from_secs(2))
+        .unwrap();
+    let promoted = standby.handle(HostRequest::Promote);
+    assert!(promoted.ok, "{promoted:?}");
+    assert_eq!(
+        standby.handle(HostRequest::Health).health.unwrap().role,
+        "writer"
+    );
+    let fenced = writer.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "b", false, &[("n", "2")])],
+    });
+    assert!(!fenced.ok, "{fenced:?}");
+    assert!(
+        fenced.error.as_deref().unwrap_or("").contains("fenced"),
+        "{fenced:?}"
+    );
+    assert_eq!(
+        writer.handle(HostRequest::Health).health.unwrap().role,
+        "fenced"
+    );
+    let next = standby.handle(HostRequest::IngestBatch {
+        records: vec![rec("Item", "c", false, &[("n", "3")])],
+    });
+    assert!(next.ok, "{next:?}");
+    let load = standby.handle(HostRequest::Load {
+        namespace: "ns".into(),
+        kind: "Item".into(),
+        key: "c".into(),
+        deny: Vec::new(),
+        restriction: None,
+    });
+    assert!(load.ok, "{load:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

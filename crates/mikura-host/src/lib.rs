@@ -2,7 +2,7 @@
 //!
 //! Wire `op` names are snake_case: `ingest_batch`, `ingest_stream_push`,
 //! `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`,
-//! `evaluate`, `load`, `health`, `metrics`. JSON lines are envelope `{ v, token?, op, … }`
+//! `evaluate`, `load`, `health`, `metrics`, `promote`. JSON lines are envelope `{ v, token?, min_version?, op, … }`
 //! (`v` omitted or `1`). Evaluate `request.predicate` is the ADR 0015
 //! tree; unknown `op` tags fail closed. `request.sort` plus `page_size`
 //! returns snapshot pages; `sort.nearest` ranks a vector property by
@@ -37,7 +37,7 @@ use metrics::{Metrics, ProcessSnapshot};
 use mikura::{
     Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
     Hop, LocalCompute, LogKeys, ObjectBackend, ObjectRecord, ObjectSet, OverlayPatch, Predicate,
-    PropertyAcl, SharedStore, Sort, Store,
+    PropertyAcl, SharedStore, Sort, Store, LOG_FENCED,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -206,6 +206,7 @@ pub struct WireSort {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum HostRequest {
     IngestBatch {
         records: Vec<ObjectRecord>,
@@ -280,6 +281,8 @@ pub enum HostRequest {
     },
     Health,
     Metrics,
+    /// Take the writer role. The successful claim fences the previous writer.
+    Promote,
 }
 
 pub const WIRE_V: u32 = 1;
@@ -292,11 +295,15 @@ pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 5_000;
 struct HostEnvelope {
     #[serde(default)]
     token: Option<String>,
+    /// Serve at or above this snapshot, or refuse (ADR 0047 §5).
+    #[serde(default)]
+    min_version: Option<u64>,
     #[serde(flatten)]
     request: HostRequest,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HostResponse {
     pub v: u32,
     pub ok: bool,
@@ -310,10 +317,17 @@ pub struct HostResponse {
     pub health: Option<HealthWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<String>,
+    /// Snapshot this response was answered at. Additive (ADR 0042).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_version: Option<u64>,
+    /// Writer's current snapshot minus `manifest_version`. Zero when caught up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u64>,
 }
 
 /// Process-local operational signal ([ADR 0022](../../docs/decisions/0022-operational-signals.md)).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HealthWire {
     /// The host opened the log and is serving. This is a process-serving
     /// signal, not production, capacity, durability, or latency health: it
@@ -326,6 +340,9 @@ pub struct HealthWire {
     pub accepted: u64,
     /// Completed RPCs with `ok: false` since process start, excluding `health`.
     pub rejected: u64,
+    /// `writer`, `standby`, or `fenced` (ADR 0047 §5).
+    #[serde(default)]
+    pub role: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -353,6 +370,7 @@ struct HostInner {
     log: std::path::PathBuf,
     log_bytes_at_open: u64,
     open_replay: Duration,
+    min_version_timeout_ms: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -362,12 +380,12 @@ pub struct Host {
 
 impl Host {
     pub fn open(log: &Path, stream_bound: usize) -> Result<Self, String> {
-        Self::open_store(log, stream_bound, None, ObjectBackend::File)
+        Self::open_store(log, stream_bound, None, ObjectBackend::File, false)
     }
 
     /// Encrypted log (`MIKURAV3`). Same wire as [`Self::open`].
     pub fn open_with_keys(log: &Path, stream_bound: usize, keys: LogKeys) -> Result<Self, String> {
-        Self::open_store(log, stream_bound, Some(keys), ObjectBackend::File)
+        Self::open_store(log, stream_bound, Some(keys), ObjectBackend::File, false)
     }
 
     /// Open or create the log on `backend`. Writer start probes the
@@ -377,7 +395,20 @@ impl Host {
         stream_bound: usize,
         backend: ObjectBackend,
     ) -> Result<Self, String> {
-        Self::open_store(log, stream_bound, None, backend)
+        Self::open_store(log, stream_bound, None, backend, false)
+    }
+
+    /// Read-only standby at the current snapshot. Follows later commits.
+    pub fn open_standby(log: &Path, stream_bound: usize) -> Result<Self, String> {
+        Self::open_store(log, stream_bound, None, ObjectBackend::File, true)
+    }
+
+    pub fn open_standby_with(
+        log: &Path,
+        stream_bound: usize,
+        backend: ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_store(log, stream_bound, None, backend, true)
     }
 
     fn open_store(
@@ -385,17 +416,30 @@ impl Host {
         stream_bound: usize,
         keys: Option<LogKeys>,
         backend: ObjectBackend,
+        standby: bool,
     ) -> Result<Self, String> {
+        if standby && !log.exists() {
+            return Err("standby requires an existing log".into());
+        }
         let started = Instant::now();
-        let store = match (log.exists(), keys, backend) {
-            (true, Some(keys), ObjectBackend::File) => Store::open_with_keys(log, keys)?,
-            (false, Some(keys), ObjectBackend::File) => Store::create_with_keys(log, keys)?,
-            (true, None, ObjectBackend::File) => Store::open(log)?,
-            (false, None, ObjectBackend::File) => Store::create(log)?,
-            (true, Some(keys), backend) => Store::open_with_keys_on(log, keys, backend)?,
-            (false, Some(keys), backend) => Store::create_with_keys_on(log, keys, backend)?,
-            (true, None, backend) => Store::open_with(log, backend)?,
-            (false, None, backend) => Store::create_with(log, backend)?,
+        let store = match (standby, log.exists(), keys, backend) {
+            (true, true, Some(keys), ObjectBackend::File) => {
+                Store::open_read_only_with_keys(log, keys)?
+            }
+            (true, true, None, ObjectBackend::File) => Store::open_read_only(log)?,
+            (true, true, Some(keys), backend) => {
+                Store::open_read_only_with_keys_on(log, keys, backend)?
+            }
+            (true, true, None, backend) => Store::open_read_only_with(log, backend)?,
+            (true, false, _, _) => return Err("standby requires an existing log".into()),
+            (false, true, Some(keys), ObjectBackend::File) => Store::open_with_keys(log, keys)?,
+            (false, false, Some(keys), ObjectBackend::File) => Store::create_with_keys(log, keys)?,
+            (false, true, None, ObjectBackend::File) => Store::open(log)?,
+            (false, false, None, ObjectBackend::File) => Store::create(log)?,
+            (false, true, Some(keys), backend) => Store::open_with_keys_on(log, keys, backend)?,
+            (false, false, Some(keys), backend) => Store::create_with_keys_on(log, keys, backend)?,
+            (false, true, None, backend) => Store::open_with(log, backend)?,
+            (false, false, None, backend) => Store::create_with(log, backend)?,
         };
         let open_replay = started.elapsed();
         let log_bytes_at_open = std::fs::metadata(log).map(|meta| meta.len()).unwrap_or(0);
@@ -413,6 +457,7 @@ impl Host {
                 log: log.to_path_buf(),
                 log_bytes_at_open,
                 open_replay,
+                min_version_timeout_ms: AtomicU64::new(DEFAULT_REQUEST_TIMEOUT_MS),
             }),
         })
     }
@@ -431,6 +476,17 @@ impl Host {
         self.inner.request_bound.store(bound, Ordering::Relaxed);
         self.inner
             .request_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Bound a `min_version` wait and a `promote` claim retry.
+    pub fn set_min_version_timeout(&self, timeout: Duration) -> Result<(), String> {
+        if timeout.is_zero() {
+            return Err("minimum-version timeout must be greater than zero".into());
+        }
+        self.inner
+            .min_version_timeout_ms
             .store(timeout.as_millis() as u64, Ordering::Relaxed);
         Ok(())
     }
@@ -478,8 +534,29 @@ impl Host {
         bearer: Option<&str>,
         backend: ObjectBackend,
     ) -> Result<(Self, TcpListener), String> {
+        Self::listen_on(log, stream_bound, addr, bearer, backend, false)
+    }
+
+    pub fn listen_standby_with(
+        log: &Path,
+        stream_bound: usize,
+        addr: SocketAddr,
+        bearer: Option<&str>,
+        backend: ObjectBackend,
+    ) -> Result<(Self, TcpListener), String> {
+        Self::listen_on(log, stream_bound, addr, bearer, backend, true)
+    }
+
+    fn listen_on(
+        log: &Path,
+        stream_bound: usize,
+        addr: SocketAddr,
+        bearer: Option<&str>,
+        backend: ObjectBackend,
+        standby: bool,
+    ) -> Result<(Self, TcpListener), String> {
         let listener = Self::bind(addr, bearer)?;
-        let host = Self::open_with(log, stream_bound, backend)?;
+        let host = Self::open_store(log, stream_bound, None, backend, standby)?;
         if let Some(secret) = bearer {
             host.require_bearer(secret)?;
         }
@@ -497,11 +574,30 @@ impl Host {
     }
 
     pub fn handle(&self, request: HostRequest) -> HostResponse {
+        self.handle_with(request, None)
+    }
+
+    fn handle_with(&self, request: HostRequest, min_version: Option<u64>) -> HostResponse {
         let scrape = matches!(request, HostRequest::Health | HostRequest::Metrics);
         let op = request_op(&request);
         let namespace = request_namespace(&request);
         let started = Instant::now();
+        if let Err(error) = self.catch_up_wait(min_version) {
+            return self.finish(scrape, op, namespace.as_deref(), started, fail(error));
+        }
         let response = self.dispatch(request);
+        self.finish(scrape, op, namespace.as_deref(), started, response)
+    }
+
+    fn finish(
+        &self,
+        scrape: bool,
+        op: &'static str,
+        namespace: Option<&str>,
+        started: Instant,
+        mut response: HostResponse,
+    ) -> HostResponse {
+        self.stamp(&mut response);
         if !scrape {
             if response.ok {
                 self.inner.accepted.fetch_add(1, Ordering::Relaxed);
@@ -510,9 +606,72 @@ impl Host {
             }
             self.inner
                 .metrics
-                .observe_rpc(op, namespace.as_deref(), started.elapsed());
+                .observe_rpc(op, namespace, started.elapsed());
         }
         response
+    }
+
+    fn min_version_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.inner
+                .min_version_timeout_ms
+                .load(Ordering::Relaxed)
+                .max(1),
+        )
+    }
+
+    fn catch_up_wait(&self, min_version: Option<u64>) -> Result<(), String> {
+        if min_version.is_none() && !self.inner.store.read()?.is_read_only() {
+            return Ok(());
+        }
+        let deadline = Instant::now() + self.min_version_timeout();
+        loop {
+            {
+                let mut store = self.inner.store.write()?;
+                if store.is_read_only() {
+                    store.follow()?;
+                }
+                let serving = store.manifest_version();
+                if min_version.map(|min| serving >= min).unwrap_or(true) {
+                    return Ok(());
+                }
+                if !store.is_read_only() {
+                    return Err(format!(
+                        "minimum manifest version {} not reached (serving {serving})",
+                        min_version.unwrap_or(0)
+                    ));
+                }
+            }
+            if Instant::now() >= deadline {
+                let serving = self.inner.store.read()?.manifest_version();
+                return Err(format!(
+                    "minimum manifest version {} not reached (serving {serving})",
+                    min_version.unwrap_or(0)
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn stamp(&self, response: &mut HostResponse) {
+        let Ok(store) = self.inner.store.read() else {
+            return;
+        };
+        let version = store.manifest_version();
+        response.manifest_version = Some(version);
+        if let Ok(current) = store.current_manifest_version() {
+            response.behind = Some(current.saturating_sub(version));
+        }
+    }
+
+    fn role_of(store: &Store) -> String {
+        if store.is_fenced() {
+            "fenced".into()
+        } else if store.is_read_only() {
+            "standby".into()
+        } else {
+            "writer".into()
+        }
     }
 
     fn note_overload(&self) {
@@ -536,6 +695,18 @@ impl Host {
     /// the log is written and synced and wait only for the apply. A batch
     /// the split path does not cover runs on the exclusive path.
     fn ingest_batch(&self, records: Vec<ObjectRecord>) -> HostResponse {
+        {
+            let store = match self.inner.store.read() {
+                Ok(store) => store,
+                Err(error) => return fail(error),
+            };
+            if store.is_fenced() {
+                return fail(format!("{LOG_FENCED}: writer lost the manifest swap"));
+            }
+            if store.is_read_only() {
+                return fail("standby refuses writes");
+            }
+        }
         match self.inner.store.append_batch(records) {
             mikura::BatchWrite::Done(result) => ack(result),
             mikura::BatchWrite::Exclusive(records) => {
@@ -548,6 +719,18 @@ impl Host {
         &self,
         f: impl FnOnce(&mut Store, &mut StreamIngest) -> HostResponse,
     ) -> HostResponse {
+        {
+            let store = match self.inner.store.read() {
+                Ok(store) => store,
+                Err(error) => return fail(error),
+            };
+            if store.is_fenced() {
+                return fail(format!("{LOG_FENCED}: writer lost the manifest swap"));
+            }
+            if store.is_read_only() {
+                return fail("standby refuses writes");
+            }
+        }
         let _permit = match self.inner.scheduler.acquire_write() {
             Ok(permit) => permit,
             Err(error) => return fail(error),
@@ -556,6 +739,12 @@ impl Host {
             Ok(guard) => guard,
             Err(error) => return fail(error),
         };
+        if store.is_fenced() {
+            return fail(format!("{LOG_FENCED}: writer lost the manifest swap"));
+        }
+        if store.is_read_only() {
+            return fail("standby refuses writes");
+        }
         let mut stream = match self.inner.stream.lock() {
             Ok(guard) => guard,
             Err(_) => return fail("stream lock poisoned"),
@@ -692,6 +881,8 @@ impl Host {
                         load: None,
                         health: None,
                         metrics: None,
+                        manifest_version: None,
+                        behind: None,
                     },
                     Err(error) => fail(error),
                 })
@@ -712,6 +903,8 @@ impl Host {
                         load: Some(record),
                         health: None,
                         metrics: None,
+                        manifest_version: None,
+                        behind: None,
                     },
                     Err(error) => fail(error),
                 }
@@ -727,8 +920,11 @@ impl Host {
                     committed_pages: store.committed_pages(),
                     accepted: self.inner.accepted.load(Ordering::Relaxed),
                     rejected: self.inner.rejected.load(Ordering::Relaxed),
+                    role: Self::role_of(store),
                 }),
                 metrics: None,
+                manifest_version: None,
+                behind: None,
             }),
             HostRequest::Metrics => {
                 // Snapshot before read admission so an active writer is visible.
@@ -741,7 +937,17 @@ impl Host {
                     load: None,
                     health: None,
                     metrics: Some(self.render_metrics(store, snap)),
+                    manifest_version: None,
+                    behind: None,
                 })
+            }
+            HostRequest::Promote => {
+                let bound = self.min_version_timeout();
+                let mut store = match self.inner.store.write() {
+                    Ok(store) => store,
+                    Err(error) => return fail(error),
+                };
+                ack(store.promote(bound))
             }
         }
     }
@@ -791,7 +997,7 @@ impl Host {
         if let Err(error) = self.check_token(envelope.token.as_deref()) {
             return fail(error);
         }
-        self.handle(envelope.request)
+        self.handle_with(envelope.request, envelope.min_version)
     }
 
     pub fn serve_one(&self, mut stream: TcpStream) -> Result<(), String> {
@@ -992,6 +1198,8 @@ fn ok() -> HostResponse {
         load: None,
         health: None,
         metrics: None,
+        manifest_version: None,
+        behind: None,
     }
 }
 
@@ -1004,6 +1212,8 @@ fn fail(error: impl ToString) -> HostResponse {
         load: None,
         health: None,
         metrics: None,
+        manifest_version: None,
+        behind: None,
     }
 }
 
@@ -1020,6 +1230,7 @@ fn request_op(request: &HostRequest) -> &'static str {
         HostRequest::Load { .. } => "load",
         HostRequest::Health => "health",
         HostRequest::Metrics => "metrics",
+        HostRequest::Promote => "promote",
     }
 }
 
@@ -1035,7 +1246,10 @@ fn request_namespace(request: &HostRequest) -> Option<String> {
         | HostRequest::Hide { namespace, .. }
         | HostRequest::Load { namespace, .. } => Some(namespace.clone()),
         HostRequest::Evaluate { request } => Some(request.namespace.clone()),
-        HostRequest::IngestStreamFlush | HostRequest::Health | HostRequest::Metrics => None,
+        HostRequest::IngestStreamFlush
+        | HostRequest::Health
+        | HostRequest::Metrics
+        | HostRequest::Promote => None,
     }
 }
 

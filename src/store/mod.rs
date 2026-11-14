@@ -496,6 +496,52 @@ impl Store {
         Self::open_writer(log, LogWriter::open_with_keys(log, sync, keys)?, None)
     }
 
+    /// Open at the current snapshot without taking the writer role
+    /// (ADR 0047 §5). Does not probe, collect, or lock.
+    pub fn open_read_only(log: &Path) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_read_only(log, SyncPolicy::Group(32))?,
+            None,
+        )
+    }
+
+    pub fn open_read_only_with(
+        log: &Path,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_read_only_with_backend(log, SyncPolicy::Group(32), backend)?,
+            None,
+        )
+    }
+
+    pub fn open_read_only_with_keys(log: &Path, keys: LogKeys) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_read_only_with_keys(log, SyncPolicy::Group(32), keys)?,
+            None,
+        )
+    }
+
+    pub fn open_read_only_with_keys_on(
+        log: &Path,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_writer(
+            log,
+            LogWriter::open_read_only_with_keys_and_backend(
+                log,
+                SyncPolicy::Group(32),
+                keys,
+                backend,
+            )?,
+            None,
+        )
+    }
+
     fn open_writer(
         log: &Path,
         writer: LogWriter,
@@ -2426,6 +2472,91 @@ impl Store {
     /// together with the uncommitted writer head.
     pub fn committed_pages(&self) -> u32 {
         self.writer.committed_pages()
+    }
+
+    /// Snapshot version this process last adopted. Zero on a superblock log.
+    pub fn manifest_version(&self) -> u64 {
+        self.writer.snapshot_version()
+    }
+
+    /// Highest snapshot currently named in the object namespace.
+    pub fn current_manifest_version(&self) -> Result<u64, String> {
+        Ok(self
+            .writer
+            .live_manifest()?
+            .map(|manifest| manifest.version)
+            .unwrap_or(0))
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.writer.is_read_only()
+    }
+
+    pub fn is_fenced(&self) -> bool {
+        self.writer.is_fenced()
+    }
+
+    /// Adopt a later snapshot and apply its new pages to the live maps.
+    /// No-op when this process already serves the current version.
+    pub fn follow(&mut self) -> Result<(), String> {
+        let Some(manifest) = self.writer.live_manifest()? else {
+            return Ok(());
+        };
+        if manifest.version <= self.writer.snapshot_version() {
+            return Ok(());
+        }
+        let after = self.writer.committed_pages();
+        self.writer.adopt_snapshot(manifest);
+        for record in self.writer.records_after(&self.log, after)? {
+            self.apply_logged(record)?;
+        }
+        self.dirty.clear();
+        Ok(())
+    }
+
+    /// Wait until this process serves `min` or `bound` elapses. Never
+    /// answers from an older snapshot (ADR 0047 §5).
+    pub fn wait_for_version(&mut self, min: u64, bound: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + bound;
+        loop {
+            self.follow()?;
+            if self.manifest_version() >= min {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "minimum manifest version {min} not reached (serving {})",
+                    self.manifest_version()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Take the writer role. The successful claim swap fences the previous
+    /// writer. While still read-only, a lost swap is retried until `bound`.
+    pub fn promote(&mut self, bound: Duration) -> Result<(), String> {
+        if self.writer.is_fenced() {
+            return Err(format!(
+                "{}: writer lost the manifest swap",
+                crate::LOG_FENCED
+            ));
+        }
+        if !self.writer.is_read_only() {
+            return Ok(());
+        }
+        self.writer.probe_for_write()?;
+        let deadline = Instant::now() + bound;
+        loop {
+            self.follow()?;
+            if self.writer.claim_writer()? {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("promote did not win the manifest swap".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// `(committed_pages, written_pages, current page used)`. Cursors bind
