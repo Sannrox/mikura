@@ -7,7 +7,7 @@
 - Amends: none. [#122](https://github.com/Sannrox/mikura/issues/122) stays no-action for the two-object seed.
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR 0039](0039-multi-key-sort.md) (up to three sort keys), [ADR 0043](0043-typed-ref-values.md) (`bbox`, `tsref` range overlap, `Sort.nearest`), [ADR 0051](0051-ranked-text-stays-absent.md) (ranked full-text stays fail closed; no inverted projection), [ADR 0052](0052-explorer-text-stays-eq.md) (prefix and contains stay fail closed for the product-loop Explorer fixture)
+- Amended by: [ADR 0039](0039-multi-key-sort.md) (up to three sort keys), [ADR 0043](0043-typed-ref-values.md) (`bbox`, `tsref` range overlap, `Sort.nearest`), [ADR 0051](0051-ranked-text-stays-absent.md) (ranked full-text stays fail closed; no inverted projection), [ADR 0052](0052-explorer-text-stays-eq.md) (prefix and contains stay fail closed for the product-loop Explorer fixture), [ADR 0053](0053-set-combinators-stay-absent.md) (set union, intersection, and difference stay fail closed)
 
 ## Context
 

@@ -410,7 +410,10 @@ brokers stay out.
    The product-loop Explorer queries stay exact-match `tier` and hop
    `affects`; prefix and contains stay fail closed
    ([ADR 0052](decisions/0052-explorer-text-stays-eq.md)).
-   Set union / intersection / difference, prefix, and regex fail closed
+   Set union / intersection / difference stay fail closed; same-kind
+   combinations stay `and` / `or` / `not`
+   ([ADR 0053](decisions/0053-set-combinators-stay-absent.md)).
+   Prefix and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
    ([#122](https://github.com/Sannrox/mikura/issues/122)).

@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-set-combinators-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: product-loop and/or/not versus set combinators. Not the store of record."
+
+[[bin]]
+name = "mikura-set-combinators-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
