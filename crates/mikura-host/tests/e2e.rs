@@ -3200,3 +3200,170 @@ fn process_object_backend_serves_after_probe() {
     assert!(health.ok, "{health:?}");
     host.stop();
 }
+
+fn rec_item(key: &str, n: &str) -> serde_json::Value {
+    serde_json::json!({
+        "gen": 1,
+        "namespace": "ns",
+        "kind": "Item",
+        "key": key,
+        "hidden": false,
+        "props": {"n": n}
+    })
+}
+
+#[test]
+fn process_standby_min_version_read_sees_the_writer_commit() {
+    let tmp = TempLog::new("standby-min");
+    let writer = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let wrote = writer.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("a", "1")]
+    }));
+    assert!(wrote.ok, "{wrote:?}");
+    let version = wrote.manifest_version.expect("manifest version");
+    let standby = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--standby", "--min-version-timeout-ms", "2000"],
+    );
+    let health = standby.rpc(&serde_json::json!({"op": "health"}));
+    assert_eq!(health.health.expect("health").role, "standby");
+    let got = standby.rpc(&serde_json::json!({
+        "op": "load",
+        "namespace": "ns",
+        "kind": "Item",
+        "key": "a",
+        "min_version": version
+    }));
+    assert!(got.ok, "{got:?}");
+    assert_eq!(
+        got.load
+            .as_ref()
+            .and_then(|row| row.props.get("n"))
+            .map(String::as_str),
+        Some("1")
+    );
+    standby.stop();
+    writer.stop();
+}
+
+#[test]
+fn process_promote_fences_the_writer() {
+    let tmp = TempLog::new("standby-promote");
+    let writer = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let wrote = writer.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("a", "1")]
+    }));
+    assert!(wrote.ok, "{wrote:?}");
+    let standby = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--standby", "--min-version-timeout-ms", "2000"],
+    );
+    let promoted = standby.rpc(&serde_json::json!({"op": "promote"}));
+    assert!(promoted.ok, "{promoted:?}");
+    assert_eq!(
+        standby
+            .rpc(&serde_json::json!({"op": "health"}))
+            .health
+            .unwrap()
+            .role,
+        "writer"
+    );
+    let fenced = writer.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("b", "2")]
+    }));
+    assert!(!fenced.ok, "{fenced:?}");
+    assert!(
+        fenced.error.as_deref().unwrap_or("").contains("fenced"),
+        "{fenced:?}"
+    );
+    assert_eq!(
+        writer
+            .rpc(&serde_json::json!({"op": "health"}))
+            .health
+            .unwrap()
+            .role,
+        "fenced"
+    );
+    let next = standby.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("c", "3")]
+    }));
+    assert!(next.ok, "{next:?}");
+    let load = standby.rpc(&serde_json::json!({
+        "op": "load",
+        "namespace": "ns",
+        "kind": "Item",
+        "key": "c"
+    }));
+    assert!(load.ok, "{load:?}");
+    standby.stop();
+    writer.stop();
+}
+
+#[test]
+fn process_two_promotes_leave_one_writer() {
+    let tmp = TempLog::new("standby-two");
+    let seed = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let wrote = seed.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("a", "1")]
+    }));
+    assert!(wrote.ok, "{wrote:?}");
+    seed.stop();
+    let first = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--standby", "--min-version-timeout-ms", "2000"],
+    );
+    let second = HostProcess::spawn_args(
+        tmp.path(),
+        "127.0.0.1:0",
+        8,
+        None,
+        &["--standby", "--min-version-timeout-ms", "2000"],
+    );
+    let a = first.rpc(&serde_json::json!({"op": "promote"}));
+    let b = second.rpc(&serde_json::json!({"op": "promote"}));
+    assert!(a.ok, "{a:?}");
+    assert!(b.ok, "{b:?}");
+    let first_role = first
+        .rpc(&serde_json::json!({"op": "health"}))
+        .health
+        .unwrap()
+        .role;
+    let second_role = second
+        .rpc(&serde_json::json!({"op": "health"}))
+        .health
+        .unwrap()
+        .role;
+    assert_eq!(first_role, "fenced");
+    assert_eq!(second_role, "writer");
+    let win = second.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("w", "1")]
+    }));
+    assert!(win.ok, "{win:?}");
+    let lose = first.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("l", "1")]
+    }));
+    assert!(!lose.ok, "{lose:?}");
+    let again = first.rpc(&serde_json::json!({
+        "op": "ingest_batch",
+        "records": [rec_item("l2", "2")]
+    }));
+    assert!(!again.ok, "{again:?}");
+    first.stop();
+    second.stop();
+}

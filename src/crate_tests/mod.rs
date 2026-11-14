@@ -37,6 +37,7 @@ mod schema_migrate;
 mod serving_bar;
 mod split_commit;
 mod stability;
+mod standby;
 mod top_page;
 mod tuning;
 mod typed_refs;

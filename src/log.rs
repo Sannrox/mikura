@@ -127,6 +127,11 @@ pub struct LogWriter {
     checkpoint_pages: u32,
     pending_pages: Vec<Vec<u8>>,
     encrypted_log: bool,
+    /// True when this process opened without the writer probe or lock
+    /// (ADR 0047 §5). Writes fail closed until [`Self::claim_writer`].
+    read_only: bool,
+    /// True after a writer-mode swap lost the version precondition.
+    fenced: AtomicBool,
     #[cfg(test)]
     stage_hook: Option<StageHook>,
     #[cfg(test)]
@@ -284,11 +289,17 @@ impl LogWriter {
     }
 
     pub fn open(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
-        Self::open_inner(path, sync, None, crate::objects::ObjectBackend::File)
+        Self::open_inner(path, sync, None, crate::objects::ObjectBackend::File, false)
     }
 
     pub fn open_with_keys(path: &Path, sync: SyncPolicy, keys: LogKeys) -> Result<Self, String> {
-        Self::open_inner(path, sync, Some(keys), crate::objects::ObjectBackend::File)
+        Self::open_inner(
+            path,
+            sync,
+            Some(keys),
+            crate::objects::ObjectBackend::File,
+            false,
+        )
     }
 
     pub fn open_with_backend(
@@ -296,7 +307,7 @@ impl LogWriter {
         sync: SyncPolicy,
         backend: crate::objects::ObjectBackend,
     ) -> Result<Self, String> {
-        Self::open_inner(path, sync, None, backend)
+        Self::open_inner(path, sync, None, backend, false)
     }
 
     pub fn open_with_keys_and_backend(
@@ -305,7 +316,44 @@ impl LogWriter {
         keys: LogKeys,
         backend: crate::objects::ObjectBackend,
     ) -> Result<Self, String> {
-        Self::open_inner(path, sync, Some(keys), backend)
+        Self::open_inner(path, sync, Some(keys), backend, false)
+    }
+
+    /// Open at the current snapshot without the writer lock, probe, or
+    /// collection (ADR 0047 §5, §12).
+    pub fn open_read_only(path: &Path, sync: SyncPolicy) -> Result<Self, String> {
+        Self::open_inner(path, sync, None, crate::objects::ObjectBackend::File, true)
+    }
+
+    pub fn open_read_only_with_keys(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+    ) -> Result<Self, String> {
+        Self::open_inner(
+            path,
+            sync,
+            Some(keys),
+            crate::objects::ObjectBackend::File,
+            true,
+        )
+    }
+
+    pub fn open_read_only_with_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_inner(path, sync, None, backend, true)
+    }
+
+    pub fn open_read_only_with_keys_and_backend(
+        path: &Path,
+        sync: SyncPolicy,
+        keys: LogKeys,
+        backend: crate::objects::ObjectBackend,
+    ) -> Result<Self, String> {
+        Self::open_inner(path, sync, Some(keys), backend, true)
     }
 
     fn blank(file: File, sync: SyncPolicy, committed: u32) -> Self {
@@ -336,6 +384,8 @@ impl LogWriter {
             checkpoint_pages: 0,
             pending_pages: Vec::new(),
             encrypted_log: false,
+            read_only: false,
+            fenced: AtomicBool::new(false),
             #[cfg(test)]
             stage_hook: None,
             #[cfg(test)]
@@ -348,9 +398,16 @@ impl LogWriter {
         sync: SyncPolicy,
         keys: Option<LogKeys>,
         backend: crate::objects::ObjectBackend,
+        read_only: bool,
     ) -> Result<Self, String> {
-        let mut file = crate::fault::open_rw(path)?;
-        lock_writer(&file, path)?;
+        let mut file = if read_only {
+            crate::fault::open_read(path)?
+        } else {
+            crate::fault::open_rw(path)?
+        };
+        if !read_only {
+            lock_writer(&file, path)?;
+        }
         let mut superblock = vec![0u8; PAGE];
         file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
         std::io::Read::read_exact(&mut file, &mut superblock).map_err(|e| e.to_string())?;
@@ -361,7 +418,10 @@ impl LogWriter {
             );
         }
         if magic == V4_MAGIC {
-            return Self::open_manifest(file, path, &superblock, sync, keys, backend);
+            return Self::open_manifest(file, path, &superblock, sync, keys, backend, read_only);
+        }
+        if read_only {
+            return Err("read-only open requires a swap-committed log".into());
         }
         if magic != MAGIC && magic != V3_MAGIC {
             return Err("bad magic".into());
@@ -390,6 +450,7 @@ impl LogWriter {
         sync: SyncPolicy,
         keys: Option<LogKeys>,
         backend: crate::objects::ObjectBackend,
+        read_only: bool,
     ) -> Result<Self, String> {
         let encrypted = stub.get(STUB_FLAG_OFF).copied().unwrap_or(0) & STUB_ENCRYPTED != 0;
         if encrypted && keys.is_none() {
@@ -403,9 +464,13 @@ impl LogWriter {
         let mut manifest = load_current_manifest(&objects, encrypted)?;
         // One writer (ADR 0047). Collection is a write: the swap fences a
         // displaced collector. The stub flock is local and does not cover
-        // an HTTP namespace.
-        let collect_fsyncs = collect_unreferenced_objects(&objects, &mut manifest, false)?;
-        let probe = objects.probe()?;
+        // an HTTP namespace. A read-only opener never probes or collects.
+        let collect_fsyncs = if read_only {
+            0
+        } else {
+            collect_unreferenced_objects(&objects, &mut manifest, false)?
+        };
+        let probe = if read_only { 0 } else { objects.probe()? };
         let mut writer = Self::blank(file, sync, manifest.committed_pages);
         writer.objects = Some(objects);
         writer.manifest_version = manifest.version;
@@ -416,6 +481,7 @@ impl LogWriter {
         writer.prefix_key = manifest.prefix_key;
         writer.checkpoint_pages = manifest.checkpoint_pages;
         writer.encrypted_log = encrypted;
+        writer.read_only = read_only;
         writer.fsync_count += probe + collect_fsyncs;
         if let Some(keys) = keys {
             writer.install_keys(Arc::new(keys))?;
@@ -679,6 +745,61 @@ impl LogWriter {
         self.manifest_version
     }
 
+    pub(crate) fn live_manifest(&self) -> Result<Option<crate::objects::Manifest>, String> {
+        let Some(objects) = self.objects.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(load_current_manifest(objects, self.encrypted_log)?))
+    }
+
+    pub(crate) fn adopt_snapshot(&mut self, mut manifest: crate::objects::Manifest) {
+        self.committed = manifest.committed_pages;
+        self.written = manifest.committed_pages;
+        self.synced = manifest.committed_pages;
+        self.manifest_version = manifest.version;
+        self.segments = std::mem::take(&mut manifest.segments);
+        self.prefix_segments = std::mem::take(&mut manifest.prefix_segments);
+        self.checkpoint_key = manifest.checkpoint_key;
+        self.projection_key = manifest.projection_key;
+        self.prefix_key = manifest.prefix_key;
+        self.checkpoint_pages = manifest.checkpoint_pages;
+    }
+
+    /// Writer-start probe. Call once when promoting a read-only opener.
+    pub(crate) fn probe_for_write(&mut self) -> Result<(), String> {
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "promote requires a swap-committed log".to_string())?;
+        self.fsync_count += store.probe()?;
+        Ok(())
+    }
+
+    /// Compare-and-swap the current snapshot to fence the previous writer.
+    /// `Ok(true)` this process owns the next version. `Ok(false)` another
+    /// writer landed first; this opener stays read-only.
+    pub(crate) fn claim_writer(&mut self) -> Result<bool, String> {
+        if !self.read_only {
+            return Ok(true);
+        }
+        let store = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| "promote requires a swap-committed log".to_string())?;
+        let snapshot = self.snapshot_manifest();
+        let bytes = crate::objects::encode_manifest(&snapshot)?;
+        match store.cas(self.manifest_version, &bytes) {
+            Ok((version, fsyncs)) => {
+                self.manifest_version = version;
+                self.fsync_count += fsyncs;
+                self.read_only = false;
+                Ok(true)
+            }
+            Err(err) if err.contains(crate::LOG_FENCED) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     pub(crate) fn checkpoint_object_key(&self) -> &str {
         &self.checkpoint_key
     }
@@ -716,12 +837,47 @@ impl LogWriter {
         self.failed.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub(crate) fn is_fenced(&self) -> bool {
+        if self.fenced.load(Ordering::Relaxed) {
+            return true;
+        }
+        if self.read_only {
+            return false;
+        }
+        matches!(
+            self.live_manifest(),
+            Ok(Some(manifest)) if manifest.version > self.manifest_version
+        )
+    }
+
     /// Refuse every further write until the log is reopened.
     pub fn poison(&mut self) {
         self.failed.store(true, Ordering::Relaxed);
     }
 
+    fn note_cas_err(&self, err: &str) {
+        self.failed.store(true, Ordering::Relaxed);
+        if err.contains(crate::LOG_FENCED) {
+            self.fenced.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn ensure_usable(&self) -> Result<(), String> {
+        if self.read_only {
+            return Err("read-only store refuses writes".into());
+        }
+        if self.is_fenced() {
+            self.fenced.store(true, Ordering::Relaxed);
+            self.failed.store(true, Ordering::Relaxed);
+            return Err(format!(
+                "{}: writer lost the manifest swap",
+                crate::LOG_FENCED
+            ));
+        }
         if self.is_failed() {
             return Err(UNCERTAIN_COMMIT.into());
         }
@@ -1076,6 +1232,39 @@ impl LogWriter {
         Ok(paged)
     }
 
+    /// Committed records on pages `(after_page + 1)..=committed_pages` of the
+    /// snapshot this writer has adopted, not a later snapshot on disk.
+    pub(crate) fn records_after(
+        &self,
+        path: &Path,
+        after_page: u32,
+    ) -> Result<Vec<ObjectRecord>, String> {
+        if self.objects.is_none() {
+            return read_records_after_with_keys(path, after_page, self.keys());
+        }
+        let deks = self.keys.is_some().then(|| {
+            self.deks
+                .iter()
+                .filter(|(tenant, _)| self.tenant_key_usable(tenant))
+                .map(|(tenant, dek)| (tenant.clone(), dek.clone()))
+                .collect::<HashMap<_, _>>()
+        });
+        let mut records = Vec::new();
+        visit_manifest_pages(
+            &objects_dir(path),
+            ManifestCover {
+                prefix: &self.prefix_segments,
+                tail: &self.segments,
+                checkpoint_pages: self.checkpoint_pages,
+                committed: self.committed,
+            },
+            after_page,
+            deks.as_ref(),
+            |_, page| records.extend(page),
+        )?;
+        Ok(records)
+    }
+
     /// Collect unreferenced objects under this writer's authority (ADR 0047 §11).
     ///
     /// The successor snapshot is the owner record. A process that loses the
@@ -1355,9 +1544,11 @@ impl LogWriter {
         };
         let mut snapshot = self.snapshot_manifest();
         let bytes = crate::objects::encode_manifest(&snapshot)?;
-        let (version, fsyncs) = store.cas(self.manifest_version, &bytes).inspect_err(|_| {
-            self.failed.store(true, Ordering::Relaxed);
-        })?;
+        let (version, fsyncs) = store
+            .cas(self.manifest_version, &bytes)
+            .inspect_err(|err| {
+                self.note_cas_err(err);
+            })?;
         snapshot.version = version;
         self.manifest_version = version;
         self.fsync_count += fsyncs;
@@ -1443,8 +1634,8 @@ impl LogWriter {
         let (version, cas_fsyncs) =
             store
                 .cas(self.manifest_version, &encoded)
-                .inspect_err(|_| {
-                    self.failed.store(true, Ordering::Relaxed);
+                .inspect_err(|err| {
+                    self.note_cas_err(err);
                 })?;
         fsyncs += cas_fsyncs;
         staged.fsyncs = fsyncs;

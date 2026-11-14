@@ -565,7 +565,7 @@ connections remain in the OS listen backlog
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`, `metrics`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`, `metrics`, `promote`. Evaluate accepts an
 optional exact-match `filter` or a structured `predicate` tree (`op` =
 `eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
 fails closed. Omit or `null` filter and predicate means all visible roots.
@@ -594,6 +594,14 @@ Host `health` `ready` means the log is open and the process is serving. It
 stays true after rejected RPCs and carries no capacity, durability, or
 latency check, so nothing should gate traffic on it until published SLOs
 back a readiness that can fail ([ADR 0022](decisions/0022-operational-signals.md)).
+`health.role` is `writer`, `standby`, or `fenced`. Every response carries
+`manifest_version` (the snapshot it was answered at) and `behind` (the
+writer's current snapshot minus that version). `--standby` opens read-only,
+follows later snapshots, and refuses writes until `op: promote`. A request
+may name `min_version`; the host waits up to `--min-version-timeout-ms`
+(default the request-timeout) and then answers or refuses, never below it
+([ADR 0047](decisions/0047-object-storage-store-of-record.md) §5). Promote's
+claim swap fences the previous writer, which then refuses writes.
 A JSON line larger than `--request-bound` (default 1 MiB) fails closed
 with `RequestBound`. Assembling that line is a wall-clock budget of
 `--request-timeout-ms` (default 5 s), not an idle gap between bytes;
@@ -637,24 +645,24 @@ Acknowledgement is the successful manifest swap. The `file` backend
 survives process crash and restart on the same disk; durability still
 ends at that disk. The `object` backend stores segments and the snapshot
 on the configured store; process crash and restart reopen through the
-local stub and locator. Reattaching a replacement host from the endpoint
-alone is later ([#360](https://github.com/Sannrox/mikura/issues/360)).
-Credentials and the storage URL come from the deployment (`--object-url`,
-`MIKURA_OBJECT_TOKEN`); this crate holds no defaults. A bearer token is
-accepted only on a loopback endpoint. On disk loss of
-the file backend, recovery is the last backup copy
+local stub and locator. Credentials and the storage URL come from the
+deployment (`--object-url`, `MIKURA_OBJECT_TOKEN`); this crate holds no
+defaults. A bearer token is accepted only on a loopback endpoint. On disk
+loss of the file backend, recovery is the last backup copy
 ([ADR 0037](decisions/0037-online-backup-and-restore.md)). Takeover is
-process start: open the current manifest, load the newest valid
-projection, replay the tail. Product projection decode on reopen is
-unchanged (local sidecar / checkpoint); spike 016 measured 850 ms to
-read a 740 MiB checkpoint object at 10⁷ class size after dropping the
-page cache. Storing projections as derived objects is
-[#361](https://github.com/Sannrox/mikura/issues/361).
+process start or `op: promote` of a `--standby` host: open the current
+manifest, load the newest valid projection, replay the tail, then claim
+the next snapshot. A read-only opener does not probe or collect. Product
+projection decode on reopen uses the snapshot-named derived objects when
+present ([#361](https://github.com/Sannrox/mikura/issues/361)); spike 016
+measured 850 ms to read a 740 MiB checkpoint object at 10⁷ class size
+after dropping the page cache.
 
 ## What v1 does not do
 
-- Multi-process replication (still out: one writer at a time; followers
-  were not selected. The published data-loss miss is
+- Multi-process replication (still out: one writer at a time; a
+  `--standby` host is a read-only opener of the same snapshot, not a
+  replica stream. The published data-loss miss is
   [ADR 0047](decisions/0047-object-storage-store-of-record.md), not a
   replica protocol;
   [#56](https://github.com/Sannrox/mikura/issues/56),

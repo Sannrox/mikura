@@ -21,8 +21,10 @@ struct Args {
     stream_bound: usize,
     request_bound: usize,
     request_timeout_ms: u64,
+    min_version_timeout_ms: u64,
     bearer: Option<String>,
     backend: ObjectBackend,
+    standby: bool,
 }
 
 fn main() -> ExitCode {
@@ -47,24 +49,35 @@ fn run() -> Result<(), String> {
         Some(args) => args,
         None => {
             println!(
-                "mikura-host {} {}\nusage: mikura-host --log PATH [--backend file|object] [--object-url URL] [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--bearer TOKEN]\n       mikura-host backup --log SRC --to DST [--incremental]\n       mikura-host verify --log PATH\n       mikura-host restore --from BACKUP --to DST [--point ID]\nobject backend token: {OBJECT_TOKEN_ENV} (no default URL or token)\nclose stdin to stop; uncommitted stream pushes are not flushed",
+                "mikura-host {} {}\nusage: mikura-host --log PATH [--backend file|object] [--object-url URL] [--bind ADDR] [--stream-bound N] [--request-bound N] [--request-timeout-ms N] [--min-version-timeout-ms N] [--standby] [--bearer TOKEN]\n       mikura-host backup --log SRC --to DST [--incremental]\n       mikura-host verify --log PATH\n       mikura-host restore --from BACKUP --to DST [--point ID]\nobject backend token: {OBJECT_TOKEN_ENV} (no default URL or token)\nclose stdin to stop; uncommitted stream pushes are not flushed",
                 env!("MIKURA_GIT_VERSION"),
                 env!("MIKURA_GIT_COMMIT")
             );
             return Ok(());
         }
     };
-    let (host, listener) = Host::listen_with(
-        &args.log,
-        args.stream_bound,
-        args.bind,
-        args.bearer.as_deref(),
-        args.backend,
-    )?;
+    let (host, listener) = if args.standby {
+        Host::listen_standby_with(
+            &args.log,
+            args.stream_bound,
+            args.bind,
+            args.bearer.as_deref(),
+            args.backend,
+        )?
+    } else {
+        Host::listen_with(
+            &args.log,
+            args.stream_bound,
+            args.bind,
+            args.bearer.as_deref(),
+            args.backend,
+        )?
+    };
     host.set_request_limits(
         args.request_bound,
         Duration::from_millis(args.request_timeout_ms),
     )?;
+    host.set_min_version_timeout(Duration::from_millis(args.min_version_timeout_ms))?;
     let bound = listener
         .local_addr()
         .map_err(|err| format!("listener address: {err}"))?;
@@ -105,9 +118,11 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut stream_bound = 8;
     let mut request_bound = DEFAULT_REQUEST_BOUND;
     let mut request_timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS;
+    let mut min_version_timeout_ms = DEFAULT_REQUEST_TIMEOUT_MS;
     let mut bearer = None;
     let mut backend_name = "file".to_string();
     let mut object_url = None;
+    let mut standby = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -144,6 +159,15 @@ fn parse_args() -> Result<Option<Args>, String> {
                     .parse()
                     .map_err(|err| format!("invalid --request-timeout-ms {value}: {err}"))?;
             }
+            "--min-version-timeout-ms" => {
+                let value = required_value("--min-version-timeout-ms", args.next())?;
+                min_version_timeout_ms = value
+                    .parse()
+                    .map_err(|err| format!("invalid --min-version-timeout-ms {value}: {err}"))?;
+            }
+            "--standby" => {
+                standby = true;
+            }
             "--bearer" => {
                 bearer = Some(required_value("--bearer", args.next())?);
             }
@@ -176,8 +200,10 @@ fn parse_args() -> Result<Option<Args>, String> {
         stream_bound,
         request_bound,
         request_timeout_ms,
+        min_version_timeout_ms,
         bearer,
         backend,
+        standby,
     }))
 }
 
