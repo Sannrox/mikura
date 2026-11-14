@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-ranked-text-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: substring scan versus a ranked inverted index over string properties. Not the store of record."
+
+[[bin]]
+name = "mikura-ranked-text-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }

@@ -404,6 +404,9 @@ brokers stay out.
    scan of parsed vector properties; a clustered approximate index is not
    justified
    ([ADR 0050](decisions/0050-nearest-stays-brute-force.md)).
+   Ranked full-text is not an evaluate operator; prefix, phrase, and full
+   text stay fail closed, and an inverted projection is not justified
+   ([ADR 0051](decisions/0051-ranked-text-stays-absent.md)).
    Set union / intersection / difference, prefix, and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
