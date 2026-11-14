@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-explorer-text-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: Explorer product-loop eq/hop versus prefix/contains scans. Not the store of record."
+
+[[bin]]
+name = "mikura-explorer-text-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }

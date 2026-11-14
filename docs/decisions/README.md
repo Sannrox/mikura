@@ -60,6 +60,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0049](0049-maintained-breakdown-justified.md) | A one-property breakdown kept current at commit is justified | accepted |
 | [0050](0050-nearest-stays-brute-force.md) | Keep brute-force nearest; no ANN projection | accepted |
 | [0051](0051-ranked-text-stays-absent.md) | Keep equality; no ranked full-text projection | accepted |
+| [0052](0052-explorer-text-stays-eq.md) | Keep Explorer text at equality; no prefix or contains | accepted |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is

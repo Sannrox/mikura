@@ -407,6 +407,9 @@ brokers stay out.
    Ranked full-text is not an evaluate operator; prefix, phrase, and full
    text stay fail closed, and an inverted projection is not justified
    ([ADR 0051](decisions/0051-ranked-text-stays-absent.md)).
+   The product-loop Explorer queries stay exact-match `tier` and hop
+   `affects`; prefix and contains stay fail closed
+   ([ADR 0052](decisions/0052-explorer-text-stays-eq.md)).
    Set union / intersection / difference, prefix, and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
