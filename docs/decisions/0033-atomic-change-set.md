@@ -5,6 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#240](https://github.com/Sannrox/mikura/issues/240), [#182](https://github.com/Sannrox/mikura/issues/182), [#180](https://github.com/Sannrox/mikura/issues/180), [ADR 0011](0011-action-id-retry-key.md), [ADR 0014](0014-externally-supplied-restrictions.md), [ADR 0026](0026-atomic-ingest-batch.md)
 - Amends: [ADR 0019](0019-overlay-retry-and-mutation-boundaries.md) (an Action may commit several identities together). The log format and `MIKURAV2` do not change.
+- Amended by: [ADR 0055](0055-branchable-state-stays-absent.md) (a complete clerk-submitted set stays the atomic commit; no writable branch merge)
 - Supersedes: none
 - Superseded by: none
 

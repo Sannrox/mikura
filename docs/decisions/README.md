@@ -63,6 +63,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0052](0052-explorer-text-stays-eq.md) | Keep Explorer text at equality; no prefix or contains | accepted |
 | [0053](0053-set-combinators-stay-absent.md) | Keep set combinators fail closed | accepted |
 | [0054](0054-similarity-workload-stays-unpublished.md) | Keep similarity retrieval unpublished | accepted |
+| [0055](0055-branchable-state-stays-absent.md) | Keep branchable object state absent | accepted |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is

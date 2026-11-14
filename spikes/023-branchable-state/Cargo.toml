@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-branchable-state-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: product-loop propose-review-commit versus unpublished branches. Not the store of record."
+
+[[bin]]
+name = "mikura-branchable-state-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }
