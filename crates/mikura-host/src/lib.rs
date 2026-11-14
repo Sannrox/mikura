@@ -206,6 +206,7 @@ pub struct WireSort {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum HostRequest {
     IngestBatch {
         records: Vec<ObjectRecord>,
@@ -302,6 +303,7 @@ struct HostEnvelope {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HostResponse {
     pub v: u32,
     pub ok: bool,
@@ -325,6 +327,7 @@ pub struct HostResponse {
 
 /// Process-local operational signal ([ADR 0022](../../docs/decisions/0022-operational-signals.md)).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HealthWire {
     /// The host opened the log and is serving. This is a process-serving
     /// signal, not production, capacity, durability, or latency health: it
@@ -338,6 +341,7 @@ pub struct HealthWire {
     /// Completed RPCs with `ok: false` since process start, excluding `health`.
     pub rejected: u64,
     /// `writer`, `standby`, or `fenced` (ADR 0047 §5).
+    #[serde(default)]
     pub role: String,
 }
 
