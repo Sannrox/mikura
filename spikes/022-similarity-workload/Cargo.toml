@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-similarity-workload-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: product-loop versus unpublished exact nearest. Not the store of record."
+
+[[bin]]
+name = "mikura-similarity-workload-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }

@@ -413,6 +413,9 @@ brokers stay out.
    Set union / intersection / difference stay fail closed; same-kind
    combinations stay `and` / `or` / `not`
    ([ADR 0053](decisions/0053-set-combinators-stay-absent.md)).
+   The product-loop does not name a similarity-retrieval workload;
+   `Sort.nearest` stays an unused ranking
+   ([ADR 0054](decisions/0054-similarity-workload-stays-unpublished.md)).
    Prefix and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them

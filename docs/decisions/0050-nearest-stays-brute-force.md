@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-11-14
 - Owners: mikura maintainers
-- Related: [#343](https://github.com/Sannrox/mikura/issues/343), [#347](https://github.com/Sannrox/mikura/issues/347), [#339](https://github.com/Sannrox/mikura/issues/339), [spike 018](../../spikes/018-ann-index/NOTES.md), [ADR 0043](0043-typed-ref-values.md), [ADR 0016](0016-production-workload.md), [ADR 0002](0002-join-sidecar.md)
+- Related: [#343](https://github.com/Sannrox/mikura/issues/343), [#347](https://github.com/Sannrox/mikura/issues/347), [#339](https://github.com/Sannrox/mikura/issues/339), [spike 018](../../spikes/018-ann-index/NOTES.md), [spike 022](../../spikes/022-similarity-workload/NOTES.md), [ADR 0043](0043-typed-ref-values.md), [ADR 0016](0016-production-workload.md), [ADR 0002](0002-join-sidecar.md), [ADR 0054](0054-similarity-workload-stays-unpublished.md)
 - Amends: [ADR 0043](0043-typed-ref-values.md) — sidecar vector indexes still wait; the measured brute-force miss is UTF-8 reparse, and a clustered approximate index is not justified while a decoded exact scan holds.
 - Supersedes: none
 - Superseded by: none
