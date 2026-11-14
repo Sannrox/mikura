@@ -5,7 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#185](https://github.com/Sannrox/mikura/issues/185), [#237](https://github.com/Sannrox/mikura/issues/237), [#258](https://github.com/Sannrox/mikura/issues/258), [#107](https://github.com/Sannrox/mikura/issues/107), [#121](https://github.com/Sannrox/mikura/issues/121), [#137](https://github.com/Sannrox/mikura/issues/137), [#152](https://github.com/Sannrox/mikura/issues/152), [m0-application-contract.md](../plans/m0-application-contract.md), [m4-hosted-pilot-contract.md](../plans/m4-hosted-pilot-contract.md), [m9-workload-acceptance.md](../plans/m9-workload-acceptance.md), [m9-chisei-explorer-workload.md](../plans/m9-chisei-explorer-workload.md)
 - Amends: none. M0 two-object budgets stay unset. Spike 011 envelopes stay scale research.
-- Amended by: this file's 2026-10-16 amendment ([#237](https://github.com/Sannrox/mikura/issues/237)), 2026-10-19 amendment ([#258](https://github.com/Sannrox/mikura/issues/258)), and [ADR 0054](0054-similarity-workload-stays-unpublished.md) (no published similarity-retrieval workload)
+- Amended by: this file's 2026-10-16 amendment ([#237](https://github.com/Sannrox/mikura/issues/237)), 2026-10-19 amendment ([#258](https://github.com/Sannrox/mikura/issues/258)), [ADR 0054](0054-similarity-workload-stays-unpublished.md) (no published similarity-retrieval workload), and [ADR 0055](0055-branchable-state-stays-absent.md) (no published isolation-plus-merge workload)
 - Supersedes: none
 - Superseded by: none
 
@@ -131,3 +131,8 @@ the product-loop as the representative workload.
   Explorer still does not name a similarity-retrieval workload over
   stored vectors. `Sort.nearest` stays an unused evaluate ranking.
   Details: [ADR 0054](0054-similarity-workload-stays-unpublished.md).
+- 2026-11-14, [#346](https://github.com/Sannrox/mikura/issues/346):
+  Explorer still does not name isolated writable branches with merge.
+  Overlay, change sets, history, and `expected_gen` stay the
+  propose-review-commit path.
+  Details: [ADR 0055](0055-branchable-state-stays-absent.md).

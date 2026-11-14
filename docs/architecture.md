@@ -416,6 +416,9 @@ brokers stay out.
    The product-loop does not name a similarity-retrieval workload;
    `Sort.nearest` stays an unused ranking
    ([ADR 0054](decisions/0054-similarity-workload-stays-unpublished.md)).
+   Isolated writable branches stay out; overlay, change sets, history,
+   and `expected_gen` cover propose-review-commit
+   ([ADR 0055](decisions/0055-branchable-state-stays-absent.md)).
    Prefix and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
@@ -698,6 +701,11 @@ after dropping the page cache.
   [ADR 0024](decisions/0024-unpartitioned-store.md),
   [#248](https://github.com/Sannrox/mikura/issues/248),
   [ADR 0046](decisions/0046-unpartitioned-store-after-synthetic-ceiling.md))
+- Isolated writable branches with merge (researched no-action: overlay,
+  change sets, history, and `expected_gen` already cover
+  propose-review-commit; a second live snapshot would be a second writer
+  ([#346](https://github.com/Sannrox/mikura/issues/346),
+  [ADR 0055](decisions/0055-branchable-state-stays-absent.md)))
 
 Those gaps are intentional at this stage, not undocumented bugs. See
 [ROADMAP.md](../ROADMAP.md).

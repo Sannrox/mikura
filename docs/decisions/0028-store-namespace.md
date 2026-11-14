@@ -6,7 +6,7 @@
 - Related: [#234](https://github.com/Sannrox/mikura/issues/234), [#251](https://github.com/Sannrox/mikura/issues/251), [ADR 0001](0001-paged-log.md), [ADR 0006](0006-action-provenance.md), [ADR 0014](0014-externally-supplied-restrictions.md)
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR 0030](0030-unnamespaced-log-migration.md) (explicit migration of `MIKURAV1` logs)
+- Amended by: [ADR 0030](0030-unnamespaced-log-migration.md) (explicit migration of `MIKURAV1` logs); [ADR 0055](0055-branchable-state-stays-absent.md) (a namespace is not a writable branch)
 - Amends: [ADR 0006](0006-action-provenance.md) (a second identity field needs a superblock magic bump)
 
 ## Context
