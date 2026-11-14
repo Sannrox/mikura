@@ -400,8 +400,11 @@ brokers stay out.
    bounded top `page_size + 1` in one pass. Multi-key, nearest, and unpaged
    sorts, and any stored value or cursor that fails to parse, take the full
    ranking, so order, cursors, and errors are the same either way
-   ([#316](https://github.com/Sannrox/mikura/issues/316)). Set union / intersection /
-   difference, prefix, and regex fail closed
+   ([#316](https://github.com/Sannrox/mikura/issues/316)). Nearest stays that
+   scan of parsed vector properties; a clustered approximate index is not
+   justified
+   ([ADR 0050](decisions/0050-nearest-stays-brute-force.md)).
+   Set union / intersection / difference, prefix, and regex fail closed
    ([ADR 0018](decisions/0018-aggregation-semantics.md)). The two-object
    seed stays unambiguous without them
    ([#122](https://github.com/Sannrox/mikura/issues/122)).
