@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "mikura-ann-index-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway: brute-force Sort.nearest versus a clustered ANN projection. Not the store of record."
+
+[[bin]]
+name = "mikura-ann-index-spike"
+path = "src/main.rs"
+
+[dependencies]
+mikura = { path = "../.." }

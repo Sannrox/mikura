@@ -5,6 +5,7 @@
 - Owners: mikura maintainers
 - Related: [#247](https://github.com/Sannrox/mikura/issues/247), [ADR 0012](0012-typed-values.md), [ADR 0015](0015-composable-object-sets.md), [ADR 0018](0018-aggregation-semantics.md)
 - Amends: [ADR 0012](0012-typed-values.md) (scalar subset), [ADR 0015](0015-composable-object-sets.md) (`range` and sort)
+- Amended by: [ADR 0050](0050-nearest-stays-brute-force.md) (nearest stays a brute-force ranking; no ANN projection)
 - Supersedes: none
 - Superseded by: none
 

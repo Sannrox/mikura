@@ -25,6 +25,7 @@ documented in [docs/architecture.md](../docs/architecture.md) and
 | [015-maintained-view](015-maintained-view/NOTES.md) | sabun view vs evaluate-time breakdown; 10⁶ warm **221 ns vs 1.80 s**; commit +8.6 %; replay inside open | HOLD: miss; follow-up [#372](https://github.com/Sannrox/mikura/issues/372), not a view engine in the store |
 | [016-swap-commit](016-swap-commit/NOTES.md) | Swap-committed manifest vs restore-from-log; disk-loss RPO is backup lag; remote swap 26 ms at 10 ms RTT | VALIDATED: accept [ADR 0047](../docs/decisions/0047-object-storage-store-of-record.md); no followers; takeover RTO and remote GET unmeasured ([#340](https://github.com/Sannrox/mikura/issues/340), [#360](https://github.com/Sannrox/mikura/issues/360)) |
 | [017-snapshot-read](017-snapshot-read/NOTES.md) | Host `load` under writes vs snapshot clone; wait is exclusive apply not fsync; 10⁶ `load` p50 5.8 µs | HOLD: keep [ADR 0040](../docs/decisions/0040-concurrent-host-readers.md) exclusive apply; no second projection generation ([#336](https://github.com/Sannrox/mikura/issues/336)) |
+| [018-ann-index](018-ann-index/NOTES.md) | Brute-force `Sort.nearest` vs clustered ANN; 10⁵ × dim 64 evaluate **797 ms miss** vs 500 ms; decoded exact **23 ms hold**; clustered 3.5 ms recall 1.00 | HOLD: no ANN projection ([#343](https://github.com/Sannrox/mikura/issues/343), [ADR 0050](../docs/decisions/0050-nearest-stays-brute-force.md)) |
 
 Record hardware profile, fixture size, and hold/miss against VISION.md
 targets. Do not pick Spark, a search engine, or a warehouse from a miss.
