@@ -2,11 +2,11 @@
 # Build release artifacts into --out without publishing or attesting.
 #
 # Usage:
-#   bash scripts/release-package.sh --out dist [--tag vX.Y.Z] [--git-sha SHA]
+#   bash scripts/release/package.sh --out dist [--tag vX.Y.Z] [--git-sha SHA]
 #        [--skip-build] [--skip-test] [--skip-github] [--with-images]
 set -euo pipefail
 
-ROOT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_PATH"
 
 OUT=""
@@ -18,7 +18,7 @@ SKIP_GITHUB=0
 WITH_IMAGES=0
 
 fail() {
-  printf 'release-package: %s\n' "$1" >&2
+  printf 'package: %s\n' "$1" >&2
   exit 1
 }
 
@@ -40,7 +40,7 @@ mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
 crate_version() {
-  python3 "$ROOT_PATH/scripts/crate-version.py" "$ROOT_PATH"
+  python3 "$ROOT_PATH/scripts/release/version.py" "$ROOT_PATH"
 }
 
 host_triple() {
@@ -52,7 +52,7 @@ host_triple() {
 VERSION="$(crate_version)"
 if [[ -n "$TAG" ]]; then
   [[ "${TAG#v}" == "$VERSION" ]] || fail "tag ${TAG} does not match crate version ${VERSION}"
-  python3 "$ROOT_PATH/scripts/changelog-notes.py" "$VERSION" >"${OUT}/RELEASE_NOTES.md"
+  python3 "$ROOT_PATH/scripts/release/notes.py" "$VERSION" >"${OUT}/RELEASE_NOTES.md"
 fi
 if [[ -z "$GIT_SHA" ]]; then
   GIT_SHA="$(git rev-parse HEAD)"
@@ -78,6 +78,12 @@ if [[ "$WITH_IMAGES" -eq 1 ]]; then
   # debian:bookworm-slim cannot run a glibc binary from ubuntu-latest.
   # Reuse the CI path: compile in rust:bookworm, then wrap.
   [[ "$SKIP_BUILD" -eq 0 ]] || fail "--with-images requires a build"
+  # release-images.sh tags the image with git describe, so a tagged run
+  # requires the tag to name HEAD exactly.
+  if [[ -n "$TAG" ]]; then
+    described="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+    [[ "$described" == "$TAG" ]] || fail "tag ${TAG} does not name HEAD (git describe: ${described:-none})"
+  fi
   command -v docker >/dev/null 2>&1 || fail "docker is required for --with-images"
   bash "$ROOT_PATH/build/release-images.sh"
   image_tag="$(cat "$ROOT_PATH/_output/image-tag")"
@@ -115,7 +121,7 @@ else
   TRIPLE="$(host_triple)"
 fi
 
-python3 "$ROOT_PATH/scripts/release-sbom.py" "${OUT}/mikura.cdx.json"
+python3 "$ROOT_PATH/scripts/release/sbom.py" "${OUT}/mikura.cdx.json"
 
 python3 -c '
 import hashlib, pathlib, sys
@@ -127,14 +133,18 @@ for path in sorted(p for p in out.iterdir() if p.is_file() and p.name != "SHA256
 (out / "SHA256SUMS").write_text("\n".join(lines) + ("\n" if lines else ""))
 ' "$OUT"
 
-LABEL_ARGS=()
+GATE_ARGS=()
 if [[ -n "$TAG" && "$SKIP_GITHUB" -eq 0 ]]; then
+  # Empty gate flags would read as a release that passed no gates, so a
+  # tagged run fails closed when the merged pull requests cannot be read.
   command -v gh >/dev/null 2>&1 || fail "gh is required for gate flags; pass --skip-github for a dry run"
   # Gate flags cover exactly the pull requests merged into the release commit
   # since the nearest final tag before it: an rc tag never starts the range,
   # or a final release would drop gates first seen in its release candidates,
   # and a pull request merged after the tagged commit never counts, even when a
-  # retry runs days later.
+  # retry runs days later. manifest.py filters by the range.
+  gates="$(mktemp -d "${TMPDIR:-/tmp}/mikura-gates.XXXXXX")"
+  trap 'rm -rf "$gates"' EXIT
   prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*-*' "${GIT_SHA}^" 2>/dev/null || true)"
   # The date only narrows the search and the commit range decides. There is
   # no upper date bound: GitHub can record a merge on a later day than its
@@ -145,31 +155,21 @@ if [[ -n "$TAG" && "$SKIP_GITHUB" -eq 0 ]]; then
     range="${prev}..${GIT_SHA}"
     query="merged:>=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%d --format=%cd "$prev")"
   fi
-  # A lookup failure or a truncated search fails the release: an empty or
-  # partial list would publish a manifest without its gates.
-  prs="$(gh pr list --state merged --limit 1000 --search "$query" --json mergeCommit,labels)" \
+  gh pr list --state merged --limit 1000 --search "$query" --json mergeCommit,labels >"${gates}/merged-prs.json" \
     || fail "could not list merged pull requests for gate flags"
-  [[ "$(jq length <<<"$prs")" -lt 1000 ]] || fail "1000 or more merged pull requests match \"${query}\"; gate flags would be incomplete"
-  commits="$(git rev-list "$range")" || fail "could not list the commits in ${range}"
-  labels="$(
-    jq -r '.[] | select(.mergeCommit != null) | .mergeCommit.oid as $oid | .labels[] | "\($oid)\t\(.name)"' <<<"$prs" \
-      | awk -F'\t' 'NR == FNR { in_range[$1] = 1; next } in_range[$1] { print $2 }' <(printf '%s\n' "$commits") - \
-      | sort -u
-  )" || fail "could not read gate flags from the merged pull requests"
-  while IFS= read -r label; do
-    [[ -n "$label" ]] && LABEL_ARGS+=(--label "$label")
-  done <<<"$labels"
+  git rev-list "$range" >"${gates}/range-commits" || fail "could not list the commits in ${range}"
+  GATE_ARGS=(--merged-prs "${gates}/merged-prs.json" --range-commits "${gates}/range-commits")
 fi
 
-python3 "$ROOT_PATH/scripts/release-manifest.py" \
+python3 "$ROOT_PATH/scripts/release/manifest.py" \
   --component mikura \
   --version "$VERSION" \
   --git-sha "$GIT_SHA" \
   ${TAG:+--tag "$TAG"} \
   --dist "$OUT" \
   --out "${OUT}/mikura-release.json" \
-  "${IMAGE_ARGS[@]}" \
-  "${LABEL_ARGS[@]}"
+  ${IMAGE_ARGS[@]+"${IMAGE_ARGS[@]}"} \
+  ${GATE_ARGS[@]+"${GATE_ARGS[@]}"}
 
 echo "version=${VERSION}"
 echo "triple=${TRIPLE}"

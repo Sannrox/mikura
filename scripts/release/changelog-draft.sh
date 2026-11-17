@@ -5,7 +5,7 @@
 # CHANGELOG.md; their bodies carry the release notes.
 set -euo pipefail
 
-ROOT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ROOT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "${ROOT_PATH}"
 
 git fetch --quiet --tags origin main

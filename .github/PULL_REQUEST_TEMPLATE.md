@@ -8,7 +8,7 @@ paths, absolute worktree paths, or other private environment details. -->
 - [ ] `cargo fmt --check`
 - [ ] `cargo test --workspace --locked`
 - [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
-- [ ] `bash scripts/validate-release.sh` (when the `v*` path changed)
+- [ ] `bash scripts/check-workflows.sh` and `python3 -m unittest discover -s scripts/tests -t .` (when workflows or the `v*` path changed)
 
 ## Impact
 

@@ -19,7 +19,7 @@ tags.
 ## Prepare
 
 1. Choose the target version. Do not invent one in a feature pull request.
-2. Draft notes with `scripts/changelog-draft.sh`. Pull requests never edit
+2. Draft notes with `scripts/release/changelog-draft.sh`. Pull requests never edit
    `CHANGELOG.md`; the release step writes the section from merged work.
 3. Land the version-bump pull request. The crate versions and CHANGELOG
    heading move together.
@@ -58,13 +58,14 @@ runs **main's** `release.yml`, never the copy at the tagged commit.
 `release.yml` refuses a tagged run that does not start from `main`. It then:
 
 - checks out the tag and fetches the annotated tag object
-- verifies the signed tag with main's `scripts/verify-release-tag.sh` and
+- verifies the signed tag with main's `scripts/release/verify-tag.sh` and
   main's allowed keys against the tagged commit's crate versions
 - requires the tagged commit to be on `main`
 - lints, tests, builds, tags the image, and writes the manifest `git_sha` from
   that commit
-- writes an SBOM, attests provenance, and drafts the GitHub Release with
-  `gh release create <tag> --verify-tag` from the matching CHANGELOG section,
+- writes an SBOM, attests provenance, and drafts the GitHub Release through
+  `scripts/release/github-release.sh` (`--verify-tag`) from the matching
+  CHANGELOG section,
   with the binary, image tarball, SBOM, checksums, and a signed family release
   manifest (component, version, git SHA, binary and image digests,
   attestation URLs, gate flags)
@@ -106,4 +107,11 @@ Allowed tag-signing keys live in `security/release-tag-fingerprints` with the
 public key in `security/release-tag-key.asc`. A tagged run uses the copies on
 `main`.
 
-Local check without publishing: `bash scripts/validate-release.sh`.
+Local check without publishing: `bash scripts/check-workflows.sh` lints the
+workflows, and `python3 -m unittest discover -s scripts/tests -t .` (after
+`python3 -m pip install --require-hashes -r scripts/tests/requirements.txt`)
+tests the release scripts and the workflow structure.
+
+A release run uses main's `release.yml` but the tagged commit's
+`scripts/release/`. A tag cut before the scripts moved there cannot be
+re-run; release it as a new rc or patch version.

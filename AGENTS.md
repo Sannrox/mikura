@@ -38,7 +38,9 @@ tracked. Do not treat that directory as gitignored.
 | `crates/mikura-ingest/tests/stability.rs` | 1.0 surface compile-lock |
 | `spikes/` | Throwaway measurements; not the store of record |
 | `docs/` | Architecture, glossary, ADRs, plans |
-| `scripts/` | ADR index, changelog draft, crates.io publish check, vendored `validate-workflow-skills.sh`, signed-tag release packaging |
+| `scripts/` | ADR index, crates.io publish check, vendored `validate-workflow-skills.sh`, `check-workflows.sh` (pinned workflow lint) |
+| `scripts/release/` | Signed-tag release entry points the release workflow calls (tag verify, package, manifest, SBOM, notes, GitHub Release, changelog draft) |
+| `scripts/tests/release/` | Release script and workflow-structure tests (`unittest`; not under root `tests/`, which Cargo owns) |
 | `RELEASING.md` | How a maintainer tags this repo (family policy lives in tenkai ADR 0040) |
 | `security/` | Allowed tag-signing public key and fingerprints |
 | `.github/` | CI, issue templates, pull request template |
@@ -56,13 +58,18 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p mikura-ingest --example quickstart
 cargo bench -p mikura-host --bench product
 bash build/release-images.sh
-bash scripts/validate-release.sh
+bash scripts/check-workflows.sh
+python3 -m pip install --require-hashes -r scripts/tests/requirements.txt
+python3 -m unittest discover -s scripts/tests -t .
 ```
 
 `bash build/release-images.sh` wraps `mikura-host`. Dirty trees are refused.
 `bash build/release.sh` pushes the git-describe tag to `DOCKER_REGISTRY`.
-`bash scripts/validate-release.sh` checks the signed-tag `v*` path without
-publishing. Agents never push `v*` tags.
+`bash scripts/check-workflows.sh` lints `.github/workflows/` with pinned,
+checksum-verified actionlint and zizmor (offline); CI runs the same script.
+The `unittest` suite tests the signed-tag `v*` release scripts and asserts
+release invariants on the parsed workflow YAML, without publishing. Agents
+never push `v*` tags.
 
 `cargo test` is the short loop. Spike crates are separate packages under
 `spikes/<nnn>-*/`; run them only when measuring, from that directory, and
@@ -151,7 +158,8 @@ Rows beyond `## Style and tests`:
 | ACL | load omits denied properties; deny on `(sum_kind, sum_property)` returns `AclError::Denied` |
 | ADRs | `python3 scripts/adr-index --check` |
 | Skills / `AGENTS.md` | `bash scripts/validate-workflow-skills.sh` |
-| signed `v*` release path | `bash scripts/validate-release.sh` |
+| workflows (`.github/workflows/`) | `bash scripts/check-workflows.sh` |
+| signed `v*` release path | `python3 -m unittest discover -s scripts/tests -t .` |
 
 Unit tests do not establish spike envelopes; measure in the spike and record
 the result in its `NOTES.md`.
@@ -161,12 +169,12 @@ the result in its `NOTES.md`.
 - GitHub tags are allowed; crates.io stays `publish = false` until explicitly
   authorized (`bash scripts/publish-crates.sh` checks);
 - 1.0 surface and bump rules: [docs/plans/1.0-surface.md](docs/plans/1.0-surface.md);
-- CHANGELOG section drafted with `bash scripts/changelog-draft.sh`; upgrade
+- CHANGELOG section drafted with `bash scripts/release/changelog-draft.sh`; upgrade
   notes first;
 - on-disk format changes and their ADR;
 - container image (`bash build/release-images.sh`);
 - signed `v*` path: [RELEASING.md](RELEASING.md),
-  `bash scripts/validate-release.sh`.
+  `python3 -m unittest discover -s scripts/tests -t .`.
 
 ## Ontology
 
@@ -197,6 +205,14 @@ Postgres, or Spark in the default suite. Host-process **e2e** is
 `crates/mikura-host/tests/e2e.rs`
 (`cargo test -p mikura-host --test e2e --locked`).
 
+Release and CI logic lives in scripts under `scripts/release/`, not inline in
+`run:` blocks. Each script has a `unittest` file of the matching name in
+`scripts/tests/release/`. Never grep raw workflow text: a workflow invariant
+no linter expresses goes in `scripts/tests/release/test_workflows.py`, which
+asserts on the parsed YAML's structure (triggers, permissions, job graph, step
+order, which script a step runs), never on step names or wording. Tests use
+temp paths that include the process id and no fixed ports or files.
+
 ## Git
 
 Short imperative subjects (`feat: persist join maps in Store`). Keep commits
@@ -214,7 +230,9 @@ and each lane builds into its own worktree's `target/`.
 Collision surfaces: the on-disk log and sidecar formats (`src/log.rs`,
 `src/joins.rs`, `src/store/`), the 1.0 surface lock
 (`crates/mikura-ingest/tests/stability.rs`), the next ADR number, and the same
-crate. Lanes that would both change one run in sequence. Pull requests do not
+crate, and the release path (`.github/workflows/`, `scripts/release/`,
+`scripts/tests/release/`, `scripts/check-workflows.sh`, `RELEASING.md`).
+Lanes that would both change one run in sequence. Pull requests do not
 edit `CHANGELOG.md`; release prep drafts it.
 
 ### Verified commits on GitHub
