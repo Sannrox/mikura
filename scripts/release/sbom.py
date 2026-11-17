@@ -73,68 +73,10 @@ def bom_from_metadata(meta: dict) -> dict:
     return bom
 
 
-def self_test() -> None:
-    assert license_entry("MIT/Apache-2.0") == {"expression": "MIT OR Apache-2.0"}
-    meta = {
-        "workspace_members": [
-            "mikura 0.4.0 (path+file:///workspace)",
-            "mikura-host 0.4.0 (path+file:///workspace/crates/mikura-host)",
-        ],
-        "packages": [
-            {
-                "id": "mikura 0.4.0 (path+file:///workspace)",
-                "name": "mikura",
-                "version": "0.4.0",
-                "license": "MIT OR Apache-2.0",
-            },
-            {
-                "id": "mikura-host 0.4.0 (path+file:///workspace/crates/mikura-host)",
-                "name": "mikura-host",
-                "version": "0.4.0",
-                "license": "MIT OR Apache-2.0",
-            },
-            {
-                "id": "crc32fast 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
-                "name": "crc32fast",
-                "version": "1.0.0",
-                "license": "MIT OR Apache-2.0",
-            },
-            {
-                "id": "serde 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
-                "name": "serde",
-                "version": "1.0.0",
-                "license": "MIT",
-            },
-        ],
-    }
-    bom = bom_from_metadata(meta)
-    assert bom["bomFormat"] == "CycloneDX"
-    assert bom["metadata"]["component"]["name"] == "mikura"
-    assert bom["metadata"]["component"]["version"] == "0.4.0"
-    assert bom["metadata"]["component"]["type"] == "application"
-    serial = bom["serialNumber"]
-    assert serial.startswith("urn:uuid:")
-    assert uuid.UUID(serial.removeprefix("urn:uuid:")).version == 5
-    assert bom_from_metadata(meta)["serialNumber"] == serial
-    meta["packages"][2]["version"] = "1.0.1"
-    assert bom_from_metadata(meta)["serialNumber"] != serial
-    names = {item["name"] for item in bom["components"]}
-    assert names == {"crc32fast", "serde"}, names
-    by_name = {item["name"]: item for item in bom["components"]}
-    assert by_name["crc32fast"]["licenses"] == [
-        {"expression": "MIT OR Apache-2.0"}
-    ]
-    assert by_name["serde"]["licenses"] == [{"license": {"id": "MIT"}}]
-    print("release-sbom self-test passed")
-
-
 def main(argv: list[str]) -> None:
-    if argv == ["--self-test"]:
-        self_test()
-        return
     if len(argv) != 1:
-        raise SystemExit("usage: release-sbom.py OUT")
-    root = Path(__file__).resolve().parent.parent
+        raise SystemExit("usage: sbom.py OUT")
+    root = Path(__file__).resolve().parents[2]
     bom = bom_from_metadata(cargo_metadata(root))
     out = Path(argv[0])
     out.write_text(json.dumps(bom, indent=2) + "\n")

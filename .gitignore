@@ -33,3 +33,4 @@
 !.agents/skills/verify-change/
 !.agents/skills/technical-documentation/
 !.agents/skills/refactor-docs/
+__pycache__/
