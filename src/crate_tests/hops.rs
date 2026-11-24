@@ -272,3 +272,26 @@ fn hop_diamond_counts_distinct_roots_once() {
     assert_eq!(response.sum_amount, 13);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Regression: the reachable-root bitmap is thread-local scratch. When the
+/// intern table grew between evaluates, only the new words were zeroed, so a
+/// root marked by the earlier evaluate was skipped and the count came out low
+/// while the sum stayed right.
+#[test]
+fn two_hop_count_survives_intern_growth_between_evaluates() {
+    let (dir, log) = temp_log("hop-count-intern-growth");
+    let mut store = Store::create(&log).unwrap();
+    append_all(&mut store, fixture());
+    let oss = ObjectSet::new(LocalCompute);
+    let before = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!((before.two_hop_count, before.sum_amount), (1, 10));
+
+    // Grow the intern table well past one 64-bit bitmap word.
+    let extra = (0..256)
+        .map(|i| rec("Note", &format!("n{i}"), false, &[]))
+        .collect();
+    append_all(&mut store, extra);
+    let after = oss.evaluate(&store, &fixture_request()).unwrap();
+    assert_eq!((after.two_hop_count, after.sum_amount), (1, 10));
+    let _ = std::fs::remove_dir_all(&dir);
+}

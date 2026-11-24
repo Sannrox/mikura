@@ -82,13 +82,15 @@ impl CountScratch {
         }
     }
 
+    /// Clear the reachable-root bitmap for `intern_len` ids. The buffer is
+    /// thread-local and outlives one evaluate, so every live word is zeroed,
+    /// including the ones a previous, smaller evaluate already used.
     fn reset_reachable(&mut self, intern_len: usize) {
         let words = intern_len.div_ceil(64);
         if self.reachable.len() < words {
             self.reachable.resize(words, 0);
-        } else {
-            self.reachable[..words].fill(0);
         }
+        self.reachable[..words].fill(0);
     }
 
     fn amount_of(maps: &JoinMaps, sum_kind: &str, sum_property: &str, key: u32) -> Option<i64> {
