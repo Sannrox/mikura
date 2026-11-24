@@ -12,6 +12,93 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-25
+
+Same code as `0.6.0-rc.1`. These notes cover the upgrade from `v0.5.0`.
+
+### Upgrade
+
+- Existing logs keep their format. A plain `MIKURAV2` or encrypted
+  `MIKURAV3` log written by `v0.5.0` opens, loads, appends, and reopens
+  unchanged, and stays in that format. `v0.5.0` can still reopen it
+  afterwards, so rolling back is safe for logs that were never converted.
+  Opening an encrypted log without keys still fails closed.
+- New logs, plain or encrypted, are written as `MIKURAV4`: a stub naming a
+  swap-committed snapshot object (`MKMANI02`) under `{log}.obj`. Encrypted
+  sidecars and checkpoints stay sealed (`MKSEAL01` / `MKPART01`).
+  `v0.5.0` refuses a `MIKURAV4` log with `bad magic` and does not modify
+  it, so a log created by this version cannot be rolled back to `v0.5.0`.
+- Conversion is explicit and one-way. `Store::migrate_to_manifest(src, dst)`
+  (or `Store::migrate_to_manifest_with_keys` for encrypted logs) writes a
+  new `MIKURAV4` log and leaves the source untouched. Keep the source until
+  the converted log is verified; it is the rollback path.
+- Join sidecars write `MKJOIN06` / `MKJOIN6D`, or paged `MKJOIN07` when the
+  store is opened with a serving budget. `MKJOIN05` / `MKJOIN5D` still
+  open. Checkpoints stay `MKCKPT01`. `MIKURAV1` and `MKJOIN04` and earlier
+  still fail closed. Delete `{log}.joins` and `{log}.joins.delta` to
+  rebuild from the log.
+- Breaking (Rust API, `mikura-host`): `HostRequest`, `HostResponse`, and
+  `HealthWire` are `#[non_exhaustive]`. A `match` on `HostRequest` needs a
+  wildcard arm, and `HostResponse` / `HealthWire` can no longer be built
+  with struct literals outside the crate; deserialize them instead. The
+  JSON wire (`v` = 1) is unchanged, and new response fields are additive.
+- `mikura` and `mikura-ingest` have no Rust API breaks against `v0.5.0`.
+- Crate version is `0.6.0`. crates.io stays `publish = false`.
+
+### Added
+
+- Object-storage store of record: new logs commit by swapping a snapshot
+  object. A displaced writer fails with `mikura::LOG_FENCED`
+  ([#340](https://github.com/Sannrox/mikura/issues/340)).
+- HTTP object backend (`mikura-host --backend object --object-url URL`)
+  with a startup probe for conditional writes
+  ([#360](https://github.com/Sannrox/mikura/issues/360)).
+- Projections and checkpoints stored as derived objects, so a takeover
+  needs no local sidecar
+  ([#361](https://github.com/Sannrox/mikura/issues/361)).
+- Read-only standby host (`--standby`) that follows commits, answers a
+  minimum-version read or refuses, and promotes by fencing the previous
+  writer. Responses report `manifest_version` and `behind`
+  ([#362](https://github.com/Sannrox/mikura/issues/362)).
+- Join projections served from paged files under a memory budget
+  ([#370](https://github.com/Sannrox/mikura/issues/370)). A rebuilt
+  projection replaces the serving one with a single rename
+  ([#359](https://github.com/Sannrox/mikura/issues/359)).
+- A one-property breakdown stays current at commit
+  ([#372](https://github.com/Sannrox/mikura/issues/372)).
+- Host source ingest is fenced per source, merges with the property
+  overlay, and audits conflicts
+  ([#398](https://github.com/Sannrox/mikura/issues/398)).
+
+### Fixed
+
+- Count-and-sum evaluates could return a low `two_hop_count` (with a
+  correct `sum_amount`) when the store had grown since an earlier evaluate
+  on the same thread. Long-lived processes on `v0.2.0` to `v0.5.0` could
+  see this after ingest
+  ([#400](https://github.com/Sannrox/mikura/pull/400)).
+- Uncommitted stream pushes stay hidden from reads until flush
+  ([#319](https://github.com/Sannrox/mikura/issues/319)).
+
+### Changed
+
+- A commit costs two storage waves and does not grow with history
+  ([#357](https://github.com/Sannrox/mikura/issues/357)), with fault
+  injection at every step of a manifest commit
+  ([#358](https://github.com/Sannrox/mikura/issues/358)).
+- Collection removes only a fenced writer's unreferenced objects, with one
+  owner for maintenance
+  ([#363](https://github.com/Sannrox/mikura/issues/363)).
+- Release workflows are linted with pinned, checksum-verified tools, and
+  release invariants are tested
+  ([#395](https://github.com/Sannrox/mikura/issues/395)).
+
+### Known gaps
+
+- Takeover and fencing drills under sustained write load do not run on a
+  schedule yet ([#364](https://github.com/Sannrox/mikura/issues/364)).
+  Fencing is covered by deterministic tests and manifest fault injection.
+
 ## [0.6.0-rc.1] - 2026-11-24
 
 ### Upgrade
@@ -862,7 +949,8 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 - Public name is `mikura` (御倉). On-disk superblock magic is `MIKURAV1`.
 
-[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.6.0-rc.1...HEAD
+[Unreleased]: https://github.com/Sannrox/mikura/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Sannrox/mikura/compare/v0.5.0...v0.6.0
 [0.6.0-rc.1]: https://github.com/Sannrox/mikura/compare/v0.5.0...v0.6.0-rc.1
 [0.5.0]: https://github.com/Sannrox/mikura/compare/v0.4.0...v0.5.0
 [0.5.0-rc.1]: https://github.com/Sannrox/mikura/compare/v0.4.0...850231fe301ddda77814c724d6750e693e4cf146
