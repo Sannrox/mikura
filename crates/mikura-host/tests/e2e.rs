@@ -3367,3 +3367,46 @@ fn process_two_promotes_leave_one_writer() {
     first.stop();
     second.stop();
 }
+
+/// #398 wire contract: `ingest_fenced` appends at the expected generation,
+/// refuses a stale one with the `stale generation` prefix, and a replay of
+/// its Action id after a host restart is a no-op success.
+#[test]
+fn process_ingest_fenced_refuses_stale_and_replays_after_restart() {
+    let tmp = TempLog::new("ingest-fenced");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let mut first = rec("Shipment", "s1", false, &[("amount", "10")]);
+    first.action_id = Some("src-1".into());
+    let fenced = |host: &HostProcess, record: &ObjectRecord, expected_gen: u64| {
+        host.rpc(&serde_json::json!({
+            "op": "ingest_fenced",
+            "record": record,
+            "expected_gen": expected_gen,
+        }))
+    };
+    let written = fenced(&host, &first, 0);
+    assert!(written.ok, "{written:?}");
+
+    let mut second = rec("Shipment", "s1", false, &[("amount", "20")]);
+    second.action_id = Some("src-2".into());
+    let stale = fenced(&host, &second, 0);
+    assert!(!stale.ok, "{stale:?}");
+    assert!(
+        stale
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .starts_with(mikura::STALE_GENERATION),
+        "{stale:?}"
+    );
+    host.kill();
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let replay = fenced(&reopened, &first, 0);
+    assert!(replay.ok, "{replay:?}");
+    let loaded = load_object(&reopened, "Shipment", "s1");
+    assert_eq!(
+        (loaded.gen, loaded.props.get("amount").map(String::as_str)),
+        (1, Some("10"))
+    );
+}

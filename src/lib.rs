@@ -87,6 +87,10 @@ pub const LOG_IN_USE: &str = "log in use";
 /// Prefix of the error a displaced writer returns when exclusive create of
 /// the next snapshot fails (ADR 0047).
 pub const LOG_FENCED: &str = "fenced";
+/// Prefix of the error a fenced write returns when the identity is not at
+/// the caller's `expected_gen`: `stale generation: expected <n>, live <m>`.
+/// Nothing was written.
+pub const STALE_GENERATION: &str = "stale generation";
 /// A commit or rollback finished without a durable outcome the writer can
 /// name. Reopen the store and read the successor that exists (ADR 0047).
 pub(crate) const UNCERTAIN_COMMIT: &str =

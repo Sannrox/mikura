@@ -708,6 +708,116 @@ fn changing_strategy_is_not_retroactive() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #398: a fenced source ingest carries the overlay merge and its conflict
+/// audit in one write and refuses a stale generation without writing. A
+/// replay of its Action id after reopen writes nothing, also after a later
+/// overlay edit; a different source-owned body under that id fails closed.
+#[test]
+fn ingest_fenced_writes_audit_refuses_stale_and_replays_after_reopen() {
+    let (dir, log) = temp_log("ingest-fenced");
+    let mut store = Store::create(&log).unwrap();
+    store
+        .append(
+            contact_schema(Some(ConflictStrategy::Newest))
+                .to_record("ns")
+                .unwrap(),
+        )
+        .unwrap();
+    store
+        .ingest_fenced(
+            ObjectRecord {
+                action_id: Some("src-0".into()),
+                ..contact("c-1", "Ada", "open", None, "2026-10-11T10:00:00.000Z")
+            },
+            0,
+        )
+        .unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: NS.into(),
+                kind: "contact".into(),
+                key: "c-1".into(),
+                props: HashMap::from([("status".into(), "acked".into())]),
+                at: Some("2026-10-11T11:00:00.000Z".into()),
+                ..Default::default()
+            },
+            "act-c-1-status".into(),
+            Some(1),
+        )
+        .unwrap();
+    let live_gen = store
+        .load(NS, "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .gen;
+    // The timestamp is not in canonical form, so a replay must compare
+    // the canonical body the first write stored.
+    let refresh = ObjectRecord {
+        action_id: Some("src-1".into()),
+        ..contact("c-1", "Ada", "closed", None, "2026-10-11T12:00:00Z")
+    };
+    let rows = || crate::log::read_records(&log).unwrap().len();
+
+    let before = rows();
+    let stale = store
+        .ingest_fenced(refresh.clone(), live_gen - 1)
+        .unwrap_err();
+    assert!(stale.starts_with(STALE_GENERATION), "{stale}");
+    assert_eq!(rows(), before);
+
+    store.ingest_fenced(refresh.clone(), live_gen).unwrap();
+    let merged = store
+        .load(NS, "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        merged.props.get("status").map(String::as_str),
+        Some("closed")
+    );
+    let audit = overlay_rows(&log).pop().unwrap();
+    assert_eq!(
+        OverlayPatch::recorded_conflict(&audit),
+        Some("status:newest")
+    );
+
+    drop(store);
+    let mut store = Store::open(&log).unwrap();
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: NS.into(),
+                kind: "contact".into(),
+                key: "c-1".into(),
+                props: HashMap::from([("note".into(), "call back".into())]),
+                at: Some("2026-10-11T13:00:00.000Z".into()),
+                ..Default::default()
+            },
+            "act-c-1-note".into(),
+            Some(merged.gen),
+        )
+        .unwrap();
+    let edited_gen = store
+        .load(NS, "contact", "c-1", &PropertyAcl::allow_all())
+        .unwrap()
+        .gen;
+    let written = rows();
+    store.ingest_fenced(refresh.clone(), live_gen).unwrap();
+    assert_eq!(rows(), written);
+    assert_eq!(
+        store
+            .load(NS, "contact", "c-1", &PropertyAcl::allow_all())
+            .unwrap()
+            .gen,
+        edited_gen
+    );
+    let mut reused = refresh;
+    reused.props.insert("name".into(), "Grace".into());
+    let conflict = store.ingest_fenced(reused, live_gen).unwrap_err();
+    assert!(conflict.contains("body conflict"), "{conflict}");
+    assert_eq!(rows(), written);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn newest_without_timestamps_fails_closed() {
     let (dir, log) = temp_log("conflict-missing-ts");

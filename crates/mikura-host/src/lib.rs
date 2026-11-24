@@ -283,6 +283,15 @@ pub enum HostRequest {
     Metrics,
     /// Take the writer role. The successful claim fences the previous writer.
     Promote,
+    // New variants go last: the implicit discriminants of earlier variants
+    // are part of the checked public API.
+    /// Source ingest of one record (overlay merge and conflict audit) only
+    /// while its identity is at `expected_gen`; `0` means absent
+    /// (`Store::ingest_fenced`, #398). `record.action_id` is required.
+    IngestFenced {
+        record: ObjectRecord,
+        expected_gen: u64,
+    },
 }
 
 pub const WIRE_V: u32 = 1;
@@ -761,6 +770,10 @@ impl Host {
             HostRequest::IngestStreamFlush => {
                 self.with_write(|store, stream| ack(stream.flush(store)))
             }
+            HostRequest::IngestFenced {
+                record,
+                expected_gen,
+            } => self.with_write(|store, _stream| ack(store.ingest_fenced(record, expected_gen))),
             HostRequest::ApplyAction {
                 id,
                 namespace,
@@ -1222,6 +1235,7 @@ fn request_op(request: &HostRequest) -> &'static str {
         HostRequest::IngestBatch { .. } => "ingest_batch",
         HostRequest::IngestStreamPush { .. } => "ingest_stream_push",
         HostRequest::IngestStreamFlush => "ingest_stream_flush",
+        HostRequest::IngestFenced { .. } => "ingest_fenced",
         HostRequest::ApplyAction { .. } => "apply_action",
         HostRequest::ApplyChangeSet { .. } => "apply_change_set",
         HostRequest::ApplyOverlay { .. } => "apply_overlay",
@@ -1239,7 +1253,9 @@ fn request_namespace(request: &HostRequest) -> Option<String> {
         HostRequest::IngestBatch { records } => {
             records.first().map(|record| record.namespace.clone())
         }
-        HostRequest::IngestStreamPush { record } => Some(record.namespace.clone()),
+        HostRequest::IngestStreamPush { record } | HostRequest::IngestFenced { record, .. } => {
+            Some(record.namespace.clone())
+        }
         HostRequest::ApplyAction { namespace, .. }
         | HostRequest::ApplyChangeSet { namespace, .. }
         | HostRequest::ApplyOverlay { namespace, .. }
