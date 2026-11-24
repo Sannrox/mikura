@@ -277,7 +277,7 @@ record of it and rebuilds the live projection from the committed log
 ([ADR 0026](decisions/0026-atomic-ingest-batch.md)). Stream push admits a
 record without updating live maps; flush appends through
 `Store::append_batch`. The `mikura` crate has no ingest
-types. Host `ingest_batch`, stream flush, `apply_action`, `apply_change_set`, `apply_overlay`, and `hide`
+types. Host `ingest_batch`, stream flush, `ingest_fenced`, `apply_action`, `apply_change_set`, `apply_overlay`, and `hide`
 return success only after that commit. `committed_pages` is the rebuild
 pointer, not a public waiter. Changelog source-sync offsets stay with the
 clerk. Long-running changelog resume is snapshot replay, not an offset
@@ -299,7 +299,12 @@ admits the patch and rematerializes a visible instance. A repeated Action id
 with the same patch is a replay ([ADR 0019](decisions/0019-overlay-retry-and-mutation-boundaries.md)).
 Hide of the instance hides the overlay. Recreate (visible write after hide)
 does not apply a prior overlay. `apply_action` remains a whole-record replace
-and does not admit an overlay.
+and does not admit an overlay. `Store::ingest_fenced` (host `ingest_fenced`)
+is that source write for one visible instance under a required Action id,
+only while the identity is at `expected_gen` (`0`: absent): the overlay merge
+and its conflict audit commit together, a moved identity fails with
+`STALE_GENERATION` and writes nothing, and a committed id is a replay that
+skips the fence (#398).
 
 `mikura-ingest::snapshot_changelog` diffs two source snapshots. New keys and
 changed `props`/`hidden`/`action_id` emit the current row; keys that disappear emit a hide
@@ -583,7 +588,7 @@ connections remain in the OS listen backlog
 
 Any other `v` is a wire error. `token` is a top-level sibling of `op`,
 never under `request`. Line-delimited JSON RPCs: `ingest_batch`,
-`ingest_stream_push`, `ingest_stream_flush`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`, `metrics`, `promote`. Evaluate accepts an
+`ingest_stream_push`, `ingest_stream_flush`, `ingest_fenced`, `apply_action`, `apply_change_set`, `apply_overlay`, `hide`, `evaluate`, `load`, `health`, `metrics`, `promote`. Evaluate accepts an
 optional exact-match `filter` or a structured `predicate` tree (`op` =
 `eq` / `neq` / `range` / `missing` / `and` / `or` / `not`). Sending both
 fails closed. Omit or `null` filter and predicate means all visible roots.

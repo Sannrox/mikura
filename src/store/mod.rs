@@ -15,6 +15,7 @@ use crate::log::{
 use crate::overlay::{ConflictAudit, OverlayPatch, OVERLAY_KIND};
 use crate::paged::{PagedFile, ServingBudget};
 use crate::schema::{SchemaDescriptor, SCHEMA_KIND};
+use crate::STALE_GENERATION;
 
 mod checkpoint;
 mod history;
@@ -1094,19 +1095,21 @@ impl Store {
         };
         let Some(id) = self.find_live(namespace, kind, key) else {
             return if expected != 0 {
-                Err(format!("stale generation: expected {expected}, live none"))
+                Err(format!(
+                    "{STALE_GENERATION}: expected {expected}, live none"
+                ))
             } else {
                 Ok(())
             };
         };
         match self.live_meta(id) {
             Some(meta) if meta.gen != expected => Err(format!(
-                "stale generation: expected {expected}, live {}",
+                "{STALE_GENERATION}: expected {expected}, live {}",
                 meta.gen
             )),
-            None if expected != 0 => {
-                Err(format!("stale generation: expected {expected}, live none"))
-            }
+            None if expected != 0 => Err(format!(
+                "{STALE_GENERATION}: expected {expected}, live none"
+            )),
             _ => Ok(()),
         }
     }
@@ -2253,6 +2256,99 @@ impl Store {
             props: action.props,
         })?;
         self.commit()
+    }
+
+    /// Source ingest of one visible instance record, fenced on its
+    /// identity's generation (#398).
+    ///
+    /// The write is [`Self::append`]: it merges a visible overlay, writes
+    /// the conflict audit row the descriptor's plan records, and commits
+    /// both together. It runs only while the live generation equals
+    /// `expected_gen` (`0`: the identity is absent); otherwise it returns a
+    /// [`STALE_GENERATION`] error and writes nothing. `record.action_id` is
+    /// required and is the retry key: a committed id on the same identity
+    /// is a replay that writes nothing and does not consult `expected_gen`,
+    /// as on [`Self::apply_action`]. The log keeps only the merged body, so
+    /// a replay compares the properties no overlay row of the identity has
+    /// ever set or cleared, in the descriptor's canonical form; an overlay
+    /// edit between the write and its retry does not turn the retry into a
+    /// body conflict. Reserved kinds and
+    /// hidden records fail closed.
+    pub fn ingest_fenced(&mut self, record: ObjectRecord, expected_gen: u64) -> Result<(), String> {
+        let id = record.action_id.clone().unwrap_or_default();
+        Self::require_action_id(&id, "action id required")?;
+        if record.kind.starts_with("mikura.") {
+            return Err(format!(
+                "ingest_fenced refuses reserved kind {}",
+                record.kind
+            ));
+        }
+        if record.hidden {
+            return Err("ingest_fenced refuses a hidden record; use hide".into());
+        }
+        self.ensure_action_commits()?;
+        let committed = self
+            .action_commits
+            .get(&(record.namespace.clone(), id.clone()))
+            .cloned();
+        let Some(committed) = committed else {
+            self.require_expected_gen(
+                &record.namespace,
+                &record.kind,
+                &record.key,
+                Some(expected_gen),
+            )?;
+            return self.append(record);
+        };
+        if committed.kind != record.kind || committed.key != record.key {
+            return Err(format!(
+                "action id {id} already committed on {}/{}/{}",
+                committed.namespace, committed.kind, committed.key
+            ));
+        }
+        let mut record = record;
+        if let Some(schema) = self.schema(&record.namespace, &record.kind)? {
+            schema.canonicalize_instance(&mut record)?;
+        }
+        let governed = self.overlay_governed(&record.namespace, &record.kind, &record.key)?;
+        let source_owned = |props: &HashMap<String, String>| -> HashMap<String, String> {
+            props
+                .iter()
+                .filter(|(name, _)| !governed.contains(name.as_str()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
+        };
+        if committed.hidden || source_owned(&committed.props) != source_owned(&record.props) {
+            return Err(format!("action id {id} body conflict"));
+        }
+        Ok(())
+    }
+
+    /// Every property any `mikura.overlay` row of `(namespace, kind, key)`
+    /// has set or cleared, across the identity's overlay history.
+    fn overlay_governed(
+        &self,
+        namespace: &str,
+        kind: &str,
+        key: &str,
+    ) -> Result<HashSet<String>, String> {
+        let mut governed = HashSet::new();
+        let rows = match self.history(
+            namespace,
+            OVERLAY_KIND,
+            &OverlayPatch::identity_key(kind, key),
+            &PropertyAcl::allow_all(),
+        ) {
+            Ok(rows) => rows,
+            Err(err) if err.starts_with("unknown identity") => return Ok(governed),
+            Err(err) => return Err(err),
+        };
+        for version in rows {
+            let patch = OverlayPatch::from_record(&version.record)?;
+            governed.extend(patch.props.into_keys());
+            governed.extend(patch.cleared);
+        }
+        Ok(governed)
     }
 
     /// Hide `(namespace, kind, key)` from evaluate. [`Self::load`] still
