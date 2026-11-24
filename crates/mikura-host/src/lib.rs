@@ -215,13 +215,6 @@ pub enum HostRequest {
         record: ObjectRecord,
     },
     IngestStreamFlush,
-    /// Source ingest of one record (overlay merge and conflict audit) only
-    /// while its identity is at `expected_gen`; `0` means absent
-    /// (`Store::ingest_fenced`, #398). `record.action_id` is required.
-    IngestFenced {
-        record: ObjectRecord,
-        expected_gen: u64,
-    },
     ApplyAction {
         id: String,
         namespace: String,
@@ -290,6 +283,15 @@ pub enum HostRequest {
     Metrics,
     /// Take the writer role. The successful claim fences the previous writer.
     Promote,
+    // New variants go last: the implicit discriminants of earlier variants
+    // are part of the checked public API.
+    /// Source ingest of one record (overlay merge and conflict audit) only
+    /// while its identity is at `expected_gen`; `0` means absent
+    /// (`Store::ingest_fenced`, #398). `record.action_id` is required.
+    IngestFenced {
+        record: ObjectRecord,
+        expected_gen: u64,
+    },
 }
 
 pub const WIRE_V: u32 = 1;
