@@ -61,6 +61,9 @@ runs **main's** `release.yml`, never the copy at the tagged commit.
 - verifies the signed tag with main's `scripts/release/verify-tag.sh` and
   main's allowed keys against the tagged commit's crate versions
 - requires the tagged commit to be on `main`
+- runs the takeover drill on that commit; a failed oracle or a time-to-accept
+  regression against the nightly baseline stops the release
+  ([docs/benchmarks.md](docs/benchmarks.md#takeover-drill))
 - lints, tests, builds, tags the image, and writes the manifest `git_sha` from
   that commit
 - writes an SBOM, attests provenance, and drafts the GitHub Release through

@@ -131,6 +131,25 @@ fn durable_batch_stays_invisible_until_applied_then_appears_whole() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #364 drill: a batch's swap lands before the writer adopts it, so a
+/// concurrent write or health check read the writer's own swap as another
+/// writer's and refused writes as fenced.
+#[test]
+fn own_durable_swap_does_not_fence_the_writer() {
+    let (dir, _log, shared) = seeded("split-own-swap");
+    while_paused(
+        &shared,
+        CommitStage::Durable,
+        vec![shipment("s9", "4")],
+        |store| assert!(!store.is_fenced(), "own landed swap read as a fence"),
+    );
+    let store = shared.read().unwrap();
+    assert!(!store.is_fenced());
+    assert!(visible(&store, "s9"));
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn crash_between_sync_and_apply_recovers_the_batch_once() {
     let (dir, log, shared) = seeded("split-crash");

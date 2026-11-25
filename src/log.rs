@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::codec::{read_str, take, write_str};
@@ -132,6 +132,11 @@ pub struct LogWriter {
     read_only: bool,
     /// True after a writer-mode swap lost the version precondition.
     fenced: AtomicBool,
+    /// Version a shared-access swap ([`Self::write_staged`]) is claiming or
+    /// has landed but the writer has not adopted yet; 0 when none.
+    /// [`Self::is_fenced`] counts it as this writer's own, so a concurrent
+    /// check does not read our own swap as another writer's.
+    staging_version: AtomicU64,
     #[cfg(test)]
     stage_hook: Option<StageHook>,
     #[cfg(test)]
@@ -386,6 +391,7 @@ impl LogWriter {
             encrypted_log: false,
             read_only: false,
             fenced: AtomicBool::new(false),
+            staging_version: AtomicU64::new(0),
             #[cfg(test)]
             stage_hook: None,
             #[cfg(test)]
@@ -848,9 +854,12 @@ impl LogWriter {
         if self.read_only {
             return false;
         }
+        let own = self
+            .manifest_version
+            .max(self.staging_version.load(Ordering::SeqCst));
         matches!(
             self.live_manifest(),
-            Ok(Some(manifest)) if manifest.version > self.manifest_version
+            Ok(Some(manifest)) if manifest.version > own
         )
     }
 
@@ -1296,6 +1305,7 @@ impl LogWriter {
         if let Some(segment) = staged.segment.clone() {
             self.segments.push(segment);
             self.manifest_version = staged.manifest_version;
+            *self.staging_version.get_mut() = 0;
             self.pending_pages.clear();
         }
     }
@@ -1631,10 +1641,13 @@ impl LogWriter {
         snapshot.segments.push(segment.clone());
         snapshot.committed_pages = staged.committed;
         let encoded = crate::objects::encode_manifest(&snapshot)?;
+        self.staging_version
+            .store(self.manifest_version + 1, Ordering::SeqCst);
         let (version, cas_fsyncs) =
             store
                 .cas(self.manifest_version, &encoded)
                 .inspect_err(|err| {
+                    self.staging_version.store(0, Ordering::SeqCst);
                     self.note_cas_err(err);
                 })?;
         fsyncs += cas_fsyncs;
