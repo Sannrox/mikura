@@ -91,7 +91,7 @@ fn evaluate(store: &Store, request: &EvaluateRequest) -> Vec<Group> {
 fn one_property_groups_match_a_walk_and_reopen() {
     let (dir, log, mut store) = seed("groups-dual");
     let live = evaluate(&store, &by_weight());
-    assert_eq!(count_sum(&live), count_sum(&evaluate(&store, &walked())));
+    assert_eq!(live, evaluate(&store, &walked()));
     assert_eq!(
         count_sum(&live),
         [
@@ -103,6 +103,7 @@ fn one_property_groups_match_a_walk_and_reopen() {
 
     store.append(ship("s6", "2", "1", false)).unwrap();
     let after_append = evaluate(&store, &by_weight());
+    assert_eq!(after_append, evaluate(&store, &walked()));
     assert_eq!(
         count_sum(&after_append),
         [
@@ -116,6 +117,7 @@ fn one_property_groups_match_a_walk_and_reopen() {
         .hide(NS, "Shipment", "s3", &PropertyAcl::allow_all())
         .unwrap();
     let after_hide = evaluate(&store, &by_weight());
+    assert_eq!(after_hide, evaluate(&store, &walked()));
     assert_eq!(
         count_sum(&after_hide),
         [
@@ -127,17 +129,35 @@ fn one_property_groups_match_a_walk_and_reopen() {
 
     drop(store);
     let reopened = Store::open(&log).unwrap();
-    assert_eq!(
-        count_sum(&evaluate(&reopened, &by_weight())),
-        count_sum(&after_hide)
-    );
+    assert_eq!(evaluate(&reopened, &by_weight()), after_hide);
     drop(reopened);
     std::fs::remove_file(Store::join_map_path(&log)).unwrap();
     let replayed = Store::open(&log).unwrap();
+    assert_eq!(evaluate(&replayed, &by_weight()), after_hide);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #406: min, max, n and avg match a walk after the current extreme leaves
+/// its group, by update and by hide, and for a value that never parses.
+#[test]
+fn group_extremes_follow_updates() {
+    let (dir, _, mut store) = seed("groups-extremes");
+    assert_eq!(evaluate(&store, &by_weight()), evaluate(&store, &walked()));
+    store.append(ship("s1", "1", "2", false)).unwrap();
+    store.append(ship("s9", "1", "n/a", false)).unwrap();
+    let live = evaluate(&store, &by_weight());
+    assert_eq!(live, evaluate(&store, &walked()));
+    let one = &live[0];
     assert_eq!(
-        count_sum(&evaluate(&replayed, &by_weight())),
-        count_sum(&after_hide)
+        (one.count, one.n, one.min, one.max),
+        (3, 2, Some(2), Some(5))
     );
+    store
+        .hide(NS, "Shipment", "s2", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(evaluate(&store, &by_weight()), evaluate(&store, &walked()));
+    store.append(ship("s3", "1", "7", false)).unwrap();
+    assert_eq!(evaluate(&store, &by_weight()), evaluate(&store, &walked()));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

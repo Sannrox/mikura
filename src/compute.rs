@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::acl::AclError;
-use crate::joins::{JoinMaps, GROUP_ABSENT};
+use crate::joins::{GroupStats, JoinMaps, GROUP_ABSENT};
 use crate::objectset::{
     Aggregate, Breakdown, EvaluateRequest, EvaluateResponse, Group, Hop, Predicate, Sort,
     MAX_GROUPS,
@@ -592,7 +592,7 @@ struct GroupFold {
     distinct: HashSet<String>,
 }
 
-/// One-property, zero-hop, unrestricted count+sum from commit-time groups.
+/// One-property, zero-hop, unrestricted breakdown served from commit-time groups.
 fn matching_group_property<'a>(
     request: &EvaluateRequest,
     breakdown: &'a Breakdown,
@@ -629,8 +629,7 @@ fn maintained_group_property<'a>(
     Some(property)
 }
 
-/// Count and sum from commit-time groups. Min/max/n stay unset; those
-/// fields are filled only when the request still walks.
+/// Groups from commit-time tables, the same answer a walk gives.
 fn groups_from_rollups(
     maps: &JoinMaps,
     request: &EvaluateRequest,
@@ -642,8 +641,8 @@ fn groups_from_rollups(
     else {
         return Ok(None);
     };
-    let mut merged: HashMap<Option<String>, (usize, i64)> = HashMap::new();
-    for (value_id, count, sum) in rows {
+    let mut merged: HashMap<Option<String>, (usize, i64, GroupStats)> = HashMap::new();
+    for (value_id, count, sum, stats) in rows {
         if count == 0 {
             continue;
         }
@@ -655,26 +654,32 @@ fn groups_from_rollups(
                 Some(value) => Some(value.to_string()),
             }
         };
-        let entry = merged.entry(key).or_insert((0, 0));
+        let entry = merged.entry(key).or_default();
         entry.0 = entry.0.saturating_add(count as usize);
         entry.1 = entry.1.wrapping_add(sum);
+        entry.2.merge(stats);
     }
     if merged.len() > max_groups {
         return Err(ComputeError::TooManyGroups { max: max_groups });
     }
-    let mut out: Vec<Group> = merged
+    let mut out = merged
         .into_iter()
-        .map(|(key, (count, sum))| Group {
-            key: vec![key],
-            count,
-            sum,
-            n: 0,
-            min: None,
-            max: None,
-            avg: (sum, 0),
-            distinct: breakdown.distinct.as_ref().map(|_| 0),
+        .map(|(key, (count, sum, stats))| {
+            let checked = i64::try_from(stats.exact).map_err(|_| {
+                ComputeError::Overflow(format!("average of {} overflows i64", request.sum_property))
+            })?;
+            Ok(Group {
+                key: vec![key],
+                count,
+                sum,
+                n: stats.n,
+                min: stats.min,
+                max: stats.max,
+                avg: (checked, stats.n),
+                distinct: breakdown.distinct.as_ref().map(|_| 0),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, ComputeError>>()?;
     out.sort_by(|a, b| {
         let rank = |key: &[Option<String>]| -> Vec<(bool, String)> {
             key.iter()
