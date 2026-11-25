@@ -20,6 +20,7 @@ MIKURA_BENCH_SIZES=10000000 cargo bench -p mikura-host --bench product   # opt-i
 | `MIKURA_BENCH_SIZES` | Comma-separated object counts, each at least 1000. Default `10000`. |
 | `MIKURA_BENCH_OUT` | Write the results and machine class as JSON to this file. |
 | `MIKURA_BENCH_BASELINE` | Compare with a previous JSON file. Any p50 more than 20% above the baseline p50 for the same measurement and size fails the run. |
+| `MIKURA_BENCH_BACKEND` | `file` (default) or `object`: build each fixture on a loopback HTTP object namespace. A baseline compares only with the same backend. |
 
 `cargo bench` runs the binary from `crates/mikura-host`, so relative paths in
 these variables resolve there. Use absolute paths.
@@ -273,6 +274,86 @@ This is not a latency SLO.
 | file | 0.077 ms | 13 000 |
 | object (loopback HTTP) | 0.354 ms | 2 800 |
 
+### Serving bar on the object backend
+
+[#364](https://github.com/Sannrox/mikura/issues/364).
+`MIKURA_BENCH_BACKEND=object MIKURA_BENCH_SIZES=1000000`, same fixture on
+a loopback HTTP object namespace. Apple M2 Pro, 10 CPUs, macOS arm64,
+2026-11-25. `log_size` is the local stub only; the log lives in the
+namespace.
+
+| Size | Parity / policy / restart | `restart` | `peak_rss` | `open_with_sidecar` p50 | `open_without_sidecar` p50 | `point_read` p50 / p99 | `host_write_alone` p50 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10^4 | pass | not recorded | 10.4 MiB | 29.5 ms | 68.9 ms | 1.0 µs / 1.5 µs | 1.7 ms |
+| 10^6 | pass | 1.42 s | 767.2 MiB | 4.07 s | 6.94 s | 4.1 µs / 24.6 µs | 4.6 ms |
+
+Reads stay in process after open, so query rows match the file backend's
+order of magnitude. Open pays the object reads: with the sidecar it is
+about 1.8x the file backend's 2.23 s at 10^6.
+
+## Takeover drill
+
+[#364](https://github.com/Sannrox/mikura/issues/364), ADR 0047 §5.
+`crates/mikura-host/benches/takeover.rs` drills takeover and fencing under
+write load, on the object backend, with spawned `mikura-host` processes:
+
+```sh
+cargo bench -p mikura-host --bench takeover
+MIKURA_DRILL_ROUNDS=5 MIKURA_DRILL_OUT=drill.json MIKURA_DRILL_BASELINE=old.json \
+  cargo bench -p mikura-host --bench takeover
+```
+
+Each round starts a loopback object namespace, a writer, and a read-only
+standby. Each node reaches storage through its own fault proxy, as two
+machines have their own route, and has its own copy of the log stub. Four
+clients write one new key per request at a combined 25 writes/s. The
+object client opens a connection per request, so unpaced load runs out of
+ephemeral ports within a few rounds on macOS. The operator step after a
+fault runs at once; this repository has no failure detector.
+
+| Scenario | Fault | Operator step | Displaced writer |
+| --- | --- | --- | --- |
+| `kill_writer` | SIGKILL the writer | promote the standby | killed |
+| `partition_mid_commit` | hold the writer's manifest swap, after its segment put, and all later storage traffic | promote the standby, then heal: the held swap lands late | refuses writes, role `fenced` |
+| `drop_swap_response` | the swap lands, its response is lost | none: the writer resolves it by readback | not displaced |
+| `second_writer` | start a second writer on the namespace | none: the next swap fences one of them | refuses writes, role `fenced` |
+
+Every round checks, and any failure fails the run:
+
+- every acknowledged write is on a fresh read-only open, with the value
+  that was acknowledged;
+- a write that was not acknowledged is read back on the new writer, and
+  retried only when absent; a retried key has one generation, never two;
+- a displaced writer that still runs refuses a write and reports `fenced`.
+
+Each round records time from the fault to the first write the final writer
+acknowledges, and acknowledged writes before and after. `MIKURA_DRILL_OUT`
+writes every round as JSON. With `MIKURA_DRILL_BASELINE`, a scenario whose
+median time-to-accept is more than 1.5 times and 250 ms above the
+baseline median fails the run. A missing baseline file gates only the
+oracles. Single-writer throughput is one unpaced 2 s burst per run, after
+the scenarios.
+
+Apple M2 Pro, 10 CPUs, macOS arm64, `cargo bench` release profile, three
+rounds, 2026-11-25. Loopback object store, so no network round trip:
+
+| Scenario | Time to accept, median (rounds) | Lost | Duplicates |
+| --- | --- | ---: | ---: |
+| `kill_writer` | 211 ms (217, 211, 211) | 0 | 0 |
+| `partition_mid_commit` | 220 ms (230, 220, 215) | 0 | 0 |
+| `drop_swap_response` | 15 ms (15, 25, 11) | 0 | 0 |
+| `second_writer` | 254 ms (272, 252, 254) | 0 | 0 |
+
+Single writer: **360 acknowledged writes/s**, four unpaced clients, one
+record per `ingest_batch`, loopback object store. The drill's proxy counts
+about ten object-store requests per such write through the host, more
+than the two waves of a bare `LogWriter` commit above.
+
+The drill found that a batch's swap landed before the writer adopted it,
+so a concurrent write or health check read the writer's own swap as
+another writer's and refused writes as fenced. The writer now counts a
+swap it is making as its own until it adopts it.
+
 ## Nightly gate
 
 `.github/workflows/bench.yml` runs 10^4 and 10^6 every night on
@@ -283,3 +364,8 @@ fail when a p50 regresses by more than 20%. Replace the baseline with a
 manual run (`reset_baseline: true`) after an accepted change. The harness
 refuses a baseline from another machine class, so the table above is for
 reading, not for the gate.
+
+The same workflow runs the takeover drill every night and keeps its own
+per-class baseline the same way. The release workflow runs the drill on
+the release commit before packaging and gates time-to-accept on that
+baseline when the runner's class has one.

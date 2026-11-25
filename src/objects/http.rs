@@ -459,10 +459,20 @@ impl LocalObjectServer {
 }
 
 impl Drop for LocalObjectServer {
+    /// Wake the accept loop with a connection until it exits. A wake-up
+    /// connect can fail under connection churn, so it is retried; after
+    /// five seconds the thread is left behind rather than hang the caller.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(50));
-        if let Some(join) = self.join.take() {
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !join.is_finished() && std::time::Instant::now() < deadline {
+            let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(10));
+        }
+        if join.is_finished() {
             let _ = join.join();
         }
     }

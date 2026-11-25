@@ -11,25 +11,28 @@
 //! MIKURA_BENCH_SIZES=10000000 ...                            # opt-in 10^7
 //! MIKURA_BENCH_OUT=results.json ...                          # write JSON
 //! MIKURA_BENCH_BASELINE=baseline.json ...                    # regression gate
+//! MIKURA_BENCH_BACKEND=object ...                            # HTTP object backend
 //! ```
 //!
 //! Every measurement is lower-is-better. With a baseline, any p50 more than
 //! 20% above the baseline p50 for the same name and size fails the run.
 
+mod common;
+
+use common::{host_rpc, machine, spawn_host, Machine};
 use mikura::{
     tenant_namespace, AclError, Aggregate, Breakdown, ComputeBackend, ComputeError,
-    EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, KeyPurpose, LocalCompute, LogKeys,
-    MemoryKeyProvider, ObjectRecord, Predicate, PropertyAcl, RuntimeProfile, SchemaDescriptor,
-    SchemaLink, ServingBudget, Sort, Store, TenantId, UnwrapGrant, STORE_KEY_TENANT,
+    EvaluateRequest, EvaluateResponse, ExactMatch, Group, Hop, KeyPurpose, LocalCompute,
+    LocalObjectServer, LogKeys, MemoryKeyProvider, ObjectBackend, ObjectRecord, Predicate,
+    PropertyAcl, RuntimeProfile, SchemaDescriptor, SchemaLink, ServingBudget, Sort, Store,
+    TenantId, UnwrapGrant, STORE_KEY_TENANT,
 };
 use mikura_host::{Host, HostRequest};
 use mikura_ingest::BatchIngest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -54,6 +57,9 @@ const SERVING_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 struct Report {
     machine: Machine,
+    /// `file` or `object`. Older result files are `file`.
+    #[serde(default = "file_backend")]
+    backend: String,
     results: Vec<Measurement>,
     #[serde(default)]
     serving_bar: Vec<ServingBarSize>,
@@ -72,14 +78,6 @@ struct ServingBarSize {
     /// Serving RSS cap (#353). ADR 0045 `MemoryBudget` is not this.
     memory_budget: String,
     errors: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Machine {
-    os: String,
-    arch: String,
-    cpus: usize,
-    cpu: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,10 +111,16 @@ impl Measurement {
     }
 }
 
+fn file_backend() -> String {
+    "file".into()
+}
+
 /// Temp directory for one size; removed on drop. Unique per process and run.
+/// On the object backend it also owns the loopback object namespace.
 struct Fixture {
     dir: PathBuf,
     log: PathBuf,
+    objects: Option<LocalObjectServer>,
 }
 
 impl Fixture {
@@ -131,7 +135,54 @@ impl Fixture {
         ));
         std::fs::create_dir_all(&dir).expect("bench temp dir");
         let log = dir.join("objects.mikura");
-        Self { dir, log }
+        Self {
+            dir,
+            log,
+            objects: None,
+        }
+    }
+
+    /// A fresh log on `backend`. Every later open of `log`, in process or
+    /// in a spawned host, follows the log's locator to the same namespace.
+    fn create(objects: u64, backend: Backend) -> Result<(Self, Store), String> {
+        let mut fixture = Self::new(objects);
+        let store = match backend {
+            Backend::File => Store::create(&fixture.log)?,
+            Backend::Object => {
+                let server = LocalObjectServer::start()?;
+                let http =
+                    ObjectBackend::http(server.endpoint(), None).map_err(|e| e.to_string())?;
+                fixture.objects = Some(server);
+                Store::create_with(&fixture.log, http)?
+            }
+        };
+        Ok((fixture, store))
+    }
+}
+
+/// Where the fixture log keeps its objects (`MIKURA_BENCH_BACKEND`).
+#[derive(Clone, Copy)]
+enum Backend {
+    File,
+    Object,
+}
+
+impl Backend {
+    fn from_env() -> Result<Self, String> {
+        match std::env::var("MIKURA_BENCH_BACKEND").as_deref() {
+            Err(_) | Ok("file") => Ok(Self::File),
+            Ok("object") => Ok(Self::Object),
+            Ok(other) => Err(format!(
+                "MIKURA_BENCH_BACKEND `{other}` must be `file` or `object`"
+            )),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Object => "object",
+        }
     }
 }
 
@@ -303,10 +354,13 @@ fn hop(far_kind: &str, join_property: &str) -> Hop {
 }
 
 /// Run every measurement for one fixture size.
-fn bench_size(objects: u64, results: &mut Vec<Measurement>) -> Result<ServingBarSize, String> {
-    let fixture = Fixture::new(objects);
+fn bench_size(
+    objects: u64,
+    backend: Backend,
+    results: &mut Vec<Measurement>,
+) -> Result<ServingBarSize, String> {
+    let (fixture, mut store) = Fixture::create(objects, backend)?;
     let scale = Scale::new(objects);
-    let mut store = Store::create(&fixture.log)?;
     store.append(shipment_schema())?;
 
     // Ingest the fixture in about twenty batches; each batch is a sample.
@@ -771,63 +825,9 @@ fn serving_policy(log: &Path, scale: &Scale) -> Result<(), String> {
     Ok(())
 }
 
-fn host_rpc(
-    addr: SocketAddr,
-    body: &serde_json::Value,
-) -> Result<mikura_host::HostResponse, String> {
-    let mut client = std::net::TcpStream::connect(addr).map_err(|err| format!("connect: {err}"))?;
-    client
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .map_err(|err| err.to_string())?;
-    client
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .map_err(|err| err.to_string())?;
-    let line = serde_json::to_string(body).map_err(|err| err.to_string())?;
-    client
-        .write_all(line.as_bytes())
-        .and_then(|_| client.write_all(b"\n"))
-        .map_err(|err| format!("write: {err}"))?;
-    let mut buf = String::new();
-    client
-        .read_to_string(&mut buf)
-        .map_err(|err| format!("read: {err}"))?;
-    serde_json::from_str(buf.trim()).map_err(|err| format!("decode: {err}"))
-}
-
-fn spawn_listening_host(log: &Path) -> Result<(std::process::Child, SocketAddr), String> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mikura-host"))
-        .args([
-            "--log",
-            log.to_str().ok_or("log path is not utf-8")?,
-            "--bind",
-            "127.0.0.1:0",
-            "--stream-bound",
-            "8",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("spawn mikura-host: {err}"))?;
-    let stdout = child.stdout.take().ok_or("host stdout")?;
-    let mut line = String::new();
-    BufReader::new(stdout)
-        .read_line(&mut line)
-        .map_err(|err| format!("read listening line: {err}"))?;
-    let addr = line
-        .strip_prefix("listening ")
-        .map(str::trim)
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| {
-            let _ = child.kill();
-            format!("expected listening address, got {line:?}")
-        })?;
-    Ok((child, addr))
-}
-
 fn serving_restart(log: &Path, scale: &Scale) -> Result<u64, String> {
     let key = next_visible(&mut 1, scale);
-    let (mut live, addr) = spawn_listening_host(log)?;
+    let (mut live, addr) = spawn_host(log, &[])?;
     let loaded = host_rpc(
         addr,
         &serde_json::json!({
@@ -855,7 +855,7 @@ fn serving_restart(log: &Path, scale: &Scale) -> Result<u64, String> {
     let _ = live.kill();
     let _ = live.wait();
     let started = Instant::now();
-    let (mut reopened, addr) = spawn_listening_host(log)?;
+    let (mut reopened, addr) = spawn_host(log, &[])?;
     let health = host_rpc(addr, &serde_json::json!({"op": "health"}))?;
     let restart_ns = started.elapsed().as_nanos() as u64;
     if !health.ok || !health.health.as_ref().map(|row| row.ready).unwrap_or(false) {
@@ -1070,31 +1070,6 @@ fn bench_encrypted_append(results: &mut Vec<Measurement>) -> Result<(), String> 
     Ok(())
 }
 
-fn machine() -> Machine {
-    let cpu = std::process::Command::new("sysctl")
-        .args(["-n", "machdep.cpu.brand_string"])
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|name| !name.is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/proc/cpuinfo")
-                .ok()
-                .and_then(|info| {
-                    info.lines()
-                        .find_map(|line| line.strip_prefix("model name"))
-                        .map(|rest| rest.trim_start_matches([' ', '\t', ':']).to_string())
-                })
-        })
-        .unwrap_or_else(|| "unknown".into());
-    Machine {
-        os: std::env::consts::OS.into(),
-        arch: std::env::consts::ARCH.into(),
-        cpus: std::thread::available_parallelism().map_or(1, usize::from),
-        cpu,
-    }
-}
-
 fn sizes() -> Result<Vec<u64>, String> {
     let Ok(raw) = std::env::var("MIKURA_BENCH_SIZES") else {
         return Ok(DEFAULT_SIZES.to_vec());
@@ -1139,14 +1114,19 @@ fn regressions(current: &[Measurement], baseline: &[Measurement]) -> Vec<String>
 
 fn run() -> Result<bool, String> {
     let machine = machine();
+    let backend = Backend::from_env()?;
     println!(
-        "machine: {} {} {} cpus, {}",
-        machine.os, machine.arch, machine.cpus, machine.cpu
+        "machine: {} {} {} cpus, {}; backend {}",
+        machine.os,
+        machine.arch,
+        machine.cpus,
+        machine.cpu,
+        backend.name()
     );
     let mut results = Vec::new();
     let mut serving_bar = Vec::new();
     for objects in sizes()? {
-        serving_bar.push(bench_size(objects, &mut results)?);
+        serving_bar.push(bench_size(objects, backend, &mut results)?);
     }
     bench_encrypted_append(&mut results)?;
     println!(
@@ -1204,6 +1184,7 @@ fn run() -> Result<bool, String> {
         .any(|row| !row.parity || !row.policy || !row.restart);
     let report = Report {
         machine,
+        backend: backend.name().into(),
         results,
         serving_bar,
     };
@@ -1224,6 +1205,12 @@ fn run() -> Result<bool, String> {
         return Err(format!(
             "baseline machine {:?} differs from this machine {:?}; compare on the same class",
             baseline.machine, report.machine
+        ));
+    }
+    if baseline.backend != report.backend {
+        return Err(format!(
+            "baseline backend {} differs from this run's {}",
+            baseline.backend, report.backend
         ));
     }
     let failed = regressions(&report.results, &baseline.results);

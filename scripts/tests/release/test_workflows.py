@@ -162,6 +162,12 @@ class Release(unittest.TestCase):
                 with self.subTest(job=name, fn=fn):
                     self.assertNotIn(fn, str(job.get("if", "")))
 
+    def test_takeover_drill_gates_packaging(self):
+        drill = self.jobs["drill"]
+        self.assertTrue(any("--bench takeover" in runs(s) for s in drill["steps"]))
+        self.assertIn("drill", needs(self.jobs["package"]))
+        self.assertNotIn("if", drill, "the drill runs for every release and dry run")
+
     def test_publish_records_attestations_then_drafts_notes_from_changelog(self):
         steps = self.jobs["publish"]["steps"]
         record = next(i for i, s in enumerate(steps) if "manifest.py record-attestations" in runs(s))
