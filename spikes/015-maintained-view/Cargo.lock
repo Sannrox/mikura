@@ -92,6 +92,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "envelope-keys"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f92cc45a0de9e2e5e8b15ed1266515952c7544613f74946b471e73dd08d8756b"
+dependencies = [
+ "aes-gcm",
+ "libc",
+ "rand",
+ "serde",
+ "zeroize",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -151,12 +164,12 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mikura"
-version = "0.5.0-rc.1"
+version = "0.6.0"
 dependencies = [
  "aes-gcm",
  "crc32fast",
+ "envelope-keys",
  "rand",
- "sekai-keys",
  "serde",
  "serde_json",
 ]
@@ -248,18 +261,6 @@ dependencies = [
 name = "sabun"
 version = "0.1.0"
 source = "git+https://github.com/Sannrox/sabun.git?rev=4bb1efd69885911fa8baffbb92ad3d51f65cab88#4bb1efd69885911fa8baffbb92ad3d51f65cab88"
-
-[[package]]
-name = "sekai-keys"
-version = "1.0.0"
-source = "git+https://github.com/Sannrox/sekai-chisei.git?rev=1b2e12789a2b360759a087252367cf4bc633caf0#1b2e12789a2b360759a087252367cf4bc633caf0"
-dependencies = [
- "aes-gcm",
- "libc",
- "rand",
- "serde",
- "zeroize",
-]
 
 [[package]]
 name = "serde"

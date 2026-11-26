@@ -1,6 +1,6 @@
 //! Envelope encryption for `MIKURAV3` logs (ADR 0044).
 //!
-//! The embedder unwraps through [`sekai_keys::KeyProvider`]. Mikura never
+//! The embedder unwraps through [`envelope_keys::KeyProvider`]. Mikura never
 //! stores plaintext keys. Wrapped DEKs live in the superblock catalog.
 //! Sidecar and checkpoint *indexes* use the store DEK; each tenant's
 //! payload is sealed with that tenant's DEK so shredding the tenant key
@@ -12,11 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
-use rand::RngCore;
-pub use sekai_keys::{
+pub use envelope_keys::{
     Dek, KeyError, KeyId, KeyProvider, KeyPurpose, MemoryKeyProvider, RuntimeProfile, TenantId,
     UnwrapGrant, WrappedDek,
 };
+use rand::RngCore;
 
 use crate::codec::{read_str, take, write_str};
 

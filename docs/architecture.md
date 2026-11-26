@@ -36,7 +36,7 @@ mikura-host  →  mikura-ingest  →  mikura
 
 `mikura` owns the object log, live maps, schema, overlay, ACL, backup,
 evaluate, and the query-tuning advisor. Those modules change together
-and share the interned identity types, so they stay one crate. Encryption (`aes-gcm`, `sekai-keys`) lives
+and share the interned identity types, so they stay one crate. Encryption (`aes-gcm`, `envelope-keys`) lives
 here because `LogWriter` and the sidecar call it. `mikura-ingest` is the
 write orchestrator and depends on `mikura` only. `mikura-host` speaks JSON
 lines and wires `Store` plus ingest. Public-API integration and the 1.0

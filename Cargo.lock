@@ -92,6 +92,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "envelope-keys"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f92cc45a0de9e2e5e8b15ed1266515952c7544613f74946b471e73dd08d8756b"
+dependencies = [
+ "aes-gcm",
+ "libc",
+ "rand",
+ "serde",
+ "zeroize",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,8 +168,8 @@ version = "0.6.0"
 dependencies = [
  "aes-gcm",
  "crc32fast",
+ "envelope-keys",
  "rand",
- "sekai-keys",
  "serde",
  "serde_json",
 ]
@@ -251,18 +264,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "sekai-keys"
-version = "1.0.0"
-source = "git+https://github.com/Sannrox/sekai-chisei.git?rev=1b2e12789a2b360759a087252367cf4bc633caf0#1b2e12789a2b360759a087252367cf4bc633caf0"
-dependencies = [
- "aes-gcm",
- "libc",
- "rand",
- "serde",
- "zeroize",
 ]
 
 [[package]]
