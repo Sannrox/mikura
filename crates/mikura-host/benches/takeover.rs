@@ -17,7 +17,8 @@
 //!
 //! Oracles, every round: no acknowledged write is lost; a write that was
 //! not acknowledged ends committed or not committed after readback and is
-//! retried only when absent, so no key has two generations; a displaced
+//! retried only when absent (blindly at the same source version under
+//! `VersionedKillWriter`), so no key has two generations; a displaced
 //! writer that is still running refuses writes. Any failed oracle fails
 //! the run. With a baseline, a scenario whose median time-to-accept is
 //! more than `REGRESSION_LIMIT` times and `REGRESSION_FLOOR` above the
@@ -76,13 +77,18 @@ enum Scenario {
     DropSwapResponse,
     /// A second process starts as a writer on the same namespace.
     SecondWriter,
+    /// `KillWriter` with `ingest_versioned` load (ADR 0056). Unacknowledged
+    /// writes are retried blindly at the same source version, with no
+    /// readback, and must still leave one generation per key.
+    VersionedKillWriter,
 }
 
-const SCENARIOS: [Scenario; 4] = [
+const SCENARIOS: [Scenario; 5] = [
     Scenario::KillWriter,
     Scenario::PartitionMidCommit,
     Scenario::DropSwapResponse,
     Scenario::SecondWriter,
+    Scenario::VersionedKillWriter,
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,6 +121,10 @@ struct Round {
     committed_after_readback: usize,
     /// Not acknowledged, absent on readback, retried once.
     not_committed_after_readback: usize,
+    /// Not acknowledged, retried at the same source version without
+    /// readback (`VersionedKillWriter`).
+    #[serde(default)]
+    retried_blind: usize,
     lost: usize,
     duplicates: usize,
     /// `killed`, `fenced`, or `not displaced`.
@@ -405,7 +415,8 @@ struct Attempt {
 type Ledger = Arc<Mutex<Vec<Attempt>>>;
 
 /// `CLIENTS` threads writing one new key per request to one node, together
-/// at `rate` writes per second or unpaced. A client stops at its first
+/// at `rate` writes per second or unpaced, through `ingest_versioned` when
+/// `versioned`. A client stops at its first
 /// unacknowledged write, as a client that gives up on that node would;
 /// readback settles the write afterwards. Dropping a load stops it.
 struct Load {
@@ -414,7 +425,13 @@ struct Load {
 }
 
 impl Load {
-    fn start(node: &Node, next: &Arc<AtomicU64>, ledger: &Ledger, rate: Option<u32>) -> Self {
+    fn start(
+        node: &Node,
+        next: &Arc<AtomicU64>,
+        ledger: &Ledger,
+        rate: Option<u32>,
+        versioned: bool,
+    ) -> Self {
         let every = rate.map(|rate| Duration::from_secs(CLIENTS as u64) / rate.max(1));
         let stop = Arc::new(AtomicBool::new(false));
         let threads = (0..CLIENTS)
@@ -431,7 +448,7 @@ impl Load {
                         }
                         let id = next.fetch_add(1, Ordering::Relaxed);
                         let key = format!("k{id}");
-                        let acked = write(addr, &key, id);
+                        let acked = write(addr, &key, id, versioned);
                         if let Ok(mut ledger) = ledger.lock() {
                             ledger.push(Attempt {
                                 key,
@@ -469,7 +486,9 @@ impl Drop for Load {
     }
 }
 
-fn write(addr: SocketAddr, key: &str, attempt: u64) -> bool {
+/// One write of `attempt` to `key`. A versioned write uses `attempt + 1` as
+/// its source version, so a retry of the same attempt is a duplicate.
+fn write(addr: SocketAddr, key: &str, attempt: u64, versioned: bool) -> bool {
     let record = serde_json::json!({
         "gen": 1,
         "namespace": NS,
@@ -478,11 +497,16 @@ fn write(addr: SocketAddr, key: &str, attempt: u64) -> bool {
         "hidden": false,
         "props": {"attempt": attempt.to_string()},
     });
-    host_rpc(
-        addr,
-        &serde_json::json!({"op": "ingest_batch", "records": [record]}),
-    )
-    .is_ok_and(|reply| reply.ok)
+    let request = if versioned {
+        serde_json::json!({
+            "op": "ingest_versioned",
+            "record": record,
+            "source_version": attempt + 1,
+        })
+    } else {
+        serde_json::json!({"op": "ingest_batch", "records": [record]})
+    };
+    host_rpc(addr, &request).is_ok_and(|reply| reply.ok)
 }
 
 fn loaded(addr: SocketAddr, key: &str) -> Result<bool, String> {
@@ -540,8 +564,11 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
     let next = Arc::new(AtomicU64::new(0));
     let ledger: Ledger = Arc::default();
     let mut out = Round::default();
+    let versioned = scenario == Scenario::VersionedKillWriter;
+    let load =
+        |node: &Node| Load::start(node, &next, &ledger, Some(PACED_WRITES_PER_SEC), versioned);
 
-    let mut loads = vec![Load::start(&a, &next, &ledger, Some(PACED_WRITES_PER_SEC))];
+    let mut loads = vec![load(&a)];
     std::thread::sleep(STEADY);
 
     // Inject the fault and run the operator step. `final_writer` is the node
@@ -549,11 +576,11 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
     // lost it.
     let mut second = None;
     let (t0, final_writer, displaced): (Instant, &Node, Option<&Node>) = match scenario {
-        Scenario::KillWriter => {
+        Scenario::KillWriter | Scenario::VersionedKillWriter => {
             a.kill();
             let t0 = Instant::now();
             b.promote()?;
-            loads.push(Load::start(&b, &next, &ledger, Some(PACED_WRITES_PER_SEC)));
+            loads.push(load(&b));
             (t0, &b, None)
         }
         Scenario::PartitionMidCommit => {
@@ -561,7 +588,7 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
             let t0 = wait_for(ACCEPT_BOUND, || a.proxy.read(|s| s.held_at).flatten())
                 .ok_or("writer made no manifest swap to partition")?;
             b.promote()?;
-            loads.push(Load::start(&b, &next, &ledger, Some(PACED_WRITES_PER_SEC)));
+            loads.push(load(&b));
             (t0, &b, Some(&a))
         }
         Scenario::DropSwapResponse => {
@@ -573,7 +600,7 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
         Scenario::SecondWriter => {
             let t0 = Instant::now();
             let c = Node::attach("c", &dir.0, &a.log, upstream, Role::Writer)?;
-            loads.push(Load::start(&c, &next, &ledger, Some(PACED_WRITES_PER_SEC)));
+            loads.push(load(&c));
             second = Some(c);
             let c = second.as_ref().ok_or("second writer")?;
             // Both serve as writers until one swap fences the other.
@@ -612,12 +639,12 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
     }
 
     out.displaced_writer = match (scenario, displaced) {
-        (Scenario::KillWriter, _) => "killed".into(),
+        (Scenario::KillWriter | Scenario::VersionedKillWriter, _) => "killed".into(),
         (_, None) => "not displaced".into(),
         (_, Some(node)) => {
             let probe = format!("displaced-{}", node.name);
             let id = next.fetch_add(1, Ordering::Relaxed);
-            if write(node.addr, &probe, id) {
+            if write(node.addr, &probe, id, versioned) {
                 out.errors
                     .push(format!("displaced writer {} accepted a write", node.name));
             }
@@ -644,6 +671,18 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
         .collect();
     let mut retried = Vec::new();
     for w in attempts.iter().filter(|w| !w.acked) {
+        if versioned {
+            // The same source version is a duplicate if the write landed.
+            if write(final_writer.addr, &w.key, w.attempt, true) {
+                out.retried_blind += 1;
+                expected.insert(w.key.clone(), w.attempt);
+                retried.push(w.key.clone());
+            } else {
+                out.errors
+                    .push(format!("blind retry of {} was refused", w.key));
+            }
+            continue;
+        }
         if loaded(final_writer.addr, &w.key)? {
             out.committed_after_readback += 1;
             expected.insert(w.key.clone(), w.attempt);
@@ -651,7 +690,7 @@ fn run_round(scenario: Scenario, round: usize) -> Result<Round, String> {
         }
         out.not_committed_after_readback += 1;
         let retry = next.fetch_add(1, Ordering::Relaxed);
-        if write(final_writer.addr, &w.key, retry) {
+        if write(final_writer.addr, &w.key, retry, false) {
             expected.insert(w.key.clone(), retry);
             retried.push(w.key.clone());
         } else {
@@ -672,7 +711,7 @@ fn measure_throughput() -> Result<f64, String> {
     let upstream = server_addr(&server)?;
     let writer = Node::create("a", &dir.0, upstream)?;
     let ledger: Ledger = Arc::default();
-    let load = Load::start(&writer, &Arc::default(), &ledger, None);
+    let load = Load::start(&writer, &Arc::default(), &ledger, None, false);
     std::thread::sleep(BURST);
     load.join();
     let acked = ledger
@@ -772,7 +811,7 @@ fn run() -> Result<bool, String> {
         machine.os, machine.arch, machine.cpus, machine.cpu
     );
     println!(
-        "{:<22} {:>5} {:>10} {:>8} {:>8} {:>9} {:>11} {:>5} {:>4}  displaced",
+        "{:<22} {:>5} {:>10} {:>8} {:>8} {:>9} {:>11} {:>6} {:>5} {:>4}  displaced",
         "scenario",
         "round",
         "accept ms",
@@ -780,6 +819,7 @@ fn run() -> Result<bool, String> {
         "after",
         "readback",
         "not commit",
+        "blind",
         "lost",
         "dup"
     );
@@ -793,7 +833,7 @@ fn run() -> Result<bool, String> {
                 ..Round::default()
             });
             println!(
-                "{:<22} {:>5} {:>10} {:>8} {:>8} {:>9} {:>11} {:>5} {:>4}  {}",
+                "{:<22} {:>5} {:>10} {:>8} {:>8} {:>9} {:>11} {:>6} {:>5} {:>4}  {}",
                 format!("{scenario:?}"),
                 round,
                 run.time_to_accept_ms,
@@ -801,6 +841,7 @@ fn run() -> Result<bool, String> {
                 run.acked_after,
                 run.committed_after_readback,
                 run.not_committed_after_readback,
+                run.retried_blind,
                 run.lost,
                 run.duplicates,
                 run.displaced_writer

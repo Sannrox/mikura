@@ -21,13 +21,8 @@ pub struct StreamChange {
 }
 
 /// Result of [`StreamApply::apply`]. Skipped changes do not append or bump
-/// generation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplyStatus {
-    Applied,
-    Duplicate,
-    Stale,
-}
+/// generation. The same type answers `Store::ingest_versioned`.
+pub use mikura::ApplyStatus;
 
 /// Ordered per-key stream apply with a durable source cursor.
 ///

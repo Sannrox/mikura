@@ -54,8 +54,9 @@ new generation.**
 ### Write rule
 
 - `Store::ingest_versioned(record, source_version)` returns `Applied`,
-  `Duplicate`, or `Stale` (the shape of `ApplyStatus` from
-  [ADR 0031](0031-ordered-stream-apply.md)). It is the source ingest of
+  `Duplicate`, or `Stale` (`ApplyStatus` from
+  [ADR 0031](0031-ordered-stream-apply.md), now defined in `mikura` and
+  re-exported by `mikura-ingest`). It is the source ingest of
   [#398](https://github.com/Sannrox/mikura/issues/398) without
   `expected_gen`: overlay merge under the kind's conflict plan
   ([ADR 0032](0032-overlay-conflict-strategy.md)) and the conflict audit
@@ -69,8 +70,9 @@ new generation.**
   [ADR 0025](0025-ingest-action-id-uniqueness.md). The version check runs
   first, so a retry of an applied write is a `Duplicate` before any Action
   id comparison.
-- In an ingest batch ([ADR 0026](0026-atomic-ingest-batch.md)) each
-  versioned record is checked on its own; the applied records commit as one
+- In an ingest batch (`Store::ingest_versioned_batch`,
+  [ADR 0026](0026-atomic-ingest-batch.md)) each versioned record is checked
+  on its own; the applied records commit as one
   unit and the result lists each record's status.
 
 ### Writes without a version
@@ -135,16 +137,20 @@ operation and cannot drop the version and apply an unordered write.
 
 A reader older than this decision fails closed on the third trailer
 (`trailing body bytes`, `src/log.rs`). It cannot misread a record, but it
-cannot open the log either. So the change ships in two releases:
+cannot open the log either.
 
-1. **Read release.** Decodes and copies the trailer, never sets one, and
-   does not offer `ingest_versioned`. Every process that opens the log,
-   including embedded library readers, must run it before step 2.
-2. **Write release.** Offers `ingest_versioned`.
+The reading code (#412) and `ingest_versioned` (#413) ship in one release.
+Nothing writes a version until a caller uses `ingest_versioned`, so the
+caller gates the change: every process that opens the log, including
+embedded library readers, runs that release before the first versioned
+write. A two-release split would enforce the same order through the
+release sequence. With one consumer that controls its own rollout, that
+costs a release cycle and buys little, so the order is an operational
+step instead.
 
-Rolling back from the write release to the read release is safe. Rolling
-back below the read release after a versioned write is not: that binary
-refuses the log. Release notes for the write release state it.
+Rolling back to a build with the reading code is safe after a versioned
+write. Rolling back below it is not: that binary refuses the log. The
+release notes state both the gate and the rollback floor.
 
 A consumer replica that predates `ingest_versioned` keeps its own fence
 and Action id encoding through its own rolling deploy. The consumer drops

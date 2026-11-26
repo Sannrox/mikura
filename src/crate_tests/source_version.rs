@@ -1,6 +1,6 @@
-//! Read release of the per-identity source version (ADR 0056, #412): the
-//! stored version survives reopen through every projection, and writes that
-//! carry no version copy it forward.
+//! Per-identity source version (ADR 0056): the stored version survives
+//! reopen through every projection, writes that carry no version copy it
+//! forward (#412), and `ingest_versioned` orders source writes by it (#413).
 
 use super::super::*;
 use super::helpers::*;
@@ -16,8 +16,8 @@ fn others() -> Vec<ObjectRecord> {
         .collect()
 }
 
-/// A log where `Thing/k` carries a source version, the way a write release
-/// would leave it. This release cannot set one through `Store`.
+/// A log where `Thing/k` carries a source version, written below `Store` so
+/// the fixture does not depend on `ingest_versioned`.
 fn versioned_log(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let (dir, log) = temp_log(name);
     let mut writer = LogWriter::create(&log, SyncPolicy::None).unwrap();
@@ -89,7 +89,7 @@ fn unversioned_writes_copy_the_stored_version() {
         .unwrap();
     assert_eq!(stored(&store).1, STORED);
 
-    // This release never raises the stored version.
+    // Only `ingest_versioned` raises the stored version.
     let mut above = rec("Thing", "k", false, &[("v", "9")]);
     above.source_version = STORED + 1;
     assert!(store.append(above).is_err());
@@ -183,5 +183,184 @@ fn unversioned_projections_keep_their_bytes() {
     drop(Store::open_with_serving_budget(&log, budget).unwrap());
     let paged = std::fs::read(Store::join_map_path(&log)).unwrap();
     assert_eq!(&paged[..8], JOIN_FORMAT_PAGED);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn versioned(key: &str, v: &str) -> ObjectRecord {
+    rec("Thing", key, false, &[("v", v)])
+}
+
+fn status_of(store: &mut Store, key: &str, version: u64) -> ApplyStatus {
+    store
+        .ingest_versioned(versioned(key, &version.to_string()), version)
+        .unwrap()
+}
+
+#[test]
+fn versioned_writes_apply_only_newer_positions() {
+    let (dir, log) = temp_log("source-order");
+    let mut store = Store::create(&log).unwrap();
+    let statuses: Vec<_> = [3, 1, 3, 2, 5]
+        .into_iter()
+        .map(|version| status_of(&mut store, "k", version))
+        .collect();
+    use ApplyStatus::*;
+    assert_eq!(statuses, [Applied, Stale, Duplicate, Stale, Applied]);
+    let held = store
+        .load(NS, "Thing", "k", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!((held.gen, held.source_version), (2, 5));
+    assert_eq!(held.props["v"], "5");
+    drop(store);
+
+    let mut reopened = Store::open(&log).unwrap();
+    assert_eq!(
+        reopened
+            .load(NS, "Thing", "k", &PropertyAcl::allow_all())
+            .unwrap()
+            .source_version,
+        5
+    );
+    assert_eq!(status_of(&mut reopened, "k", 4), Stale);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn versioned_hide_keeps_order_and_payload() {
+    let (dir, log) = temp_log("source-hide");
+    let mut store = Store::create(&log).unwrap();
+    assert_eq!(status_of(&mut store, "k", 1), ApplyStatus::Applied);
+    let mut hide = versioned("k", "ignored");
+    hide.hidden = true;
+    assert_eq!(
+        store.ingest_versioned(hide, 4).unwrap(),
+        ApplyStatus::Applied
+    );
+    let held = store
+        .load(NS, "Thing", "k", &PropertyAcl::allow_all())
+        .unwrap();
+    assert!(held.hidden);
+    assert_eq!(
+        held.props["v"], "1",
+        "a versioned hide keeps the last payload"
+    );
+    assert_eq!(status_of(&mut store, "k", 3), ApplyStatus::Stale);
+
+    // A hide that arrives before any upsert leaves a tombstone.
+    let mut early = versioned("late", "");
+    early.hidden = true;
+    early.props.clear();
+    assert_eq!(
+        store.ingest_versioned(early, 2).unwrap(),
+        ApplyStatus::Applied
+    );
+    assert_eq!(status_of(&mut store, "late", 1), ApplyStatus::Stale);
+    assert_eq!(status_of(&mut store, "late", 3), ApplyStatus::Applied);
+    assert!(
+        !store
+            .load(NS, "Thing", "late", &PropertyAcl::allow_all())
+            .unwrap()
+            .hidden
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn versioned_refresh_merges_the_overlay_and_edits_keep_the_version() {
+    let (dir, log) = temp_log("source-overlay");
+    let mut store = Store::create(&log).unwrap();
+    status_of(&mut store, "k", 1);
+    store
+        .apply_overlay(
+            OverlayPatch {
+                namespace: NS.into(),
+                kind: "Thing".into(),
+                key: "k".into(),
+                props: HashMap::from([("v".into(), "edited".into())]),
+                ..Default::default()
+            },
+            "act-edit".into(),
+            Some(1),
+        )
+        .unwrap();
+    assert_eq!(stored(&store).1, 1);
+    assert_eq!(status_of(&mut store, "k", 1), ApplyStatus::Duplicate);
+    assert_eq!(status_of(&mut store, "k", 2), ApplyStatus::Applied);
+    let held = store
+        .load(NS, "Thing", "k", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(
+        held.props["v"], "edited",
+        "the edit survives a source refresh"
+    );
+    assert_eq!(held.source_version, 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn versioned_batch_checks_each_record_and_fails_whole() {
+    let (dir, log) = temp_log("source-batch");
+    let mut store = Store::create(&log).unwrap();
+    let statuses = store
+        .ingest_versioned_batch(vec![
+            (versioned("a", "2"), 2),
+            (versioned("a", "1"), 1),
+            (versioned("a", "2"), 2),
+            (versioned("b", "1"), 1),
+        ])
+        .unwrap();
+    use ApplyStatus::*;
+    assert_eq!(statuses, [Applied, Stale, Duplicate, Applied]);
+
+    let mut reserved = versioned("c", "1");
+    reserved.kind = "mikura.overlay".into();
+    assert!(store
+        .ingest_versioned_batch(vec![(versioned("c", "1"), 1), (reserved, 1)])
+        .is_err());
+    assert!(store
+        .load(NS, "Thing", "c", &PropertyAcl::allow_all())
+        .is_err());
+    assert!(store.ingest_versioned(versioned("c", "0"), 0).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn racing_versioned_writers_end_at_the_highest_version() {
+    let (dir, log) = temp_log("source-race");
+    let shared = std::sync::Arc::new(SharedStore::new(Store::create(&log).unwrap()));
+    // Four writers deliver interleaved positions 1..=40, each twice, in
+    // different orders: retries and reordering, no generation reads.
+    let threads: Vec<_> = (0..4u64)
+        .map(|t| {
+            let shared = std::sync::Arc::clone(&shared);
+            std::thread::spawn(move || {
+                let mut applied = 0usize;
+                let versions: Vec<u64> = (1..=40).filter(|v| v % 2 == t % 2).collect();
+                let order: Vec<u64> = if t < 2 {
+                    versions
+                } else {
+                    versions.into_iter().rev().collect()
+                };
+                for version in order {
+                    let status = shared
+                        .write()
+                        .unwrap()
+                        .ingest_versioned(versioned("k", &version.to_string()), version)
+                        .unwrap();
+                    applied += usize::from(status == ApplyStatus::Applied);
+                }
+                applied
+            })
+        })
+        .collect();
+    let applied: usize = threads.into_iter().map(|t| t.join().unwrap()).sum();
+    let store = shared.read().unwrap();
+    let held = store
+        .load(NS, "Thing", "k", &PropertyAcl::allow_all())
+        .unwrap();
+    assert_eq!(held.source_version, 40);
+    assert_eq!(held.props["v"], "40");
+    assert_eq!(held.gen, applied as u64, "one generation per applied write");
+    drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -23,9 +23,11 @@ mod shared;
 
 pub(crate) use checkpoint::checkpoint_stamp;
 mod sidecar;
+mod versioned;
 
 pub use history::{AsOf, ObjectVersion, VersionOrigin};
 pub use shared::{BatchWrite, SharedStore, StoreWriteGuard};
+pub use versioned::ApplyStatus;
 
 /// Rewrite `{log}.joins` and delete `{log}.joins.delta` when the dirty-set
 /// file exceeds this many bytes. Compact still also runs when there is no
@@ -175,6 +177,10 @@ pub struct Store {
     /// descriptors would otherwise look like a fulfillment the stream cannot
     /// see (ADR 0040).
     applying_admitted: bool,
+    /// True while [`Self::ingest_versioned_batch`] writes a record whose
+    /// source version it already checked against the stored one. Only then
+    /// may a write raise the stored version (ADR 0056).
+    raising_source_version: bool,
     /// Visible schema rows by (namespace, kind), oldest version first.
     schema_history: HashMap<(String, String), Vec<SchemaDescriptor>>,
     schema_history_from_checkpoint: bool,
@@ -645,6 +651,7 @@ impl Store {
             admit_owner: 0,
             applied_pending: HashSet::new(),
             applying_admitted: false,
+            raising_source_version: false,
             schema_history: HashMap::new(),
             schema_history_from_checkpoint: false,
             serving_budget: None,
@@ -1927,12 +1934,15 @@ impl Store {
             .and_then(|id| self.live_meta(id));
         let stored = live.as_ref().map_or(0, |meta| meta.source_version);
         if record.source_version > stored {
-            return Err(format!(
-                "source version {} is above the stored {stored}; only versioned source ingest sets it",
-                record.source_version
-            ));
+            if !self.raising_source_version {
+                return Err(format!(
+                    "source version {} is above the stored {stored}; only versioned source ingest sets it",
+                    record.source_version
+                ));
+            }
+        } else {
+            record.source_version = stored;
         }
-        record.source_version = stored;
         if let Some(existing) = live {
             record.gen = existing.gen.max(1) + 1;
         } else if record.gen == 0 {

@@ -34,6 +34,7 @@ fn listed_mikura_types_are_public() {
     let _ = std::any::type_name::<AsOf>();
     let _ = std::any::type_name::<ObjectVersion>();
     let _ = std::any::type_name::<VersionOrigin>();
+    let _ = std::any::type_name::<mikura::ApplyStatus>();
     let _ = std::any::type_name::<ObjectSet<LocalCompute>>();
     let _ = std::any::type_name::<EvaluateRequest>();
     let _ = std::any::type_name::<EvaluateResponse>();

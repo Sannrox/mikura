@@ -35,9 +35,9 @@ use execution::{FairScheduler, SchedulerSnapshot, DEFAULT_MAX_IN_FLIGHT};
 use metrics::{Metrics, ProcessSnapshot};
 
 use mikura::{
-    Action, Aggregate, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse, ExactMatch,
-    Hop, LocalCompute, LogKeys, ObjectBackend, ObjectRecord, ObjectSet, OverlayPatch, Predicate,
-    PropertyAcl, SharedStore, Sort, Store, LOG_FENCED,
+    Action, Aggregate, ApplyStatus, Breakdown, ChangeSet, Edit, EvaluateRequest, EvaluateResponse,
+    ExactMatch, Hop, LocalCompute, LogKeys, ObjectBackend, ObjectRecord, ObjectSet, OverlayPatch,
+    Predicate, PropertyAcl, SharedStore, Sort, Store, LOG_FENCED,
 };
 use mikura_ingest::{BatchIngest, StreamIngest};
 use serde::{Deserialize, Serialize};
@@ -292,6 +292,13 @@ pub enum HostRequest {
         record: ObjectRecord,
         expected_gen: u64,
     },
+    /// Source ingest of one record ordered by its identity's source version
+    /// (`Store::ingest_versioned`, ADR 0056). The reply's `apply_status` is
+    /// `applied`, `duplicate`, or `stale`; only `applied` writes.
+    IngestVersioned {
+        record: ObjectRecord,
+        source_version: u64,
+    },
 }
 
 pub const WIRE_V: u32 = 1;
@@ -332,6 +339,9 @@ pub struct HostResponse {
     /// Writer's current snapshot minus `manifest_version`. Zero when caught up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behind: Option<u64>,
+    /// Outcome of `ingest_versioned`. Additive (ADR 0042).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_status: Option<ApplyStatus>,
 }
 
 /// Process-local operational signal ([ADR 0022](../../docs/decisions/0022-operational-signals.md)).
@@ -774,6 +784,18 @@ impl Host {
                 record,
                 expected_gen,
             } => self.with_write(|store, _stream| ack(store.ingest_fenced(record, expected_gen))),
+            HostRequest::IngestVersioned {
+                record,
+                source_version,
+            } => self.with_write(|store, _stream| {
+                match store.ingest_versioned(record, source_version) {
+                    Ok(status) => HostResponse {
+                        apply_status: Some(status),
+                        ..ok()
+                    },
+                    Err(error) => fail(error),
+                }
+            }),
             HostRequest::ApplyAction {
                 id,
                 namespace,
@@ -896,6 +918,7 @@ impl Host {
                         metrics: None,
                         manifest_version: None,
                         behind: None,
+                        apply_status: None,
                     },
                     Err(error) => fail(error),
                 })
@@ -918,6 +941,7 @@ impl Host {
                         metrics: None,
                         manifest_version: None,
                         behind: None,
+                        apply_status: None,
                     },
                     Err(error) => fail(error),
                 }
@@ -938,6 +962,7 @@ impl Host {
                 metrics: None,
                 manifest_version: None,
                 behind: None,
+                apply_status: None,
             }),
             HostRequest::Metrics => {
                 // Snapshot before read admission so an active writer is visible.
@@ -952,6 +977,7 @@ impl Host {
                     metrics: Some(self.render_metrics(store, snap)),
                     manifest_version: None,
                     behind: None,
+                    apply_status: None,
                 })
             }
             HostRequest::Promote => {
@@ -1213,6 +1239,7 @@ fn ok() -> HostResponse {
         metrics: None,
         manifest_version: None,
         behind: None,
+        apply_status: None,
     }
 }
 
@@ -1227,6 +1254,7 @@ fn fail(error: impl ToString) -> HostResponse {
         metrics: None,
         manifest_version: None,
         behind: None,
+        apply_status: None,
     }
 }
 
@@ -1236,6 +1264,7 @@ fn request_op(request: &HostRequest) -> &'static str {
         HostRequest::IngestStreamPush { .. } => "ingest_stream_push",
         HostRequest::IngestStreamFlush => "ingest_stream_flush",
         HostRequest::IngestFenced { .. } => "ingest_fenced",
+        HostRequest::IngestVersioned { .. } => "ingest_versioned",
         HostRequest::ApplyAction { .. } => "apply_action",
         HostRequest::ApplyChangeSet { .. } => "apply_change_set",
         HostRequest::ApplyOverlay { .. } => "apply_overlay",
@@ -1253,9 +1282,9 @@ fn request_namespace(request: &HostRequest) -> Option<String> {
         HostRequest::IngestBatch { records } => {
             records.first().map(|record| record.namespace.clone())
         }
-        HostRequest::IngestStreamPush { record } | HostRequest::IngestFenced { record, .. } => {
-            Some(record.namespace.clone())
-        }
+        HostRequest::IngestStreamPush { record }
+        | HostRequest::IngestFenced { record, .. }
+        | HostRequest::IngestVersioned { record, .. } => Some(record.namespace.clone()),
         HostRequest::ApplyAction { namespace, .. }
         | HostRequest::ApplyChangeSet { namespace, .. }
         | HostRequest::ApplyOverlay { namespace, .. }
