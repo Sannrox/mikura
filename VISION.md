@@ -4,8 +4,14 @@
 database**. Applications ask questions about objects. They do not query
 SQL tables or search hits as the source of identity.
 
-Indexing and querying stay split. The object log is authority. Projections
-are rebuildable: if you delete them, the store can still answer from the log.
+mikura is the object storage layer under a control plane
+([ADR 0057](docs/decisions/0057-object-storage-layer-under-a-control-plane.md)). Source systems are the truth for source-derived
+objects; mikura keeps a durable, rebuildable copy. mikura is the truth for
+the edits only it holds (overlays, Action writes, conflict audit).
+
+Indexing and querying stay split. The object log is the store of record for
+what it holds. Projections are rebuildable: if you delete them, the store
+can still answer from the log.
 
 v1 is an in-process library so that kernel can be tested. The destination is
 a hosted service (ingest, store, object-set API), not “only a library.”
@@ -41,7 +47,8 @@ list is not a principal; policy stays in the clerk.
 
 | Kind of data | Where |
 | --- | --- |
-| Object instances (keys, properties, links, generations) | **mikura object log** (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
+| Edits: overlays, Action writes, conflict audit | **mikura object log**, their store of record ([ADR 0057](docs/decisions/0057-object-storage-layer-under-a-control-plane.md)) |
+| Source-derived object instances (keys, properties, links, generations) | **mikura object log** as a durable copy. The source system stays their truth; the control plane re-syncs them (4 KiB CRC pages; [ADR 0001](docs/decisions/0001-paged-log.md)) |
 | Hop / join indexes | **mikura projections** (`{log}.joins` sidecar; rebuild from the log) |
 | Who / policy / receipts / type-catalog administration | A **control plane**, not this crate. Last-accepted descriptors persist as `mikura.schema` on the log. The clerk maps datasets/Actions to records; `mikura-ingest` appends. |
 | Portable ontology CLI | A separate ontology database — never the object log |
@@ -66,7 +73,8 @@ policy, receipts). The clerk’s ledger is not the graph engine.
 Each stage so far settled a boundary that still holds. Delivery status lives
 in issues and pull requests; [ROADMAP.md](ROADMAP.md) gives direction.
 
-- The object log is authority: a paged, checksummed log
+- The object log is the store of record for what it holds, and the truth
+  for edits ([ADR 0057](docs/decisions/0057-object-storage-layer-under-a-control-plane.md)): a paged, checksummed log
   ([ADR 0001](docs/decisions/0001-paged-log.md)), with checkpoints so open
   replays only the tail ([ADR 0034](docs/decisions/0034-log-checkpoints.md)).
 - Evaluate is filter, load, hop and count+sum. No query language; another
@@ -111,7 +119,7 @@ plane that may later depend on a tagged mikura crate. That cutover lives in
 | --- | --- | --- |
 | Job | Who, policy, receipts | Object instances |
 | Form | Its own service | Library plus loopback host; non-loopback only with a clerk bearer |
-| Authority | Admission and audit | Object log + generations |
+| Authority | Admission, audit, source origin and re-sync | Edits it alone holds; the log is the store of record for its copy |
 | Query | Its public RPCs | Object-set evaluate over mikura projections |
 | Storage | Its clerk database | This paged log |
 

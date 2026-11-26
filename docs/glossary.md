@@ -7,7 +7,7 @@ meaning; say it is undefined.
 | --- | --- |
 | **Object** | A typed record with a required `namespace`, primary `key`, `props`, `hidden` flag, optional `action_id`, and `gen`. Identity is `(namespace, kind, key)`. |
 | **Generation** (`gen`) | Monotonic version of that identity. `Store::append` bumps it. In edition 2021 the field is named `gen`; it must be renamed before an edition 2024 bump. |
-| **Object log** | Append-only 4 KiB CRC pages. Authority for identity. [ADR 0001](decisions/0001-paged-log.md). |
+| **Object log** | Append-only 4 KiB CRC pages. Store of record for what it holds, and the truth for edits; source-derived records are a durable copy the control plane re-syncs. [ADR 0001](decisions/0001-paged-log.md), [ADR 0057](decisions/0057-object-storage-layer-under-a-control-plane.md). |
 | **Backup** | The committed pages of the object log up to a commit point, plus the log checkpoint when taken at or before it, copied while the host serves (`mikura-host backup`, ADR 0037). `verify` checks it; `restore` writes a new log up to a restore point. The sidecar is a rebuildable projection, never copied. After optional compact, the checkpoint holds Action ids the shortened log no longer contains. There is no backup RPC. |
 | **Restore point** | `mkrp1:<commit point>:<page crc>`: a commit point tied to one log's history by the CRC of the page that ends it (ADR 0037). |
 | **Superblock** | Page 0 of the log. Holds CRC32, magic `MIKURAV2` or encrypted `MIKURAV3`, page size, and `committed_pages`. `MIKURAV3` also holds wrapped DEKs. `MIKURAV1` fails closed until migrated (ADR 0030, ADR 0044). |
