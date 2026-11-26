@@ -2354,15 +2354,20 @@ fn encode_body(record: &ObjectRecord) -> Result<Vec<u8>, String> {
         write_str(&mut body, record.props.get(&key).expect("prop"))?;
     }
     // Trailing Action id string when present. Schema version follows as a
-    // little-endian u32 only when it is not 1 (ADR 0035). Version-only
-    // records write an empty Action string then the u32.
+    // little-endian u32 only when it is not 1 (ADR 0035), then the source
+    // version as a u64 only when it is above 0 (ADR 0056). A later trailer
+    // writes the earlier ones too (an empty Action string, version 1).
     let version = if record.schema_version == 0 {
         1
     } else {
         record.schema_version
     };
     let action_id = record.action_id.as_deref().filter(|id| !id.is_empty());
-    if version > 1 {
+    if record.source_version > 0 {
+        write_str(&mut body, action_id.unwrap_or(""))?;
+        body.extend_from_slice(&version.to_le_bytes());
+        body.extend_from_slice(&record.source_version.to_le_bytes());
+    } else if version > 1 {
         write_str(&mut body, action_id.unwrap_or(""))?;
         body.extend_from_slice(&version.to_le_bytes());
     } else if let Some(action_id) = action_id {
@@ -2437,19 +2442,28 @@ fn decode_body(body: &[u8], v1_namespace: Option<&str>) -> Result<ObjectRecord, 
         let v = read_str(&mut cur)?;
         props.insert(k, v);
     }
-    let (action_id, schema_version) = if cur.is_empty() {
-        (None, 1)
+    let (action_id, schema_version, source_version) = if cur.is_empty() {
+        (None, 1, 0)
     } else {
         let id = read_str(&mut cur)?;
         let action_id = if id.is_empty() { None } else { Some(id) };
         if cur.is_empty() {
-            (action_id, 1)
-        } else if cur.len() == 4 {
+            (action_id, 1, 0)
+        } else if cur.len() == 4 || cur.len() == 12 {
             let version = u32::from_le_bytes(take::<4>(&mut cur)?.try_into().unwrap());
             if version == 0 {
                 return Err("schema version must be at least 1".into());
             }
-            (action_id, version)
+            let source = if cur.is_empty() {
+                0
+            } else {
+                let source = u64::from_le_bytes(take::<8>(&mut cur)?.try_into().unwrap());
+                if source == 0 {
+                    return Err("source version trailer must be at least 1".into());
+                }
+                source
+            };
+            (action_id, version, source)
         } else {
             return Err("trailing body bytes".into());
         }
@@ -2463,6 +2477,7 @@ fn decode_body(body: &[u8], v1_namespace: Option<&str>) -> Result<ObjectRecord, 
         action_id,
         props,
         schema_version,
+        source_version,
     })
 }
 
@@ -2532,6 +2547,7 @@ mod tests {
                 hidden: false,
                 action_id: None,
                 schema_version: 1,
+                source_version: 0,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();
@@ -2558,6 +2574,7 @@ mod tests {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: HashMap::from([("payload".into(), "x".repeat(1500))]),
         }
     }
@@ -2670,6 +2687,7 @@ mod tests {
             action_id: None,
             props,
             schema_version: 1,
+            source_version: 0,
         })
     }
 
@@ -2683,6 +2701,7 @@ mod tests {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: HashMap::from([("region".into(), "eu".into())]),
         };
         let encoded = encode_body(&none).unwrap();
@@ -2716,6 +2735,7 @@ mod tests {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: HashMap::from([("region".into(), "eu".into())]),
         };
         let encoded = encode_body(&v1).unwrap();
@@ -2735,6 +2755,40 @@ mod tests {
     }
 
     #[test]
+    fn source_version_trailer_round_trips_and_older_readers_refuse_it() {
+        let none = ObjectRecord {
+            gen: 1,
+            namespace: "ns".into(),
+            kind: "Customer".into(),
+            key: "c1".into(),
+            hidden: false,
+            action_id: None,
+            schema_version: 1,
+            source_version: 0,
+            props: HashMap::from([("region".into(), "eu".into())]),
+        };
+        let unversioned = encode_body(&none).unwrap();
+        assert_eq!(decode_body(&unversioned, None).unwrap().source_version, 0);
+
+        let versioned = ObjectRecord {
+            source_version: 7,
+            ..none
+        };
+        let encoded = encode_body(&versioned).unwrap();
+        assert_eq!(encoded.len(), unversioned.len() + 2 + 4 + 8);
+        assert_eq!(decode_body(&encoded, None).unwrap(), versioned);
+        let err = decode_body_reject_trailing(&encoded).unwrap_err();
+        assert!(err.contains("trailing"), "{err}");
+
+        // A written trailer is never 0: that value means "no trailer".
+        let mut zero = encoded;
+        let at = zero.len() - 8;
+        zero[at..].copy_from_slice(&0u64.to_le_bytes());
+        let err = decode_body(&zero, None).unwrap_err();
+        assert!(err.contains("source version"), "{err}");
+    }
+
+    #[test]
     fn second_trailing_body_field_fails_closed() {
         let body = encode_body(&ObjectRecord {
             gen: 1,
@@ -2744,6 +2798,7 @@ mod tests {
             hidden: false,
             action_id: Some("act-1".into()),
             schema_version: 1,
+            source_version: 0,
             props: HashMap::new(),
         })
         .unwrap();
@@ -2770,6 +2825,7 @@ mod tests {
                 hidden: false,
                 action_id: None,
                 schema_version: 1,
+                source_version: 0,
                 props: HashMap::from([("region".into(), "eu".into())]),
             })
             .unwrap();
@@ -2802,6 +2858,7 @@ mod tests {
                 hidden: false,
                 action_id: None,
                 schema_version: 1,
+                source_version: 0,
                 props: HashMap::new(),
             })
             .unwrap();
@@ -2827,6 +2884,7 @@ mod tests {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: HashMap::new(),
         })
         .unwrap_err();

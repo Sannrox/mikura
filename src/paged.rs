@@ -32,6 +32,10 @@ impl ServingBudget {
 }
 
 pub(crate) const JOIN_PAGED_MAGIC: &[u8; 8] = crate::JOIN_FORMAT_PAGED;
+/// `MKJOIN07` whose identity rows end with a `source_version` u64 (ADR
+/// 0056). Written only when some identity has a version, so a projection
+/// without one stays byte-identical and older readers refuse this one.
+pub(crate) const JOIN_PAGED_SOURCED_MAGIC: &[u8; 8] = crate::JOIN_FORMAT_PAGED_SOURCED;
 pub(crate) const PAGE: usize = 4096;
 const CRC: usize = 4;
 const BODY: usize = PAGE - CRC;
@@ -83,6 +87,8 @@ pub(crate) struct NsDir {
 
 #[derive(Debug)]
 struct Superblock {
+    /// Identity rows carry a source version ([`JOIN_PAGED_SOURCED_MAGIC`]).
+    sourced: bool,
     log_pages: u32,
     page_count: u32,
     identity_hash_page: u32,
@@ -189,7 +195,11 @@ impl PageWriter {
 }
 
 fn write_superblock(page: &mut [u8; PAGE], sb: &Superblock, page_count: u32) {
-    page[..8].copy_from_slice(JOIN_PAGED_MAGIC);
+    page[..8].copy_from_slice(if sb.sourced {
+        JOIN_PAGED_SOURCED_MAGIC
+    } else {
+        JOIN_PAGED_MAGIC
+    });
     page[8..12].copy_from_slice(&sb.log_pages.to_le_bytes());
     page[12..16].copy_from_slice(&page_count.to_le_bytes());
     page[16..20].copy_from_slice(&sb.identity_hash_page.to_le_bytes());
@@ -200,10 +210,11 @@ fn write_superblock(page: &mut [u8; PAGE], sb: &Superblock, page_count: u32) {
 
 fn parse_superblock(page: &[u8; PAGE]) -> Result<Superblock, String> {
     check_page(page)?;
-    if &page[..8] != JOIN_PAGED_MAGIC {
+    if !is_paged_magic(&page[..]) {
         return Err("bad join magic".into());
     }
     Ok(Superblock {
+        sourced: &page[..8] == JOIN_PAGED_SOURCED_MAGIC,
         log_pages: u32::from_le_bytes(page[8..12].try_into().unwrap()),
         page_count: u32::from_le_bytes(page[12..16].try_into().unwrap()),
         identity_hash_page: u32::from_le_bytes(page[16..20].try_into().unwrap()),
@@ -375,6 +386,7 @@ fn encode_identity_row(
     key: u32,
     meta: &LiveMeta,
     owned: &[(u32, u32)],
+    sourced: bool,
 ) -> Result<Vec<u8>, String> {
     let mut buf = Vec::with_capacity(32 + owned.len() * 8);
     buf.extend_from_slice(&ns.to_le_bytes());
@@ -390,13 +402,16 @@ fn encode_identity_row(
         buf.extend_from_slice(&prop.to_le_bytes());
         buf.extend_from_slice(&value.to_le_bytes());
     }
+    if sourced {
+        buf.extend_from_slice(&meta.source_version.to_le_bytes());
+    }
     if buf.len() > BODY {
         return Err("identity row exceeds one page".into());
     }
     Ok(buf)
 }
 
-fn parse_identity_row(bytes: &[u8]) -> Result<IdentityRow, String> {
+fn parse_identity_row(bytes: &[u8], sourced: bool) -> Result<IdentityRow, String> {
     if bytes.len() < 33 {
         return Err("short identity row".into());
     }
@@ -419,6 +434,14 @@ fn parse_identity_row(bytes: &[u8]) -> Result<IdentityRow, String> {
         owned.push((prop, value));
         cur += 8;
     }
+    let source_version = if sourced {
+        let bytes = bytes
+            .get(cur..cur + 8)
+            .ok_or_else(|| "short identity source version".to_string())?;
+        u64::from_le_bytes(bytes.try_into().unwrap())
+    } else {
+        0
+    };
     Ok((
         (ns, kind, key),
         LiveMeta {
@@ -430,6 +453,7 @@ fn parse_identity_row(bytes: &[u8]) -> Result<IdentityRow, String> {
                 Some(action)
             },
             schema_version,
+            source_version,
         },
         owned,
     ))
@@ -618,7 +642,7 @@ fn read_rollup_dirs(cur: &mut &[u8]) -> Result<RollupDir, String> {
 }
 
 pub(crate) fn is_paged_magic(bytes: &[u8]) -> bool {
-    bytes.len() >= 8 && &bytes[..8] == JOIN_PAGED_MAGIC
+    bytes.len() >= 8 && (&bytes[..8] == JOIN_PAGED_MAGIC || &bytes[..8] == JOIN_PAGED_SOURCED_MAGIC)
 }
 
 pub(crate) fn peek_log_pages(path: &Path) -> Result<u32, String> {
@@ -758,10 +782,13 @@ pub(crate) fn encode(
         identity_rows.push((id, meta, owned));
     }
 
+    let sourced = identity_rows
+        .iter()
+        .any(|(_, meta, _)| meta.source_version > 0);
     let identity_hash_pages = hash_pages_for(identity_rows.len(), HASH_SLOTS);
     let identity_hash_page = pages.alloc_n(identity_hash_pages);
     for (id, meta, owned) in &identity_rows {
-        let rec = encode_identity_row(id.0, id.1, id.2, meta, owned)?;
+        let rec = encode_identity_row(id.0, id.1, id.2, meta, owned, sourced)?;
         let (rec_page, rec_off) = pages.pack(&rec)?;
         put_ptr_hash(
             &mut pages,
@@ -776,6 +803,7 @@ pub(crate) fn encode(
     let ns_blob = encode_ns_blob(&ns_entries)?;
     let ns_blob_page = pages.alloc();
     let sb = Superblock {
+        sourced,
         log_pages,
         page_count: 0,
         identity_hash_page,
@@ -955,7 +983,7 @@ impl PagedFile {
 
     fn identity_at(&self, rec_page: u32, rec_off: usize) -> Option<IdentityRow> {
         let page = self.page(rec_page).ok()?;
-        parse_identity_row(page.get(rec_off..BODY)?).ok()
+        parse_identity_row(page.get(rec_off..BODY)?, self.superblock.sourced).ok()
     }
 
     pub(crate) fn identity(&self, id: LiveId) -> Option<(LiveMeta, Vec<(u32, u32)>)> {

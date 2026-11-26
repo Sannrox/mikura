@@ -290,6 +290,8 @@ pub(crate) const JOIN_MAGIC: &[u8; 8] = crate::JOIN_FORMAT;
 pub(crate) const JOIN_DELTA_MAGIC_V5: &[u8; 8] = crate::JOIN_DELTA_FORMAT_V5;
 /// Delta frames that end with one schema version per row (ADR 0035).
 pub(crate) const JOIN_DELTA_MAGIC: &[u8; 8] = crate::JOIN_DELTA_FORMAT;
+/// [`JOIN_DELTA_MAGIC`] frames followed by one source version per row (ADR 0056).
+pub(crate) const JOIN_DELTA_MAGIC_SOURCED: &[u8; 8] = crate::JOIN_DELTA_FORMAT_SOURCED;
 pub(crate) const ACTION_NONE: u32 = u32::MAX;
 
 type MeasureKey = (u32, u32, u32);
@@ -349,6 +351,8 @@ pub(crate) struct LiveMeta {
     pub(crate) action_id: Option<u32>,
     /// Descriptor version this live generation was written under (ADR 0035).
     pub(crate) schema_version: u32,
+    /// Last applied source version (ADR 0056); 0 means none.
+    pub(crate) source_version: u64,
 }
 
 /// Rebuildable hop/join projection.

@@ -205,6 +205,7 @@ fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -> ObjectRec
         hidden,
         action_id: None,
         schema_version: 1,
+        source_version: 0,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))

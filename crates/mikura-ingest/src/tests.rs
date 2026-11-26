@@ -15,6 +15,7 @@ pub(crate) fn rec(kind: &str, key: &str, hidden: bool, props: &[(&str, &str)]) -
         hidden,
         action_id: None,
         schema_version: 1,
+        source_version: 0,
         props: props
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))

@@ -357,6 +357,7 @@ impl Store {
                 self.encode_action_commits_for(&mut body, Some(&tenant))?;
                 self.encode_schema_history_for(&mut body, Some(&tenant))?;
                 self.encode_instance_schema_versions_for(&mut body, Some(&tenant))?;
+                self.encode_instance_source_versions_for(&mut body, Some(&tenant))?;
                 plains.insert(tenant, body);
             }
             Store::seal_partitioned(store_dek, deks, pages, plains)?
@@ -368,6 +369,7 @@ impl Store {
             self.encode_action_commits(&mut body)?;
             self.encode_schema_history(&mut body)?;
             self.encode_instance_schema_versions(&mut body)?;
+            self.encode_instance_source_versions_for(&mut body, None)?;
             let mut payload = body.clone();
             payload.extend_from_slice(&crc32(&body).to_le_bytes());
             payload
@@ -563,6 +565,67 @@ impl Store {
         }
         Ok(())
     }
+
+    /// Optional last section of a checkpoint or join body: identities with
+    /// a source version (ADR 0056). Omitted when none has one, so bodies
+    /// without versions stay byte-identical.
+    pub(super) fn encode_instance_source_versions_for(
+        &self,
+        body: &mut Vec<u8>,
+        tenant: Option<&str>,
+    ) -> Result<(), String> {
+        let mut rows: Vec<_> = self
+            .identity
+            .iter()
+            .filter(|(id, meta)| {
+                meta.source_version > 0 && matches_tenant(self.ns_name(id.0), tenant)
+            })
+            .map(|(id, meta)| (*id, meta.source_version))
+            .collect();
+        if rows.is_empty() {
+            return Ok(());
+        }
+        rows.sort_by_key(|a| a.0);
+        let n = u32::try_from(rows.len()).map_err(|_| "too many identities".to_string())?;
+        body.extend_from_slice(&n.to_le_bytes());
+        for (id, version) in rows {
+            let (namespace, kind, key) = self.live_strings(id)?;
+            write_str(body, namespace)?;
+            write_str(body, kind)?;
+            write_str(body, key)?;
+            body.extend_from_slice(&version.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// Read [`Self::encode_instance_source_versions_for`] when present.
+    pub(super) fn apply_instance_source_versions(
+        cur: &mut &[u8],
+        joins: &HashMap<String, JoinMaps>,
+        ns: &[String],
+        identity: &mut HashMap<LiveId, LiveMeta>,
+    ) -> Result<(), String> {
+        if cur.is_empty() {
+            return Ok(());
+        }
+        let n = read_u32(cur)? as usize;
+        for _ in 0..n {
+            let namespace = read_str(cur)?;
+            let kind = read_str(cur)?;
+            let key = read_str(cur)?;
+            let version = read_u64(cur)?;
+            if version == 0 {
+                return Err("source version must be at least 1".into());
+            }
+            let id = resolve_version_id(joins, ns, &namespace, &kind, &key)
+                .ok_or_else(|| format!("source version for unknown {namespace}/{kind}/{key}"))?;
+            identity
+                .get_mut(&id)
+                .ok_or_else(|| format!("source version for unknown {namespace}/{kind}/{key}"))?
+                .source_version = version;
+        }
+        Ok(())
+    }
 }
 
 fn encode_props(body: &mut Vec<u8>, props: &HashMap<String, String>) -> Result<(), String> {
@@ -708,6 +771,7 @@ fn parse_checkpoint_body(body: &[u8]) -> Result<LoadedLogCheckpoint, String> {
     if let Some(versions) = versions.as_ref() {
         Store::apply_instance_schema_versions(&joins, &ns, &mut identity, versions.clone());
     }
+    Store::apply_instance_source_versions(&mut cur, &joins, &ns, &mut identity)?;
     if !cur.is_empty() {
         return Err("trailing checkpoint bytes".into());
     }
@@ -828,6 +892,7 @@ fn decode_schema_history(cur: &mut &[u8]) -> Result<SchemaHistory, String> {
                 action_id: None,
                 props,
                 schema_version: 1,
+                source_version: 0,
             })?;
             rows.push(desc);
         }

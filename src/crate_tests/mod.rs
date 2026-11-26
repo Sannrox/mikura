@@ -35,6 +35,7 @@ mod row_filter;
 mod schema;
 mod schema_migrate;
 mod serving_bar;
+mod source_version;
 mod split_commit;
 mod stability;
 mod standby;

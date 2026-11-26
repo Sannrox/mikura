@@ -249,7 +249,7 @@ impl Store {
             {
                 return None;
             }
-            self.assign_gen(&mut record);
+            self.assign_gen(&mut record).ok()?;
             admitted.push(record);
         }
         let staged = self.writer.stage(&admitted)?;

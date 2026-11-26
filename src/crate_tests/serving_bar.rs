@@ -55,6 +55,7 @@ fn rec_bar(kind: &str, prefix: char, id: u64, props: Vec<(&str, String)>) -> Obj
             .map(|(name, value)| (name.to_string(), value))
             .collect(),
         schema_version: 1,
+        source_version: 0,
     }
 }
 
