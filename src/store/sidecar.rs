@@ -8,7 +8,7 @@ use crate::crypto::{matches_tenant, Dek};
 use crate::joins::{
     append_checksummed, check_join_crc, checksummed_body, crc32, read_checksummed,
     write_checksummed, Checkpoint, JoinMaps, LiveMeta, ACTION_NONE, JOIN_DELTA_MAGIC,
-    JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
+    JOIN_DELTA_MAGIC_SOURCED, JOIN_DELTA_MAGIC_V5, JOIN_MAGIC,
 };
 use crate::log::{read_records_after_with_keys, LogWriter};
 use crate::JOIN_FORMAT_V5;
@@ -251,6 +251,7 @@ impl Store {
                 body.extend_from_slice(&pages.to_le_bytes());
                 self.encode_projection_after_magic_for(&mut body, Some(&tenant))?;
                 self.encode_instance_schema_versions_for(&mut body, Some(&tenant))?;
+                self.encode_instance_source_versions_for(&mut body, Some(&tenant))?;
                 plains.insert(tenant, body);
             }
             let sealed = Self::seal_partitioned(store_dek, self.writer.deks(), pages, plains)?;
@@ -266,6 +267,7 @@ impl Store {
         body.extend_from_slice(&pages.to_le_bytes());
         self.encode_projection_after_magic(&mut body)?;
         self.encode_instance_schema_versions(&mut body)?;
+        self.encode_instance_source_versions_for(&mut body, None)?;
         write_checksummed(&Self::join_map_path(&self.log), &body)
     }
 
@@ -354,11 +356,20 @@ impl Store {
     /// the delta file length. Reads the projection only, so the split commit
     /// path writes it while readers continue (#261).
     pub(super) fn write_delta(&self, pages: u32) -> Result<u64, String> {
-        let mut body = Vec::new();
-        body.extend_from_slice(JOIN_DELTA_MAGIC);
-        body.extend_from_slice(&pages.to_le_bytes());
         let mut ids: Vec<_> = self.dirty.iter().cloned().collect();
         ids.sort();
+        let sources: Vec<u64> = ids
+            .iter()
+            .map(|id| self.identity.get(id).map_or(0, |meta| meta.source_version))
+            .collect();
+        let sourced = sources.iter().any(|&version| version > 0);
+        let mut body = Vec::new();
+        body.extend_from_slice(if sourced {
+            JOIN_DELTA_MAGIC_SOURCED
+        } else {
+            JOIN_DELTA_MAGIC
+        });
+        body.extend_from_slice(&pages.to_le_bytes());
         let n = u32::try_from(ids.len()).map_err(|_| "too many dirty rows".to_string())?;
         body.extend_from_slice(&n.to_le_bytes());
         let mut versions = Vec::with_capacity(ids.len());
@@ -413,6 +424,11 @@ impl Store {
         }
         for version in versions {
             body.extend_from_slice(&version.to_le_bytes());
+        }
+        if sourced {
+            for version in sources {
+                body.extend_from_slice(&version.to_le_bytes());
+            }
         }
         let path = Self::join_delta_path(&self.log);
         if path.exists() {
@@ -497,6 +513,7 @@ impl Store {
                         hidden,
                         action_id,
                         schema_version: 1,
+                        source_version: 0,
                     },
                 );
                 if hidden {
@@ -612,6 +629,7 @@ impl Store {
                 Store::decode_instance_schema_versions(&mut cur)?,
             );
         }
+        Store::apply_instance_source_versions(&mut cur, &joins, &ns, &mut identity)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
@@ -651,9 +669,9 @@ impl Store {
     }
 
     fn apply_delta_body(&mut self, body: &[u8]) -> Result<u32, String> {
-        let versioned = delta_frame_versioned(body)?;
+        let trailers = delta_frame_trailers(body)?;
         let mut cur = &body[8..];
-        let (pages, rows) = read_delta_rows(&mut cur, versioned)?;
+        let (pages, rows) = read_delta_rows(&mut cur, trailers)?;
         if !cur.is_empty() {
             return Err("trailing join bytes".into());
         }
@@ -674,6 +692,7 @@ impl Store {
                     hidden: row.hidden,
                     action_id,
                     schema_version: row.schema_version,
+                    source_version: row.source_version,
                 },
                 row.props,
             )?;
@@ -847,25 +866,36 @@ fn take_delta_frame<'a>(cur: &mut &'a [u8]) -> Result<&'a [u8], String> {
     Ok(body)
 }
 
-/// Whether a delta frame carries the per-row schema version trailer.
-fn delta_frame_versioned(bytes: &[u8]) -> Result<bool, String> {
-    match bytes.get(..8) {
-        Some(magic) if magic == JOIN_DELTA_MAGIC => Ok(true),
-        Some(magic) if magic == JOIN_DELTA_MAGIC_V5 => Ok(false),
-        _ => Err("bad join magic".into()),
-    }
+/// Per-row trailers a delta frame carries, by magic.
+#[derive(Clone, Copy)]
+struct DeltaTrailers {
+    /// One schema version u32 per row (ADR 0035).
+    versioned: bool,
+    /// Then one source version u64 per row (ADR 0056).
+    sourced: bool,
+}
+
+fn delta_frame_trailers(bytes: &[u8]) -> Result<DeltaTrailers, String> {
+    let (versioned, sourced) = match bytes.get(..8) {
+        Some(magic) if magic == JOIN_DELTA_MAGIC_SOURCED => (true, true),
+        Some(magic) if magic == JOIN_DELTA_MAGIC => (true, false),
+        Some(magic) if magic == JOIN_DELTA_MAGIC_V5 => (false, false),
+        _ => return Err("bad join magic".into()),
+    };
+    Ok(DeltaTrailers { versioned, sourced })
 }
 
 fn delta_frame_body_len(bytes: &[u8]) -> Result<usize, String> {
     if bytes.len() < 16 {
         return Err("bad join magic".into());
     }
-    let versioned = delta_frame_versioned(bytes)?;
+    let trailers = delta_frame_trailers(bytes)?;
     let mut cur = &bytes[8..];
     let (_, n) = skip_delta_rows(&mut cur)?;
-    if versioned {
+    let width = 4 * usize::from(trailers.versioned) + 8 * usize::from(trailers.sourced);
+    if width > 0 {
         let trailer = n
-            .checked_mul(4)
+            .checked_mul(width)
             .ok_or_else(|| "join sidecar too short".to_string())?;
         if cur.len() < trailer {
             return Err("join sidecar too short".into());
@@ -903,9 +933,13 @@ struct DeltaRow {
     props: HashMap<String, String>,
     action: String,
     schema_version: u32,
+    source_version: u64,
 }
 
-fn read_delta_rows(cur: &mut &[u8], versioned: bool) -> Result<(u32, Vec<DeltaRow>), String> {
+fn read_delta_rows(
+    cur: &mut &[u8],
+    trailers: DeltaTrailers,
+) -> Result<(u32, Vec<DeltaRow>), String> {
     let pages = read_u32(cur)?;
     let n = read_u32(cur)? as usize;
     let mut rows = Vec::with_capacity(n);
@@ -932,14 +966,20 @@ fn read_delta_rows(cur: &mut &[u8], versioned: bool) -> Result<(u32, Vec<DeltaRo
             props,
             action,
             schema_version: 1,
+            source_version: 0,
         });
     }
-    if versioned {
+    if trailers.versioned {
         for row in &mut rows {
             row.schema_version = read_u32(cur)?;
             if row.schema_version == 0 {
                 row.schema_version = 1;
             }
+        }
+    }
+    if trailers.sourced {
+        for row in &mut rows {
+            row.source_version = read_u64(cur)?;
         }
     }
     Ok((pages, rows))

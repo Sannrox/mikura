@@ -236,7 +236,7 @@ delta, loads `{log}.ckpt` when present and replays only pages after that
 stamp; otherwise it rebuilds from the log
 ([ADR 0034](decisions/0034-log-checkpoints.md)).
 Checksum mismatch, truncation, or bad magic (current `MKJOIN06` /
-`MKJOIN6D`; budgeted `MKJOIN07`; `MKJOIN05` / `MKJOIN5D` still read; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
+`MKJOIN6D` or `MKJOIN7D`; budgeted `MKJOIN07` or `MKJOIN08`; `MKJOIN05` / `MKJOIN5D` still read; old `MKJOIN01`–`MKJOIN04` included) fails closed; deleting
 the sidecar recovers from a `MIKURAV2` log. A torn `{log}.ckpt` falls
 back to `{log}.ckpt.prev` or full replay; it does not fail closed. Pre-namespace logs are
 migrated first ([ADR 0030](decisions/0030-unnamespaced-log-migration.md)). Schema-named last-hop

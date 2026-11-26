@@ -157,6 +157,7 @@ impl OverlayPatch {
             action_id: self.action_id.clone(),
             props,
             schema_version: 1,
+            source_version: 0,
         })
     }
 

@@ -224,6 +224,7 @@ fn record(kind: &str, prefix: char, id: u64, props: Vec<(&str, String)>) -> Obje
             .map(|(name, value)| (name.to_string(), value))
             .collect(),
         schema_version: 1,
+        source_version: 0,
     }
 }
 

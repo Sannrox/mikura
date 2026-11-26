@@ -77,6 +77,12 @@ pub const JOIN_FORMAT_PAGED: &[u8; 8] = b"MKJOIN07";
 pub const JOIN_FORMAT_V5: &[u8; 8] = b"MKJOIN05";
 /// Join dirty-set magic this crate writes (`MKJOIN6D`).
 pub const JOIN_DELTA_FORMAT: &[u8; 8] = b"MKJOIN6D";
+/// Dirty-set magic whose rows also end with a source version (`MKJOIN7D`,
+/// ADR 0056). Written only when a dirty row has one.
+pub const JOIN_DELTA_FORMAT_SOURCED: &[u8; 8] = b"MKJOIN7D";
+/// Paged join sidecar magic whose identity rows end with a source version
+/// (`MKJOIN08`, ADR 0056). Written only when an identity has one.
+pub const JOIN_FORMAT_PAGED_SOURCED: &[u8; 8] = b"MKJOIN08";
 /// Earlier dirty-set magic this crate still reads (`MKJOIN5D`).
 pub const JOIN_DELTA_FORMAT_V5: &[u8; 8] = b"MKJOIN5D";
 /// Log checkpoint magic (`MKCKPT01`). Unknown magic falls back.

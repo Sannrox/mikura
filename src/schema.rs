@@ -410,6 +410,7 @@ impl SchemaDescriptor {
             action_id: None,
             props,
             schema_version: 1,
+            source_version: 0,
         })
     }
 
@@ -1047,6 +1048,7 @@ mod tests {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: props
                 .iter()
                 .map(|(name, value)| ((*name).into(), (*value).into()))

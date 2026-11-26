@@ -1,6 +1,6 @@
 # ADR 0056: Order source writes by a per-identity source version
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-25
 - Owners: mikura maintainers
 - Related: [#404](https://github.com/Sannrox/mikura/issues/404), [#398](https://github.com/Sannrox/mikura/issues/398), [#405](https://github.com/Sannrox/mikura/issues/405), [ADR 0009](0009-refresh-safe-edit-overlay.md), [ADR 0011](0011-action-id-retry-key.md), [ADR 0025](0025-ingest-action-id-uniqueness.md), [ADR 0026](0026-atomic-ingest-batch.md), [ADR 0031](0031-ordered-stream-apply.md), [ADR 0032](0032-overlay-conflict-strategy.md), [ADR 0035](0035-versioned-schema-migration.md), [ADR 0047](0047-object-storage-store-of-record.md)
@@ -102,8 +102,27 @@ when absent), as [ADR 0035](0035-versioned-schema-migration.md) did for the
 schema version. A body without it reads as version 0. `ObjectRecord` gains
 `source_version: u64`, `0` meaning none, so `load` and `history` show it.
 
-No sidecar, projection, or manifest format changes. The live check costs
-one live-record load per versioned write.
+The projections carry the version too, because a reopen that skips the
+log replay must still know it. Each change is written only once some
+identity has a version above 0, so files of a log without one stay
+byte-identical:
+
+- The log checkpoint (`MKCKPT01`) and the join sidecar (`MKJOIN06`) end
+  with an optional section after the schema versions: a u32 count, then
+  namespace, kind, and key strings and a u64 version per identity.
+- Paged identity rows have no length prefix, so a paged file whose rows
+  end with the u64 uses a new magic, `MKJOIN08`.
+- Delta frames are measured from their rows, so a frame whose rows end
+  with one u64 each after the schema versions uses `MKJOIN7D`.
+
+A reader older than this decision refuses these files, but only for a log
+it already cannot open (Rolling deploy). Projections are rebuildable and
+the manifest does not change. The live check costs one live-record load
+per versioned write.
+
+In the read release a write whose `source_version` is above the stored
+one fails closed instead of being lowered, so no path sets a version
+before `ingest_versioned` exists.
 
 ### Wire
 

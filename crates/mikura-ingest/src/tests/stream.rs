@@ -2973,6 +2973,7 @@ fn stream_encrypted_missing_grant_fails_at_push() {
         hidden: false,
         action_id: None,
         schema_version: 1,
+        source_version: 0,
         props: [("secret".into(), "acme-secret".into())]
             .into_iter()
             .collect(),
@@ -2985,6 +2986,7 @@ fn stream_encrypted_missing_grant_fails_at_push() {
         hidden: false,
         action_id: None,
         schema_version: 1,
+        source_version: 0,
         props: [("secret".into(), "beta-secret".into())]
             .into_iter()
             .collect(),

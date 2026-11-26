@@ -65,6 +65,10 @@ pub struct ObjectRecord {
     /// and 0 mean 1 (ADR 0035).
     #[serde(default = "schema_version_one")]
     pub schema_version: u32,
+    /// Last applied source version of this identity (ADR 0056); 0 means
+    /// none. Writes without a version carry the stored one forward.
+    #[serde(default)]
+    pub source_version: u64,
 }
 
 fn schema_version_one() -> u32 {
@@ -81,6 +85,7 @@ impl Default for ObjectRecord {
             hidden: false,
             action_id: None,
             schema_version: 1,
+            source_version: 0,
             props: HashMap::new(),
         }
     }
@@ -773,7 +778,7 @@ impl Store {
                 file.read_exact(&mut magic)
             })
             .map_err(|e| e.to_string())?;
-        if magic != *crate::JOIN_FORMAT_PAGED {
+        if !crate::paged::is_paged_magic(&magic) {
             return Ok(false);
         }
         Ok(crate::paged::peek_log_pages(path)? == pages)
@@ -1059,6 +1064,7 @@ impl Store {
             hidden: committed.hidden,
             action_id: Some(action_id.to_string()),
             schema_version: 1,
+            source_version: 0,
             props: committed.props,
         })?;
         if stored.namespace != patch.namespace
@@ -1145,6 +1151,7 @@ impl Store {
                 } else {
                     record.schema_version
                 },
+                source_version: record.source_version,
             },
             record.props,
         )?;
@@ -1218,6 +1225,7 @@ impl Store {
                 hidden: false,
                 action_id: Some(action_id.to_string()),
                 schema_version: 1,
+                source_version: 0,
                 props: props.clone(),
             })?;
         }
@@ -1354,6 +1362,7 @@ impl Store {
             } else {
                 meta.schema_version
             },
+            source_version: meta.source_version,
         };
         self.apply_schema_view(&mut record, None)?;
         self.paged_fail_closed()?;
@@ -1472,6 +1481,7 @@ impl Store {
                     hidden: false,
                     action_id: Some(action_id),
                     schema_version: 1,
+                    source_version: 0,
                     props: rematerialized,
                 },
                 false,
@@ -1653,6 +1663,7 @@ impl Store {
                             action_id: Some(id.to_string()),
                             props: committed.props,
                             schema_version: 1,
+                            source_version: 0,
                         })?;
                         let mut incoming = next.clone();
                         let mut stored = stored;
@@ -1788,7 +1799,7 @@ impl Store {
         } else {
             None
         };
-        self.assign_gen(&mut record);
+        self.assign_gen(&mut record)?;
         self.writer.check_record_fits(&record)?;
         for overlay in &migrated_overlays {
             self.writer.check_record_fits(overlay)?;
@@ -1908,15 +1919,26 @@ impl Store {
 
     /// Next generation of `record`'s identity: one past the live generation,
     /// or the record's own (at least 1) for a new identity.
-    fn assign_gen(&self, record: &mut ObjectRecord) {
+    /// Next generation for `record`, carrying the identity's stored source
+    /// version forward (ADR 0056). No write path here may raise it.
+    fn assign_gen(&self, record: &mut ObjectRecord) -> Result<(), String> {
         let live = self
             .find_live(&record.namespace, &record.kind, &record.key)
             .and_then(|id| self.live_meta(id));
+        let stored = live.as_ref().map_or(0, |meta| meta.source_version);
+        if record.source_version > stored {
+            return Err(format!(
+                "source version {} is above the stored {stored}; only versioned source ingest sets it",
+                record.source_version
+            ));
+        }
+        record.source_version = stored;
         if let Some(existing) = live {
             record.gen = existing.gen.max(1) + 1;
         } else if record.gen == 0 {
             record.gen = 1;
         }
+        Ok(())
     }
 
     /// Group-commit the current writer pages. The join sidecar is persisted
@@ -2253,6 +2275,7 @@ impl Store {
             hidden: false,
             action_id: Some(action.id),
             schema_version: 1,
+            source_version: 0,
             props: action.props,
         })?;
         self.commit()
@@ -2378,6 +2401,7 @@ impl Store {
                 hidden: true,
                 action_id: current.action_id,
                 schema_version: 1,
+                source_version: 0,
                 props: current.props,
             },
             true,
@@ -2469,6 +2493,7 @@ impl Store {
             hidden: false,
             action_id: Some(id.clone()),
             schema_version: 1,
+            source_version: 0,
             props: marker_props(&edits),
         };
         self.atomically(|store| {
@@ -2490,6 +2515,7 @@ impl Store {
                         hidden: false,
                         action_id: Some(id.clone()),
                         schema_version: 1,
+                        source_version: 0,
                         props,
                     },
                     Edit::Hide { kind, key, .. } => ObjectRecord {
@@ -2545,6 +2571,7 @@ impl Store {
                 hidden: false,
                 action_id: Some(id.to_string()),
                 schema_version: 1,
+                source_version: 0,
                 props: props.clone(),
             };
             if let Some(schema) = self.schema(&committed.namespace, &member.kind)? {
@@ -2765,6 +2792,7 @@ impl Store {
             } else {
                 meta.schema_version
             },
+            source_version: meta.source_version,
         })
     }
 
