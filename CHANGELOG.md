@@ -12,6 +12,69 @@ require a minor bump. After 1.0, Cargo semver and a deprecation window apply.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-26
+
+These notes cover the upgrade from `v0.6.0`.
+
+### Upgrade
+
+- Do not call `ingest_versioned` (library or host op) until every process
+  that opens the log, including embedded library readers, runs `0.7.0`.
+  A `v0.6.0` or older reader refuses a log that holds a source version
+  (`trailing body bytes`) and does not modify it
+  ([ADR 0056](docs/decisions/0056-per-identity-source-version.md)).
+- Rollback: before the first versioned write, `0.7.0` writes the same bytes
+  as `v0.6.0`, and rolling back is safe. After the first versioned write,
+  `v0.6.0` and older cannot open that log or its projections. Restore from
+  a copy taken before the first versioned write if you must go back.
+- Breaking (Rust API, `mikura`): `ObjectRecord` gains `source_version: u64`.
+  Struct literals need `source_version: 0` or `..Default::default()`.
+  JSON without the field reads as 0, and `load` and `history` responses
+  now include it. Older hosts ignore the field.
+- Key providers come from the `envelope-keys` 1 crate (crates.io) instead
+  of the git-pinned `sekai-keys`. `mikura::crypto` re-exports the same
+  names, so code that imports them from there is unchanged. A provider
+  implemented against `sekai-keys` directly must implement the trait from
+  `mikura::crypto` (or `envelope-keys`) instead. Key files and wrapped DEKs
+  written before read unchanged.
+- `ApplyStatus` now lives in `mikura`; `mikura_ingest::ApplyStatus` still
+  resolves to it.
+- Logs without source versions keep their formats. When a log holds a
+  version, checkpoints and join sidecars carry an additive trailing
+  section, paged sidecars write `MKJOIN08`, and delta frames `MKJOIN7D`.
+  Delete `{log}.joins` and `{log}.joins.delta` to rebuild from the log.
+- Crate version is `0.7.0`. crates.io stays `publish = false`.
+
+### Added
+
+- `Store::ingest_versioned` and `ingest_versioned_batch` apply a source
+  write only when its per-identity source version is newer than the stored
+  one, and return `Applied`, `Duplicate`, or `Stale` without a generation
+  read or retry loop. A versioned hide keeps the payload, and a hide that
+  arrives first leaves a tombstone so later older upserts stay `Stale`.
+  The host gains the `ingest_versioned` op with an additive `apply_status`
+  reply field
+  ([#412](https://github.com/Sannrox/mikura/issues/412),
+  [#413](https://github.com/Sannrox/mikura/issues/413)).
+- Takeover and fencing drill under write load on the object backend, run
+  nightly and before every release, including a versioned writer-kill
+  scenario with blind retries
+  ([#364](https://github.com/Sannrox/mikura/issues/364)).
+
+### Fixed
+
+- A one-property breakdown served from commit-time groups returned
+  `n: 0`, no `min` or `max`, and a zero `avg` divisor since `v0.6.0`
+  ([#406](https://github.com/Sannrox/mikura/issues/406)).
+- A healthy writer on the object backend could refuse a write as fenced
+  while a concurrent commit had swapped its own manifest but not yet
+  adopted it ([#364](https://github.com/Sannrox/mikura/issues/364)).
+
+### Changed
+
+- Key-provider contract dependency moved to `envelope-keys` 1 on crates.io
+  ([#414](https://github.com/Sannrox/mikura/issues/414)).
+
 ## [0.6.0] - 2026-11-25
 
 Same code as `0.6.0-rc.1`. These notes cover the upgrade from `v0.5.0`.
