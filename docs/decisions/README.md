@@ -65,6 +65,7 @@ after adding or changing a record and do not edit the table by hand. CI runs
 | [0054](0054-similarity-workload-stays-unpublished.md) | Keep similarity retrieval unpublished | accepted |
 | [0055](0055-branchable-state-stays-absent.md) | Keep branchable object state absent | accepted |
 | [0056](0056-per-identity-source-version.md) | Order source writes by a per-identity source version | proposed |
+| [0057](0057-object-storage-layer-under-a-control-plane.md) | mikura is the object storage layer under a control plane | accepted |
 <!-- adr-index:end -->
 
 Implementation truth for the current crate is
