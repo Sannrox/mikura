@@ -317,13 +317,16 @@ fault runs at once; this repository has no failure detector.
 | `partition_mid_commit` | hold the writer's manifest swap, after its segment put, and all later storage traffic | promote the standby, then heal: the held swap lands late | refuses writes, role `fenced` |
 | `drop_swap_response` | the swap lands, its response is lost | none: the writer resolves it by readback | not displaced |
 | `second_writer` | start a second writer on the namespace | none: the next swap fences one of them | refuses writes, role `fenced` |
+| `versioned_kill_writer` | `kill_writer` with clients on `ingest_versioned` ([ADR 0056](decisions/0056-per-identity-source-version.md)) | promote the standby | killed |
 
 Every round checks, and any failure fails the run:
 
 - every acknowledged write is on a fresh read-only open, with the value
   that was acknowledged;
 - a write that was not acknowledged is read back on the new writer, and
-  retried only when absent; a retried key has one generation, never two;
+  retried only when absent; a retried key has one generation, never two.
+  Under `versioned_kill_writer` it is retried blindly at the same source
+  version, without readback, and must still have one generation;
 - a displaced writer that still runs refuses a write and reports `fenced`.
 
 Each round records time from the fault to the first write the final writer
@@ -343,6 +346,7 @@ rounds, 2026-11-25. Loopback object store, so no network round trip:
 | `partition_mid_commit` | 220 ms (230, 220, 215) | 0 | 0 |
 | `drop_swap_response` | 15 ms (15, 25, 11) | 0 | 0 |
 | `second_writer` | 254 ms (272, 252, 254) | 0 | 0 |
+| `versioned_kill_writer` (2026-11-26) | 215 ms (197, 215, 460) | 0 | 0 |
 
 Single writer: **360 acknowledged writes/s**, four unpaced clients, one
 record per `ingest_batch`, loopback object store. The drill's proxy counts

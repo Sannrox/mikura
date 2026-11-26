@@ -3411,3 +3411,40 @@ fn process_ingest_fenced_refuses_stale_and_replays_after_restart() {
         (1, Some("10"))
     );
 }
+
+/// ADR 0056 wire contract: `ingest_versioned` answers `applied`,
+/// `duplicate`, or `stale` by the identity's source version, writes only
+/// on `applied`, and keeps the order across a host restart.
+#[test]
+fn process_ingest_versioned_orders_by_source_version_across_restart() {
+    let tmp = TempLog::new("ingest-versioned");
+    let host = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    let versioned = |host: &HostProcess, amount: &str, source_version: u64| {
+        let reply = host.rpc(&serde_json::json!({
+            "op": "ingest_versioned",
+            "record": rec("Shipment", "s1", false, &[("amount", amount)]),
+            "source_version": source_version,
+        }));
+        assert!(reply.ok, "{reply:?}");
+        reply.apply_status.expect("apply_status")
+    };
+    use mikura::ApplyStatus::*;
+    let statuses: Vec<_> = [3, 1, 3, 2, 5]
+        .into_iter()
+        .map(|version| versioned(&host, &version.to_string(), version))
+        .collect();
+    assert_eq!(statuses, [Applied, Stale, Duplicate, Stale, Applied]);
+    host.kill();
+
+    let reopened = HostProcess::spawn(tmp.path(), "127.0.0.1:0", 8);
+    assert_eq!(versioned(&reopened, "4", 4), Stale);
+    let loaded = load_object(&reopened, "Shipment", "s1");
+    assert_eq!(
+        (
+            loaded.gen,
+            loaded.source_version,
+            loaded.props.get("amount").map(String::as_str)
+        ),
+        (2, 5, Some("5"))
+    );
+}
